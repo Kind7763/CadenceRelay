@@ -42,6 +42,11 @@ jobs:
             set -e
             cd /opt/cadencerelay
 
+            # Source env vars so they're available in this shell
+            set -a
+            source .env
+            set +a
+
             # Pull latest code
             git pull origin main
 
@@ -67,7 +72,7 @@ jobs:
 
             # Run SQL migration (safe — uses IF NOT EXISTS, never drops data)
             docker compose -f docker-compose.prod.yml exec -T postgres \
-              psql -U $POSTGRES_USER -d $POSTGRES_DB -f /dev/stdin < scripts/migrate.sql
+              psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /dev/stdin < scripts/migrate.sql
 
             # Seed admin (skips if already exists)
             docker compose -f docker-compose.prod.yml exec -T server node -e "
