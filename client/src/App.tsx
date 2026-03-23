@@ -7,6 +7,8 @@ import Settings from './pages/Settings';
 import Contacts from './pages/Contacts';
 import ContactDetail from './pages/ContactDetail';
 import Lists from './pages/Lists';
+import Templates from './pages/Templates';
+import TemplateEditor from './pages/TemplateEditor';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const token = localStorage.getItem('accessToken');
@@ -31,7 +33,9 @@ export default function App() {
                   <Route path="/contacts/:id" element={<ContactDetail />} />
                   <Route path="/lists" element={<Lists />} />
                   <Route path="/lists/:id" element={<div className="p-6">List Detail (coming soon)</div>} />
-                  <Route path="/templates" element={<div className="p-6">Templates (Sprint 4)</div>} />
+                  <Route path="/templates" element={<Templates />} />
+                  <Route path="/templates/new" element={<TemplateEditor />} />
+                  <Route path="/templates/:id/edit" element={<TemplateEditor />} />
                   <Route path="/analytics" element={<div className="p-6">Analytics (Sprint 7)</div>} />
                   <Route path="/settings" element={<Settings />} />
                 </Routes>

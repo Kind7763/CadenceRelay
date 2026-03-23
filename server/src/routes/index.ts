@@ -4,6 +4,7 @@ import authRoutes from './auth.routes';
 import settingsRoutes from './settings.routes';
 import contactsRoutes from './contacts.routes';
 import listsRoutes from './lists.routes';
+import templatesRoutes from './templates.routes';
 
 const router = Router();
 
@@ -23,6 +24,7 @@ router.use('/auth', authRoutes);
 router.use('/settings', authenticate, settingsRoutes);
 router.use('/contacts', authenticate, contactsRoutes);
 router.use('/lists', authenticate, listsRoutes);
+router.use('/templates', authenticate, templatesRoutes);
 
 // TODO: Mount remaining route modules in upcoming sprints
 // router.use('/campaigns', authenticate, campaignRoutes);
