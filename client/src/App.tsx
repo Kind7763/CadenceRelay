@@ -3,6 +3,7 @@ import { AuthProvider } from './context/AuthContext';
 import DashboardLayout from './components/layout/DashboardLayout';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
+import Settings from './pages/Settings';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const token = localStorage.getItem('accessToken');
@@ -27,7 +28,7 @@ export default function App() {
                   <Route path="/lists" element={<div className="p-6">Lists (Sprint 3)</div>} />
                   <Route path="/templates" element={<div className="p-6">Templates (Sprint 4)</div>} />
                   <Route path="/analytics" element={<div className="p-6">Analytics (Sprint 7)</div>} />
-                  <Route path="/settings" element={<div className="p-6">Settings (Sprint 2)</div>} />
+                  <Route path="/settings" element={<Settings />} />
                 </Routes>
               </DashboardLayout>
             </ProtectedRoute>
