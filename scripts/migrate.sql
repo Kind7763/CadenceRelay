@@ -1,4 +1,4 @@
--- BulkMailer Database Migration
+-- CadenceRelay Database Migration
 -- This file is run directly via psql in production
 
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";

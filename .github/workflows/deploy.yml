@@ -15,7 +15,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           password: ${{ secrets.VPS_PASSWORD }}
           script: |
-            cd /opt/bulk-email-sender
+            cd /opt/cadencerelay
 
             # Pull latest code
             git pull origin main

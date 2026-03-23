@@ -27,7 +27,7 @@ export default function Login() {
     <div className="flex min-h-screen items-center justify-center bg-gray-50">
       <div className="w-full max-w-md rounded-xl bg-white p-8 shadow-lg">
         <h2 className="mb-6 text-center text-2xl font-bold text-gray-900">
-          BulkMailer
+          CadenceRelay
         </h2>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>

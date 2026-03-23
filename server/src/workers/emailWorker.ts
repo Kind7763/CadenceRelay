@@ -189,7 +189,7 @@ export function startEmailSendWorker(): Worker {
       const headers: Record<string, string> = {
         'List-Unsubscribe': `<${unsubUrl}>, <mailto:unsubscribe@yourdomain.com?subject=unsubscribe>`,
         'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
-        'Feedback-ID': `${campaignId}:bulkmailer`,
+        'Feedback-ID': `${campaignId}:cadencerelay`,
       };
 
       // Load attachments from disk

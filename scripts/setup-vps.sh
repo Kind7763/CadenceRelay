@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "=== BulkMailer VPS Setup Script ==="
+echo "=== CadenceRelay VPS Setup Script ==="
 
 # Update system
 apt-get update && apt-get upgrade -y
@@ -24,14 +24,14 @@ docker compose version
 apt-get install -y git
 
 # Create app directory
-mkdir -p /opt/bulk-email-sender
-cd /opt/bulk-email-sender
+mkdir -p /opt/cadencerelay
+cd /opt/cadencerelay
 
 # Clone or pull repo
 if [ -d ".git" ]; then
     git pull origin main
 else
-    git clone https://github.com/pulkitpareek18/Bulk-Email-Sender.git .
+    git clone https://github.com/pulkitpareek18/CadenceRelay.git .
 fi
 
 # Create production .env if not exists
@@ -47,7 +47,7 @@ ADMIN_PASSWORD=CHANGE_ME_ADMIN_PASSWORD
 TRACKING_DOMAIN=https://yeb.mail.intellimix.online
 ENVEOF
     echo "Created .env - PLEASE EDIT WITH REAL PASSWORDS before starting!"
-    echo "Edit: nano /opt/bulk-email-sender/.env"
+    echo "Edit: nano /opt/cadencerelay/.env"
 fi
 
 # Set up firewall
@@ -59,8 +59,8 @@ ufw --force enable
 echo ""
 echo "=== Setup complete! ==="
 echo "Next steps:"
-echo "1. Edit /opt/bulk-email-sender/.env with real passwords"
+echo "1. Edit /opt/cadencerelay/.env with real passwords"
 echo "2. Point DNS: yeb.mail.intellimix.online -> $(curl -s ifconfig.me)"
-echo "3. Run: cd /opt/bulk-email-sender && docker compose -f docker-compose.prod.yml up -d --build"
+echo "3. Run: cd /opt/cadencerelay && docker compose -f docker-compose.prod.yml up -d --build"
 echo "4. Run migrations: docker compose -f docker-compose.prod.yml exec server npx node-pg-migrate up --migrations-dir dist/db/migrations --migration-file-language js"
 echo "5. Seed admin: docker compose -f docker-compose.prod.yml exec server node dist/db/seeds/001_admin-user.js"

@@ -218,7 +218,7 @@ curl -fsSL https://raw.githubusercontent.com/pulkitpareek18/CadenceRelay/main/sc
 ### 3. Configure environment
 
 ```bash
-cd /opt/bulk-email-sender
+cd /opt/cadencerelay
 nano .env
 ```
 
@@ -234,7 +234,7 @@ docker compose -f docker-compose.prod.yml exec -T postgres \
   psql -U $POSTGRES_USER -d $POSTGRES_DB < scripts/migrate.sql
 
 # Seed admin
-docker cp scripts/seed-admin.js bulk-email-sender-server-1:/app/seed-admin.js
+docker cp scripts/seed-admin.js cadencerelay-server-1:/app/seed-admin.js
 docker compose -f docker-compose.prod.yml exec -T server node /app/seed-admin.js
 ```
 

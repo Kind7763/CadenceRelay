@@ -175,7 +175,7 @@ export async function testEmail(req: Request, res: Response, next: NextFunction)
 
     await emailProvider.send({
       to,
-      subject: 'Test Email from BulkMailer',
+      subject: 'Test Email from CadenceRelay',
       html: '<h1>Test Email</h1><p>If you received this, your email provider is configured correctly.</p>',
       text: 'Test Email - If you received this, your email provider is configured correctly.',
     });
