@@ -1,4 +1,5 @@
 import apiClient from './client';
+import { UploadState, createTrackedUpload } from '../lib/uploadHelper';
 
 export interface Contact {
   id: string;
@@ -93,6 +94,31 @@ export async function previewCSV(file: File): Promise<CSVPreviewResult> {
   return res.data;
 }
 
+/**
+ * Import contacts from CSV with tracked upload progress and cancellation support.
+ * Returns an object with the promise and an abort function.
+ */
+export function importContactsCSVTracked(
+  file: File,
+  listId?: string,
+  columnMapping?: Record<string, string>,
+  onProgress?: (state: UploadState) => void,
+  signal?: AbortSignal,
+): { promise: Promise<CSVImportResult>; abort: () => void } {
+  const formData = new FormData();
+  formData.append('file', file);
+  if (listId) formData.append('listId', listId);
+  if (columnMapping) formData.append('columnMapping', JSON.stringify(columnMapping));
+
+  return createTrackedUpload<CSVImportResult>({
+    url: '/contacts/import-csv',
+    formData,
+    onProgress,
+    signal,
+  });
+}
+
+/** Legacy wrapper kept for backward compatibility */
 export async function importContactsCSV(
   file: File,
   listId?: string,

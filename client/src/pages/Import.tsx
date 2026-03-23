@@ -1,9 +1,11 @@
 import { useState, useCallback, useRef } from 'react';
 import toast from 'react-hot-toast';
-import { previewCSV, importContactsCSV, CSVPreviewResult, CSVImportResult } from '../api/contacts.api';
+import { previewCSV, importContactsCSVTracked, CSVPreviewResult, CSVImportResult } from '../api/contacts.api';
 import { ContactList } from '../api/lists.api';
 import { useListsList } from '../hooks/useLists';
 import ErrorBoundary from '../components/ErrorBoundary';
+import UploadProgress, { FileUploadProgress } from '../components/ui/UploadProgress';
+import { UploadState, INITIAL_UPLOAD_STATE } from '../lib/uploadHelper';
 
 const DB_COLUMNS = [
   { value: '', label: '-- Skip --' },
@@ -24,10 +26,11 @@ function ImportContent() {
   const [columnMapping, setColumnMapping] = useState<Record<string, string>>({});
   const [listId, setListId] = useState('');
   const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadState, setUploadState] = useState<UploadState>(INITIAL_UPLOAD_STATE);
   const [result, setResult] = useState<CSVImportResult | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const abortRef = useRef<(() => void) | null>(null);
 
   const { data: lists = [] } = useListsList();
 
@@ -38,7 +41,7 @@ function ImportContent() {
     }
     setFile(f);
     setResult(null);
-    setUploadProgress(0);
+    setUploadState(INITIAL_UPLOAD_STATE);
     try {
       const prev = await previewCSV(f);
       setPreview(prev);
@@ -78,6 +81,16 @@ function ImportContent() {
     });
   }
 
+  function handleCancelUpload() {
+    if (abortRef.current) {
+      abortRef.current();
+      abortRef.current = null;
+      setUploading(false);
+      setUploadState((prev) => ({ ...prev, status: 'cancelled' }));
+      toast('Upload cancelled', { icon: '🚫' });
+    }
+  }
+
   async function handleImport() {
     if (!file) return;
 
@@ -89,29 +102,63 @@ function ImportContent() {
     }
 
     setUploading(true);
-    setUploadProgress(0);
-    const loadingToast = toast.loading('Importing contacts...');
+    setUploadState({ ...INITIAL_UPLOAD_STATE, status: 'uploading' });
+
     try {
-      const res = await importContactsCSV(file, listId || undefined, columnMapping, setUploadProgress);
+      const { promise, abort } = importContactsCSVTracked(
+        file,
+        listId || undefined,
+        columnMapping,
+        (state) => {
+          setUploadState(state);
+        },
+      );
+      abortRef.current = abort;
+
+      // After upload completes, switch to processing state
+      setUploadState((prev) => ({ ...prev, status: 'uploading' }));
+      const res = await promise;
+
+      // Show complete state
+      setUploadState((prev) => ({ ...prev, status: 'complete', progress: 100 }));
       setResult(res);
-      toast.dismiss(loadingToast);
       toast.success(`Imported ${res.imported} contacts successfully`);
-    } catch {
-      toast.dismiss(loadingToast);
-      toast.error('Import failed. Please check the file format and try again.');
+    } catch (err) {
+      // Only show error if not cancelled
+      if (uploadState.status !== 'cancelled') {
+        const isCancelled = err instanceof Error && err.name === 'CanceledError';
+        if (!isCancelled) {
+          setUploadState((prev) => ({
+            ...prev,
+            status: 'error',
+            error: 'Import failed. Please check the file format and try again.',
+          }));
+          toast.error('Import failed. Please check the file format and try again.');
+        }
+      }
     } finally {
       setUploading(false);
+      abortRef.current = null;
     }
   }
 
   function reset() {
+    if (abortRef.current) {
+      abortRef.current();
+      abortRef.current = null;
+    }
     setFile(null);
     setPreview(null);
     setColumnMapping({});
     setResult(null);
-    setUploadProgress(0);
+    setUploadState(INITIAL_UPLOAD_STATE);
     if (fileInputRef.current) fileInputRef.current.value = '';
   }
+
+  // Build the file progress list for the UploadProgress component
+  const uploadProgressFiles: FileUploadProgress[] = file && (uploading || uploadState.status !== 'idle')
+    ? [{ file, state: uploadState, id: 'csv-import' }]
+    : [];
 
   return (
     <div className="p-6">
@@ -267,29 +314,32 @@ function ImportContent() {
                 <button onClick={reset} className="rounded-lg border border-gray-300 px-4 py-2 text-sm hover:bg-gray-50">
                   Cancel
                 </button>
-                <button
-                  onClick={handleImport}
-                  disabled={uploading || !Object.values(columnMapping).includes('email')}
-                  className="rounded-lg bg-primary-600 px-6 py-2 text-sm font-medium text-white hover:bg-primary-700 disabled:opacity-50"
-                >
-                  {uploading ? 'Importing...' : `Import ${preview.totalRows.toLocaleString()} Contacts`}
-                </button>
+                {uploading ? (
+                  <button
+                    onClick={handleCancelUpload}
+                    className="rounded-lg bg-red-600 px-6 py-2 text-sm font-medium text-white hover:bg-red-700"
+                  >
+                    Cancel Upload
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleImport}
+                    disabled={!Object.values(columnMapping).includes('email')}
+                    className="rounded-lg bg-primary-600 px-6 py-2 text-sm font-medium text-white hover:bg-primary-700 disabled:opacity-50"
+                  >
+                    {`Import ${preview.totalRows.toLocaleString()} Contacts`}
+                  </button>
+                )}
               </div>
             </div>
 
-            {/* Progress bar */}
-            {uploading && (
+            {/* Upload progress bar */}
+            {uploadProgressFiles.length > 0 && (
               <div className="mt-4">
-                <div className="flex items-center justify-between text-sm text-gray-600">
-                  <span>Uploading and processing...</span>
-                  <span>{uploadProgress}%</span>
-                </div>
-                <div className="mt-1 h-2 overflow-hidden rounded-full bg-gray-200">
-                  <div
-                    className="h-full rounded-full bg-primary-600 transition-all duration-300"
-                    style={{ width: `${uploadProgress}%` }}
-                  />
-                </div>
+                <UploadProgress
+                  files={uploadProgressFiles}
+                  onCancel={handleCancelUpload}
+                />
               </div>
             )}
           </div>

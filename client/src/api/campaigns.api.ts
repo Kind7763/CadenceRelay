@@ -1,4 +1,5 @@
 import apiClient from './client';
+import { UploadState, createTrackedUpload } from '../lib/uploadHelper';
 
 export interface CampaignAttachment {
   filename: string;
@@ -47,6 +48,8 @@ export async function createCampaign(data: {
   name: string; templateId: string; listId: string; provider?: string;
   throttlePerSecond?: number; throttlePerHour?: number;
   attachments?: File[];
+  onProgress?: (state: UploadState) => void;
+  signal?: AbortSignal;
 }) {
   const formData = new FormData();
   formData.append('name', data.name);
@@ -59,8 +62,21 @@ export async function createCampaign(data: {
     data.attachments.forEach((file) => formData.append('attachments', file));
   }
 
+  // If there are attachments and a progress callback, use tracked upload
+  if (data.attachments && data.attachments.length > 0 && data.onProgress) {
+    const { promise } = createTrackedUpload<{ campaign: Campaign }>({
+      url: '/campaigns',
+      formData,
+      onProgress: data.onProgress,
+      signal: data.signal,
+    });
+    const result = await promise;
+    return result.campaign;
+  }
+
   const res = await apiClient.post('/campaigns', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    signal: data.signal,
   });
   return res.data.campaign as Campaign;
 }
@@ -101,6 +117,28 @@ export async function resumeCampaign(id: string) {
 export async function getCampaignRecipients(id: string, params: Record<string, string> = {}) {
   const res = await apiClient.get(`/campaigns/${id}/recipients`, { params });
   return res.data;
+}
+
+export function addAttachmentsTracked(
+  id: string,
+  files: File[],
+  onProgress?: (state: UploadState) => void,
+  signal?: AbortSignal,
+): { promise: Promise<CampaignAttachment[]>; abort: () => void } {
+  const formData = new FormData();
+  files.forEach((file) => formData.append('attachments', file));
+
+  const tracked = createTrackedUpload<{ attachments: CampaignAttachment[] }>({
+    url: `/campaigns/${id}/attachments`,
+    formData,
+    onProgress,
+    signal,
+  });
+
+  return {
+    promise: tracked.promise.then((res) => res.attachments),
+    abort: tracked.abort,
+  };
 }
 
 export async function addAttachments(id: string, files: File[]) {

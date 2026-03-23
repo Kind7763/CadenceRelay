@@ -1,9 +1,42 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { createCampaign, scheduleCampaign, sendCampaign } from '../api/campaigns.api';
 import { listTemplates, Template } from '../api/templates.api';
 import { listLists, ContactList } from '../api/lists.api';
+import UploadProgress, { FileUploadProgress } from '../components/ui/UploadProgress';
+import { UploadState, INITIAL_UPLOAD_STATE, formatFileSize, validateFileSize, getFileTypeIcon } from '../lib/uploadHelper';
+
+/** File type icon SVG component */
+function FileIcon({ filename }: { filename: string }) {
+  const type = getFileTypeIcon(filename);
+  const colors: Record<string, string> = {
+    pdf: 'text-red-500', word: 'text-blue-600', excel: 'text-green-600',
+    powerpoint: 'text-orange-500', image: 'text-purple-500', archive: 'text-yellow-600',
+    video: 'text-pink-500', audio: 'text-indigo-500', text: 'text-gray-500', file: 'text-gray-400',
+  };
+  const color = colors[type] || 'text-gray-400';
+
+  if (type === 'image') {
+    return (
+      <svg className={`h-4 w-4 ${color}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+      </svg>
+    );
+  }
+  if (type === 'excel') {
+    return (
+      <svg className={`h-4 w-4 ${color}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+      </svg>
+    );
+  }
+  return (
+    <svg className={`h-4 w-4 ${color}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+    </svg>
+  );
+}
 
 export default function CampaignCreate() {
   const navigate = useNavigate();
@@ -24,6 +57,11 @@ export default function CampaignCreate() {
   const [creating, setCreating] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [attachments, setAttachments] = useState<File[]>([]);
+
+  // Upload progress state for campaign creation
+  const [campaignUploadState, setCampaignUploadState] = useState<UploadState>(INITIAL_UPLOAD_STATE);
+  const [showUploadProgress, setShowUploadProgress] = useState(false);
+  const abortRef = useRef<(() => void) | null>(null);
 
   const previewRef = useRef<HTMLIFrameElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -47,6 +85,39 @@ export default function CampaignCreate() {
       }
     }
   }, [selectedTemplate]);
+
+  const handleAddFiles = useCallback((files: File[]) => {
+    const errors: string[] = [];
+    const valid: File[] = [];
+
+    for (const file of files) {
+      const sizeError = validateFileSize(file);
+      if (sizeError) {
+        errors.push(sizeError);
+      } else {
+        valid.push(file);
+      }
+    }
+
+    if (errors.length > 0) {
+      errors.forEach((err) => toast.error(err));
+    }
+
+    // Check total count
+    const totalCount = attachments.length + valid.length;
+    if (totalCount > 10) {
+      toast.error(`Maximum 10 files allowed. You already have ${attachments.length}.`);
+      const allowed = 10 - attachments.length;
+      if (allowed > 0) {
+        setAttachments((prev) => [...prev, ...valid.slice(0, allowed)]);
+      }
+      return;
+    }
+
+    if (valid.length > 0) {
+      setAttachments((prev) => [...prev, ...valid]);
+    }
+  }, [attachments.length]);
 
   function validateScheduleDate(): boolean {
     if (scheduleType === 'later') {
@@ -73,11 +144,27 @@ export default function CampaignCreate() {
     if (scheduleType === 'later' && !validateScheduleDate()) return;
 
     setCreating(true);
+    const hasAttachments = attachments.length > 0;
+
+    if (hasAttachments) {
+      setShowUploadProgress(true);
+      setCampaignUploadState({ ...INITIAL_UPLOAD_STATE, status: 'uploading' });
+    }
+
     try {
+      const controller = new AbortController();
+      abortRef.current = () => controller.abort();
+
       const campaign = await createCampaign({
         name, templateId, listId, provider, throttlePerSecond, throttlePerHour,
-        attachments: attachments.length > 0 ? attachments : undefined,
+        attachments: hasAttachments ? attachments : undefined,
+        onProgress: hasAttachments ? (state) => setCampaignUploadState(state) : undefined,
+        signal: controller.signal,
       });
+
+      if (hasAttachments) {
+        setCampaignUploadState((prev) => ({ ...prev, status: 'complete', progress: 100 }));
+      }
 
       if (scheduleType === 'later' && scheduledAt) {
         await scheduleCampaign(campaign.id, new Date(scheduledAt).toISOString());
@@ -88,11 +175,32 @@ export default function CampaignCreate() {
       }
 
       navigate(`/campaigns/${campaign.id}`);
-    } catch {
-      toast.error('Failed to create campaign');
+    } catch (err) {
+      const isCancelled = err instanceof Error && err.name === 'CanceledError';
+      if (isCancelled) {
+        setCampaignUploadState((prev) => ({ ...prev, status: 'cancelled' }));
+        toast('Upload cancelled');
+      } else {
+        if (hasAttachments) {
+          setCampaignUploadState((prev) => ({
+            ...prev,
+            status: 'error',
+            error: 'Failed to create campaign',
+          }));
+        }
+        toast.error('Failed to create campaign');
+      }
     } finally {
       setCreating(false);
       setShowConfirm(false);
+      abortRef.current = null;
+    }
+  }
+
+  function handleCancelUpload() {
+    if (abortRef.current) {
+      abortRef.current();
+      abortRef.current = null;
     }
   }
 
@@ -100,6 +208,15 @@ export default function CampaignCreate() {
   const estimatedMinutes = Math.ceil(contactCount / throttlePerSecond / 60);
   const estimatedHours = Math.floor(estimatedMinutes / 60);
   const estimatedMinsRemainder = estimatedMinutes % 60;
+
+  // Build upload progress files for the UploadProgress component
+  const uploadProgressFiles: FileUploadProgress[] = showUploadProgress && attachments.length > 0
+    ? attachments.map((file, i) => ({
+        file,
+        state: campaignUploadState,
+        id: `attachment-${i}`,
+      }))
+    : [];
 
   return (
     <div className="mx-auto max-w-3xl p-6">
@@ -147,7 +264,7 @@ export default function CampaignCreate() {
                 multiple
                 onChange={(e) => {
                   const files = Array.from(e.target.files || []);
-                  setAttachments((prev) => [...prev, ...files]);
+                  handleAddFiles(files);
                   if (fileInputRef.current) fileInputRef.current.value = '';
                 }}
                 className="hidden"
@@ -165,14 +282,14 @@ export default function CampaignCreate() {
                 {attachments.map((file, i) => (
                   <div key={i} className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2 text-sm">
                     <div className="flex items-center gap-2">
-                      <svg className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></svg>
-                      <span>{file.name}</span>
-                      <span className="text-xs text-gray-400">({(file.size / 1024).toFixed(0)} KB)</span>
+                      <FileIcon filename={file.name} />
+                      <span className="truncate">{file.name}</span>
+                      <span className="text-xs text-gray-400">({formatFileSize(file.size)})</span>
                     </div>
                     <button onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))} className="text-xs text-red-500 hover:text-red-700">Remove</button>
                   </div>
                 ))}
-                <p className="text-xs text-gray-400">{attachments.length} file(s), {(attachments.reduce((s, f) => s + f.size, 0) / 1024 / 1024).toFixed(1)} MB total</p>
+                <p className="text-xs text-gray-400">{attachments.length} file(s), {formatFileSize(attachments.reduce((s, f) => s + f.size, 0))} total</p>
               </div>
             )}
           </div>
@@ -293,12 +410,26 @@ export default function CampaignCreate() {
               <ul className="mt-1 space-y-0.5">
                 {attachments.map((f, i) => (
                   <li key={i} className="flex items-center gap-1">
-                    <svg className="h-3 w-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></svg>
+                    <FileIcon filename={f.name} />
                     <span className="font-medium">{f.name}</span>
-                    <span className="text-gray-400">({(f.size / 1024).toFixed(0)} KB)</span>
+                    <span className="text-gray-400">({formatFileSize(f.size)})</span>
                   </li>
                 ))}
               </ul>
+              <p className="mt-1 text-xs text-gray-400">
+                Total: {formatFileSize(attachments.reduce((s, f) => s + f.size, 0))}
+              </p>
+            </div>
+          )}
+
+          {/* Upload progress during campaign creation */}
+          {showUploadProgress && uploadProgressFiles.length > 0 && (
+            <div className="mt-4">
+              <UploadProgress
+                files={uploadProgressFiles}
+                onCancel={handleCancelUpload}
+                showTotal
+              />
             </div>
           )}
 
@@ -337,6 +468,12 @@ export default function CampaignCreate() {
               <strong>Campaign:</strong> {name}<br />
               <strong>Template:</strong> {selectedTemplate?.name}<br />
               <strong>List:</strong> {selectedList?.name} ({contactCount} contacts)
+              {attachments.length > 0 && (
+                <>
+                  <br />
+                  <strong>Attachments:</strong> {attachments.length} file(s), {formatFileSize(attachments.reduce((s, f) => s + f.size, 0))}
+                </>
+              )}
             </div>
             <div className="mt-4 flex justify-end gap-2">
               <button onClick={() => setShowConfirm(false)} className="rounded-lg border px-4 py-2 text-sm">Cancel</button>
