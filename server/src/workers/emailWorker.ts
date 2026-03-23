@@ -1,4 +1,4 @@
-import { Worker, Job } from 'bullmq';
+import { Worker, Job, UnrecoverableError } from 'bullmq';
 import { config } from '../config';
 import { pool } from '../config/database';
 import { logger } from '../utils/logger';
@@ -6,6 +6,9 @@ import { generateTrackingToken } from '../utils/crypto';
 import { renderTemplate } from '../utils/templateRenderer';
 import { createProvider } from '../services/email/providerFactory';
 import { emailSendQueue } from '../queues/emailQueue';
+import {
+  PermanentBounceError, TemporaryBounceError, RateLimitError, AuthenticationError,
+} from '../services/email/EmailProvider';
 
 interface DispatchJobData {
   campaignId: string;
@@ -175,15 +178,29 @@ export function startEmailSendWorker(): Worker {
         'Feedback-ID': `${campaignId}:bulkmailer`,
       };
 
-      // Send email
+      // Send email - catch and classify errors
       const emailProvider = createProvider(provider, providerConfig);
-      const result = await emailProvider.send({
-        to: email,
-        subject,
-        html: trackedHtml,
-        text: text || undefined,
-        headers,
-      });
+      let result;
+      try {
+        result = await emailProvider.send({
+          to: email,
+          subject,
+          html: trackedHtml,
+          text: text || undefined,
+          headers,
+        });
+      } catch (sendErr) {
+        // Permanent bounces should not be retried
+        if (sendErr instanceof PermanentBounceError) {
+          throw new UnrecoverableError(sendErr.message);
+        }
+        // Auth errors should not be retried (campaign will be paused)
+        if (sendErr instanceof AuthenticationError) {
+          throw new UnrecoverableError(sendErr.message);
+        }
+        // Rate limits and temporary errors: rethrow for BullMQ retry
+        throw sendErr;
+      }
 
       // Update campaign_recipient
       await pool.query(
@@ -236,22 +253,100 @@ export function startEmailSendWorker(): Worker {
   worker.on('failed', async (job, err) => {
     if (!job) return;
     const { campaignRecipientId, campaignId, email } = job.data;
-    logger.error(`Email send failed: ${err.message}`, { email });
 
-    if (job.attemptsMade >= (job.opts.attempts || 3)) {
-      // Final failure
+    // Classify the error for proper handling
+    const isPermanentBounce = err instanceof PermanentBounceError || err.name === 'PermanentBounceError';
+    const isAuthError = err instanceof AuthenticationError || err.name === 'AuthenticationError';
+    const isRateLimit = err instanceof RateLimitError || err.name === 'RateLimitError';
+    const isFinalAttempt = job.attemptsMade >= (job.opts.attempts || 3);
+
+    if (isPermanentBounce) {
+      // Permanent bounce: mark as bounced immediately, don't retry
+      logger.warn(`Permanent bounce for ${email}: ${err.message}`);
+
+      await pool.query(
+        "UPDATE campaign_recipients SET status = 'bounced', bounced_at = NOW(), error_message = $1 WHERE id = $2 AND status != 'bounced'",
+        [err.message, campaignRecipientId]
+      );
+      await pool.query(
+        "INSERT INTO email_events (campaign_recipient_id, campaign_id, event_type, metadata) VALUES ($1, $2, 'bounced', $3)",
+        [campaignRecipientId, campaignId, JSON.stringify({
+          bounceType: 'Permanent',
+          error: err.message,
+          source: 'smtp-rejection',
+          provider: job.data.provider,
+        })]
+      );
+      await pool.query(
+        'UPDATE campaigns SET bounce_count = bounce_count + 1, updated_at = NOW() WHERE id = $1',
+        [campaignId]
+      );
+      // Mark contact as bounced
+      await pool.query(
+        "UPDATE contacts SET status = 'bounced', bounce_count = bounce_count + 1, updated_at = NOW() WHERE email = $1",
+        [email]
+      );
+    } else if (isAuthError) {
+      // Auth error: stop the whole campaign, not just this email
+      logger.error(`Authentication error: ${err.message}. Pausing campaign ${campaignId}`);
+
+      await pool.query(
+        "UPDATE campaign_recipients SET status = 'failed', error_message = $1 WHERE id = $2",
+        [`Auth error: ${err.message}`, campaignRecipientId]
+      );
+      await pool.query(
+        "UPDATE campaigns SET status = 'failed', updated_at = NOW() WHERE id = $1 AND status = 'sending'",
+        [campaignId]
+      );
+    } else if (isRateLimit) {
+      // Rate limit: will be retried automatically by BullMQ backoff
+      logger.warn(`Rate limited for ${email}, attempt ${job.attemptsMade}/${job.opts.attempts}: ${err.message}`);
+
+      if (isFinalAttempt) {
+        await pool.query(
+          "UPDATE campaign_recipients SET status = 'failed', error_message = $1 WHERE id = $2",
+          [`Rate limited after ${job.attemptsMade} attempts: ${err.message}`, campaignRecipientId]
+        );
+        await pool.query(
+          'UPDATE campaigns SET failed_count = failed_count + 1, updated_at = NOW() WHERE id = $1',
+          [campaignId]
+        );
+      }
+    } else if (isFinalAttempt) {
+      // Other errors on final attempt
+      logger.error(`Email send failed permanently for ${email}: ${err.message}`);
+
       await pool.query(
         "UPDATE campaign_recipients SET status = 'failed', error_message = $1 WHERE id = $2",
         [err.message, campaignRecipientId]
       );
       await pool.query(
         "INSERT INTO email_events (campaign_recipient_id, campaign_id, event_type, metadata) VALUES ($1, $2, 'failed', $3)",
-        [campaignRecipientId, campaignId, JSON.stringify({ error: err.message })]
+        [campaignRecipientId, campaignId, JSON.stringify({ error: err.message, provider: job.data.provider })]
       );
       await pool.query(
         'UPDATE campaigns SET failed_count = failed_count + 1, updated_at = NOW() WHERE id = $1',
         [campaignId]
       );
+    } else {
+      // Temporary error, will retry
+      logger.warn(`Temporary failure for ${email}, attempt ${job.attemptsMade}/${job.opts.attempts}: ${err.message}`);
+    }
+
+    // Check campaign completion after any terminal state
+    if (isPermanentBounce || isFinalAttempt || isAuthError) {
+      const stats = await pool.query(
+        'SELECT total_recipients, sent_count, failed_count, bounce_count FROM campaigns WHERE id = $1',
+        [campaignId]
+      );
+      const camp = stats.rows[0];
+      if (camp && (Number(camp.sent_count) + Number(camp.failed_count) + Number(camp.bounce_count)) >= Number(camp.total_recipients)) {
+        await pool.query(
+          "UPDATE campaigns SET status = 'completed', completed_at = NOW(), updated_at = NOW() WHERE id = $1 AND status = 'sending'",
+          [campaignId]
+        );
+        logger.info(`Campaign ${campaignId} completed (with ${camp.bounce_count} bounces, ${camp.failed_count} failures)`);
+      }
     }
   });
 

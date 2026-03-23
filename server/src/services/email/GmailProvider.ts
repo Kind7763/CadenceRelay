@@ -1,5 +1,9 @@
 import nodemailer from 'nodemailer';
-import { EmailProvider, EmailOptions, SendResult } from './EmailProvider';
+import {
+  EmailProvider, EmailOptions, SendResult,
+  PermanentBounceError, TemporaryBounceError, RateLimitError, AuthenticationError,
+  classifySmtpError,
+} from './EmailProvider';
 import { logger } from '../../utils/logger';
 
 interface GmailConfig {
@@ -42,13 +46,66 @@ export class GmailProvider implements EmailProvider {
       headers: options.headers || {},
     };
 
-    const info = await this.transporter.sendMail(mailOptions);
-    logger.debug('Gmail: Email sent', { messageId: info.messageId, to: options.to });
+    try {
+      const info = await this.transporter.sendMail(mailOptions);
+      logger.debug('Gmail: Email sent', { messageId: info.messageId, to: options.to });
 
-    return {
-      messageId: info.messageId,
-      provider: 'gmail',
-    };
+      // Check for rejected recipients (SMTP accepted but flagged)
+      if (info.rejected && info.rejected.length > 0) {
+        throw new PermanentBounceError(
+          `Recipient rejected by SMTP: ${info.rejected.join(', ')}`,
+          '550',
+          options.to
+        );
+      }
+
+      return {
+        messageId: info.messageId,
+        provider: 'gmail',
+      };
+    } catch (error: unknown) {
+      // If it's already one of our classified errors, re-throw
+      if (
+        error instanceof PermanentBounceError ||
+        error instanceof TemporaryBounceError ||
+        error instanceof RateLimitError ||
+        error instanceof AuthenticationError
+      ) {
+        throw error;
+      }
+
+      const err = error as { responseCode?: number; code?: string; message: string };
+
+      // Classify SMTP errors from Nodemailer
+      if (err.responseCode) {
+        throw classifySmtpError(err.responseCode, err.message, options.to);
+      }
+
+      // Connection errors (ECONNREFUSED, ETIMEDOUT, etc.)
+      if (err.code === 'ECONNREFUSED' || err.code === 'ETIMEDOUT' || err.code === 'ESOCKET') {
+        throw new TemporaryBounceError(
+          `Gmail SMTP connection error: ${err.message}`,
+          err.code,
+          options.to
+        );
+      }
+
+      // Auth errors
+      if (err.code === 'EAUTH' || err.message?.includes('Invalid login')) {
+        throw new AuthenticationError(`Gmail authentication failed: ${err.message}`);
+      }
+
+      // Gmail rate limit patterns
+      if (err.message?.includes('Daily user sending limit exceeded') ||
+          err.message?.includes('too many') ||
+          err.message?.includes('rate limit')) {
+        throw new RateLimitError(`Gmail rate limit: ${err.message}`);
+      }
+
+      // Unknown error - rethrow as-is
+      logger.error('Gmail: Unclassified send error', { error: err.message, code: err.code, responseCode: err.responseCode });
+      throw error;
+    }
   }
 
   async verifyConnection(): Promise<boolean> {
