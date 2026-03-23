@@ -5,7 +5,31 @@ on:
     branches: [main]
 
 jobs:
+  # ── Step 1: Build & lint check before deploying ──
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install & build server
+        working-directory: server
+        run: |
+          npm ci
+          npx tsc --noEmit
+
+      - name: Install & build client
+        working-directory: client
+        run: |
+          npm ci
+          npm run build
+
+  # ── Step 2: Deploy only if checks pass ──
   deploy:
+    needs: check
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to VPS via SSH
@@ -15,19 +39,33 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           password: ${{ secrets.VPS_PASSWORD }}
           script: |
+            set -e
             cd /opt/cadencerelay
 
             # Pull latest code
             git pull origin main
 
-            # Rebuild and restart containers
+            # Rebuild containers (postgres & redis are NOT rebuilt — data is safe)
             docker compose -f docker-compose.prod.yml build --no-cache server worker client
+
+            # Bring up new containers
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
 
-            # Wait for postgres to be healthy
-            sleep 10
+            # Wait for server to be healthy
+            echo "Waiting for server health..."
+            for i in $(seq 1 30); do
+              if docker compose -f docker-compose.prod.yml exec -T server wget -qO- http://localhost:3001/api/v1/health > /dev/null 2>&1; then
+                echo "Server healthy!"
+                break
+              fi
+              sleep 2
+            done
 
-            # Run SQL migration (safe - uses IF NOT EXISTS everywhere, never drops data)
+            # Restart nginx so it picks up new container IPs
+            docker compose -f docker-compose.prod.yml restart nginx
+            sleep 3
+
+            # Run SQL migration (safe — uses IF NOT EXISTS, never drops data)
             docker compose -f docker-compose.prod.yml exec -T postgres \
               psql -U $POSTGRES_USER -d $POSTGRES_DB -f /dev/stdin < scripts/migrate.sql
 
@@ -46,6 +84,18 @@ jobs:
                 pool.end();
               })();
             "
+
+            # Verify API is reachable through nginx
+            echo "Verifying API through nginx..."
+            for i in $(seq 1 10); do
+              STATUS=$(curl -sk -o /dev/null -w "%{http_code}" https://yeb.mail.intellimix.online/api/v1/health 2>/dev/null || echo "000")
+              if [ "$STATUS" = "200" ]; then
+                echo "Deployment verified — API responding 200 OK"
+                break
+              fi
+              echo "Attempt $i: status $STATUS, retrying..."
+              sleep 3
+            done
 
             # Cleanup old images
             docker image prune -f
