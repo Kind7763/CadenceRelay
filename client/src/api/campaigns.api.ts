@@ -70,8 +70,12 @@ export async function updateCampaign(id: string, data: Record<string, unknown>) 
   return res.data.campaign as Campaign;
 }
 
-export async function deleteCampaign(id: string) {
-  return apiClient.delete(`/campaigns/${id}`);
+export async function deleteCampaign(id: string, adminPassword: string) {
+  return apiClient.delete(`/campaigns/${id}`, { data: { adminPassword } });
+}
+
+export async function bulkDeleteCampaigns(ids: string[], adminPassword: string) {
+  return apiClient.delete('/campaigns/bulk', { data: { ids, adminPassword } });
 }
 
 export async function scheduleCampaign(id: string, scheduledAt: string) {

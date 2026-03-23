@@ -5,6 +5,14 @@ import { pool } from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { parsePagination, buildPaginatedResult } from '../utils/pagination';
 import { campaignDispatchQueue } from '../queues/emailQueue';
+import { verifyAdminPassword } from '../utils/adminAuth';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function validateUUID(id: string, label = 'ID'): void {
+  if (!UUID_RE.test(id)) {
+    throw new AppError(`Invalid ${label} format`, 400);
+  }
+}
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR || '/app/uploads';
 
@@ -51,6 +59,7 @@ export async function listCampaigns(req: Request, res: Response, next: NextFunct
 export async function getCampaign(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { id } = req.params;
+    validateUUID(id, 'campaign ID');
     const result = await pool.query(
       `SELECT c.*, t.name as template_name, t.subject as template_subject, cl.name as list_name
        FROM campaigns c
@@ -102,6 +111,7 @@ export async function createCampaign(req: Request, res: Response, next: NextFunc
 export async function updateCampaign(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { id } = req.params;
+    validateUUID(id, 'campaign ID');
     const { name, templateId, listId, provider, throttlePerSecond, throttlePerHour } = req.body;
 
     const existing = await pool.query('SELECT status FROM campaigns WHERE id = $1', [id]);
@@ -133,12 +143,55 @@ export async function updateCampaign(req: Request, res: Response, next: NextFunc
 export async function deleteCampaign(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { id } = req.params;
-    const existing = await pool.query('SELECT status FROM campaigns WHERE id = $1', [id]);
-    if (existing.rows.length === 0) throw new AppError('Campaign not found', 404);
-    if (existing.rows[0].status !== 'draft') throw new AppError('Can only delete draft campaigns', 400);
+    validateUUID(id, 'campaign ID');
+    const { adminPassword } = req.body;
+    await verifyAdminPassword(adminPassword);
 
+    const existing = await pool.query('SELECT id, attachments FROM campaigns WHERE id = $1', [id]);
+    if (existing.rows.length === 0) throw new AppError('Campaign not found', 404);
+
+    // Clean up attachment files from disk
+    const attachments = existing.rows[0].attachments || [];
+    for (const att of attachments) {
+      if (att.storagePath && fs.existsSync(att.storagePath)) {
+        fs.unlinkSync(att.storagePath);
+      }
+    }
+
+    // campaign_recipients and email_events cascade via ON DELETE CASCADE
     await pool.query('DELETE FROM campaigns WHERE id = $1', [id]);
     res.json({ message: 'Campaign deleted' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function bulkDeleteCampaigns(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { ids, adminPassword } = req.body;
+    await verifyAdminPassword(adminPassword);
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw new AppError('ids must be a non-empty array', 400);
+    }
+    for (const id of ids) {
+      validateUUID(id, 'campaign ID');
+    }
+
+    // Clean up attachment files from disk
+    const campaigns = await pool.query('SELECT id, attachments FROM campaigns WHERE id = ANY($1)', [ids]);
+    for (const campaign of campaigns.rows) {
+      const attachments = campaign.attachments || [];
+      for (const att of attachments) {
+        if (att.storagePath && fs.existsSync(att.storagePath)) {
+          fs.unlinkSync(att.storagePath);
+        }
+      }
+    }
+
+    // campaign_recipients and email_events cascade via ON DELETE CASCADE
+    const result = await pool.query('DELETE FROM campaigns WHERE id = ANY($1)', [ids]);
+    res.json({ message: `${result.rowCount} campaign(s) deleted` });
   } catch (err) {
     next(err);
   }
@@ -147,6 +200,7 @@ export async function deleteCampaign(req: Request, res: Response, next: NextFunc
 export async function scheduleCampaign(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { id } = req.params;
+    validateUUID(id, 'campaign ID');
     const { scheduledAt } = req.body;
 
     // FIX: Validate scheduledAt is in the future
@@ -194,6 +248,7 @@ export async function scheduleCampaign(req: Request, res: Response, next: NextFu
 export async function sendCampaign(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { id } = req.params;
+    validateUUID(id, 'campaign ID');
 
     const existing = await pool.query('SELECT status, template_id, list_id FROM campaigns WHERE id = $1', [id]);
     if (existing.rows.length === 0) throw new AppError('Campaign not found', 404);
@@ -230,6 +285,7 @@ export async function sendCampaign(req: Request, res: Response, next: NextFuncti
 export async function pauseCampaign(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { id } = req.params;
+    validateUUID(id, 'campaign ID');
     const result = await pool.query(
       "UPDATE campaigns SET status = 'paused', updated_at = NOW() WHERE id = $1 AND status = 'sending' RETURNING id",
       [id]
@@ -244,6 +300,7 @@ export async function pauseCampaign(req: Request, res: Response, next: NextFunct
 export async function resumeCampaign(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { id } = req.params;
+    validateUUID(id, 'campaign ID');
 
     // FIX: Validate template and list still exist before resuming
     const existing = await pool.query('SELECT template_id, list_id FROM campaigns WHERE id = $1 AND status = $2', [id, 'paused']);
@@ -273,6 +330,7 @@ export async function resumeCampaign(req: Request, res: Response, next: NextFunc
 export async function addAttachments(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { id } = req.params;
+    validateUUID(id, 'campaign ID');
 
     const existing = await pool.query('SELECT status, attachments FROM campaigns WHERE id = $1', [id]);
     if (existing.rows.length === 0) throw new AppError('Campaign not found', 404);
@@ -315,6 +373,7 @@ export async function addAttachments(req: Request, res: Response, next: NextFunc
 export async function removeAttachment(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { id, index } = req.params;
+    validateUUID(id, 'campaign ID');
     const idx = parseInt(index);
 
     const existing = await pool.query('SELECT status, attachments FROM campaigns WHERE id = $1', [id]);
@@ -350,6 +409,7 @@ export async function removeAttachment(req: Request, res: Response, next: NextFu
 export async function getCampaignRecipients(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { id } = req.params;
+    validateUUID(id, 'campaign ID');
     const { page, limit, offset } = parsePagination(req.query as { page?: string; limit?: string });
     const { status } = req.query;
 

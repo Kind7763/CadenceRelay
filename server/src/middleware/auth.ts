@@ -17,17 +17,20 @@ declare global {
 }
 
 export function authenticate(req: Request, _res: Response, next: NextFunction): void {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    throw new AppError('Authentication required', 401);
-  }
-
-  const token = authHeader.split(' ')[1];
   try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return next(new AppError('Authentication required', 401));
+    }
+
+    const token = authHeader.split(' ')[1];
     const decoded = jwt.verify(token, config.jwt.secret) as AuthPayload;
     req.user = decoded;
     next();
-  } catch {
-    throw new AppError('Invalid or expired token', 401);
+  } catch (err) {
+    if (err instanceof AppError) {
+      return next(err);
+    }
+    next(new AppError('Invalid or expired token', 401));
   }
 }

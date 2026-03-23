@@ -2,8 +2,8 @@ import { Router } from 'express';
 import multer from 'multer';
 import {
   listCampaigns, getCampaign, createCampaign, updateCampaign, deleteCampaign,
-  scheduleCampaign, sendCampaign, pauseCampaign, resumeCampaign, getCampaignRecipients,
-  addAttachments, removeAttachment,
+  bulkDeleteCampaigns, scheduleCampaign, sendCampaign, pauseCampaign, resumeCampaign,
+  getCampaignRecipients, addAttachments, removeAttachment,
 } from '../controllers/campaigns.controller';
 import { validateBody } from '../middleware/validateRequest';
 import { z } from 'zod';
@@ -47,6 +47,7 @@ router.post('/', upload.array('attachments', 10), (req, _res, next) => {
   next();
 }, createCampaign);
 router.put('/:id', validateBody(updateSchema), updateCampaign);
+router.delete('/bulk', bulkDeleteCampaigns);
 router.delete('/:id', deleteCampaign);
 router.post('/:id/schedule', validateBody(scheduleSchema), scheduleCampaign);
 router.post('/:id/send', sendCampaign);

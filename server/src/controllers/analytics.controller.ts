@@ -2,6 +2,22 @@ import { Request, Response, NextFunction } from 'express';
 import { pool } from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function validateUUID(id: string, label = 'ID'): void {
+  if (!UUID_RE.test(id)) {
+    throw new AppError(`Invalid ${label} format`, 400);
+  }
+}
+
+function escapeCSV(value: string | null | undefined): string {
+  if (value == null) return '';
+  const str = String(value);
+  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
 export async function getDashboard(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { from, to } = req.query;
@@ -112,6 +128,7 @@ export async function getDashboard(req: Request, res: Response, next: NextFuncti
 export async function getCampaignAnalytics(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { id } = req.params;
+    validateUUID(id, 'campaign ID');
 
     // Time series events for this campaign
     const events = await pool.query(
@@ -171,7 +188,7 @@ export async function exportAnalytics(req: Request, res: Response, next: NextFun
 
     const header = 'name,status,provider,total_recipients,sent,failed,bounced,opens,clicks,complaints,unsubscribes,started_at,completed_at,created_at\n';
     const rows = result.rows.map((r) =>
-      `"${r.name}",${r.status},${r.provider},${r.total_recipients},${r.sent_count},${r.failed_count},${r.bounce_count},${r.open_count},${r.click_count},${r.complaint_count},${r.unsubscribe_count},${r.started_at || ''},${r.completed_at || ''},${r.created_at}`
+      `${escapeCSV(r.name)},${escapeCSV(r.status)},${escapeCSV(r.provider)},${r.total_recipients},${r.sent_count},${r.failed_count},${r.bounce_count},${r.open_count},${r.click_count},${r.complaint_count},${r.unsubscribe_count},${r.started_at || ''},${r.completed_at || ''},${r.created_at}`
     ).join('\n');
 
     res.setHeader('Content-Type', 'text/csv');

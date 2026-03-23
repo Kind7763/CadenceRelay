@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { listContacts, importContacts, exportContacts, createContact, deleteContact, Contact } from '../api/contacts.api';
+import { listContacts, importContacts, exportContacts, createContact, deleteContact, bulkDeleteContacts, Contact } from '../api/contacts.api';
 import { listLists, ContactList } from '../api/lists.api';
+import AdminPasswordModal from '../components/ui/AdminPasswordModal';
 
 function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -23,6 +24,8 @@ export default function Contacts() {
   const [newName, setNewName] = useState('');
   const [newListId, setNewListId] = useState('');
   const [emailError, setEmailError] = useState('');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [deleteModal, setDeleteModal] = useState<{ type: 'single' | 'bulk'; id?: string } | null>(null);
   const navigate = useNavigate();
 
   const fetchContacts = useCallback(async () => {
@@ -44,6 +47,26 @@ export default function Contacts() {
 
   useEffect(() => { fetchContacts(); }, [fetchContacts]);
   useEffect(() => { listLists().then(setLists).catch(() => {}); }, []);
+
+  // Clear selection when page/filters change
+  useEffect(() => { setSelectedIds(new Set()); }, [page, search, statusFilter, listFilter]);
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (selectedIds.size === contacts.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(contacts.map((c) => c.id)));
+    }
+  }
 
   async function handleAdd() {
     if (!newEmail.trim()) {
@@ -69,15 +92,21 @@ export default function Contacts() {
     }
   }
 
-  async function handleDelete(id: string) {
-    if (!confirm('Delete this contact?')) return;
-    try {
-      await deleteContact(id);
+  async function handleDeleteConfirm(password: string) {
+    if (!deleteModal) return;
+
+    if (deleteModal.type === 'single' && deleteModal.id) {
+      await deleteContact(deleteModal.id, password);
       toast.success('Contact deleted');
-      fetchContacts();
-    } catch {
-      toast.error('Failed to delete');
+    } else if (deleteModal.type === 'bulk') {
+      const ids = Array.from(selectedIds);
+      await bulkDeleteContacts(ids, password);
+      toast.success(`${ids.length} contact(s) deleted`);
+      setSelectedIds(new Set());
     }
+
+    setDeleteModal(null);
+    fetchContacts();
   }
 
   const totalPages = Math.ceil(total / 50);
@@ -87,6 +116,14 @@ export default function Contacts() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">Contacts</h1>
         <div className="flex gap-2">
+          {selectedIds.size > 0 && (
+            <button
+              onClick={() => setDeleteModal({ type: 'bulk' })}
+              className="rounded-lg bg-red-600 px-3 py-2 text-sm text-white hover:bg-red-700"
+            >
+              Delete Selected ({selectedIds.size})
+            </button>
+          )}
           <button onClick={() => exportContacts(listFilter || undefined)} className="rounded-lg border border-gray-300 px-3 py-2 text-sm hover:bg-gray-50">Export CSV</button>
           <button onClick={() => setShowImportModal(true)} className="rounded-lg border border-gray-300 px-3 py-2 text-sm hover:bg-gray-50">Import CSV</button>
           <button onClick={() => setShowAddModal(true)} className="rounded-lg bg-primary-600 px-4 py-2 text-sm text-white hover:bg-primary-700">Add Contact</button>
@@ -129,6 +166,14 @@ export default function Contacts() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50">
               <tr>
+                <th className="w-10 px-4 py-3">
+                  <input
+                    type="checkbox"
+                    checked={contacts.length > 0 && selectedIds.size === contacts.length}
+                    onChange={toggleSelectAll}
+                    className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                  />
+                </th>
                 <th className="px-4 py-3 text-left font-medium text-gray-600">Email</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-600">Name</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-600">Status</th>
@@ -139,10 +184,10 @@ export default function Contacts() {
             </thead>
             <tbody className="divide-y divide-gray-100">
               {loading ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400">Loading...</td></tr>
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">Loading...</td></tr>
               ) : contacts.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-12 text-center">
+                  <td colSpan={7} className="px-4 py-12 text-center">
                     <div className="text-gray-400">
                       <p className="text-lg font-medium">No contacts found</p>
                       <p className="mt-1 text-sm">
@@ -154,10 +199,18 @@ export default function Contacts() {
                   </td>
                 </tr>
               ) : contacts.map((c) => (
-                <tr key={c.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => navigate(`/contacts/${c.id}`)}>
-                  <td className="px-4 py-3">{c.email}</td>
-                  <td className="px-4 py-3">{c.name || '-'}</td>
-                  <td className="px-4 py-3">
+                <tr key={c.id} className={`hover:bg-gray-50 cursor-pointer ${selectedIds.has(c.id) ? 'bg-primary-50' : ''}`}>
+                  <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(c.id)}
+                      onChange={() => toggleSelect(c.id)}
+                      className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                    />
+                  </td>
+                  <td className="px-4 py-3" onClick={() => navigate(`/contacts/${c.id}`)}>{c.email}</td>
+                  <td className="px-4 py-3" onClick={() => navigate(`/contacts/${c.id}`)}>{c.name || '-'}</td>
+                  <td className="px-4 py-3" onClick={() => navigate(`/contacts/${c.id}`)}>
                     <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${
                       c.status === 'active' ? 'bg-green-100 text-green-700' :
                       c.status === 'bounced' ? 'bg-red-100 text-red-700' :
@@ -165,10 +218,15 @@ export default function Contacts() {
                       'bg-gray-100 text-gray-700'
                     }`}>{c.status}</span>
                   </td>
-                  <td className="px-4 py-3">{c.send_count}</td>
-                  <td className="px-4 py-3">{c.bounce_count}</td>
+                  <td className="px-4 py-3" onClick={() => navigate(`/contacts/${c.id}`)}>{c.send_count}</td>
+                  <td className="px-4 py-3" onClick={() => navigate(`/contacts/${c.id}`)}>{c.bounce_count}</td>
                   <td className="px-4 py-3">
-                    <button onClick={(e) => { e.stopPropagation(); handleDelete(c.id); }} className="text-red-600 hover:text-red-800 text-xs">Delete</button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setDeleteModal({ type: 'single', id: c.id }); }}
+                      className="text-red-600 hover:text-red-800 text-xs"
+                    >
+                      Delete
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -187,6 +245,21 @@ export default function Contacts() {
             <button disabled={page >= totalPages} onClick={() => setPage(page + 1)} className="rounded border px-3 py-1 disabled:opacity-50 hover:bg-gray-50">Next</button>
           </div>
         </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteModal && (
+        <AdminPasswordModal
+          title={
+            deleteModal.type === 'single'
+              ? 'Delete contact?'
+              : `Delete ${selectedIds.size} contact(s)?`
+          }
+          description="This action cannot be undone. The contact(s) will be permanently removed. Historical send data will be preserved."
+          confirmLabel="Delete"
+          onConfirm={handleDeleteConfirm}
+          onCancel={() => setDeleteModal(null)}
+        />
       )}
 
       {/* Import Modal */}

@@ -2,6 +2,15 @@ import { Request, Response, NextFunction } from 'express';
 import { pool } from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { parsePagination, buildPaginatedResult } from '../utils/pagination';
+import { verifyAdminPassword } from '../utils/adminAuth';
+
+// Validate UUID format to avoid Postgres "invalid input syntax for type uuid" 500 errors
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function validateUUID(id: string, label = 'ID'): void {
+  if (!UUID_RE.test(id)) {
+    throw new AppError(`Invalid ${label} format`, 400);
+  }
+}
 
 export async function listContacts(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -67,6 +76,7 @@ export async function listContacts(req: Request, res: Response, next: NextFuncti
 export async function getContact(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { id } = req.params;
+    validateUUID(id, 'contact ID');
 
     const result = await pool.query(
       `SELECT c.*,
@@ -149,6 +159,7 @@ export async function createContact(req: Request, res: Response, next: NextFunct
 export async function updateContact(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { id } = req.params;
+    validateUUID(id, 'contact ID');
     const { email, name, metadata, status } = req.body;
 
     // FIX: Pass metadata as a proper JSON object (not stringified) so COALESCE works correctly with the jsonb column
@@ -176,11 +187,81 @@ export async function updateContact(req: Request, res: Response, next: NextFunct
 export async function deleteContact(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { id } = req.params;
-    const result = await pool.query('DELETE FROM contacts WHERE id = $1 RETURNING id', [id]);
-    if (result.rows.length === 0) {
-      throw new AppError('Contact not found', 404);
+    validateUUID(id, 'contact ID');
+    const { adminPassword } = req.body;
+    await verifyAdminPassword(adminPassword);
+
+    // Use a transaction to clean up foreign key references before deleting
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Check contact exists
+      const existing = await client.query('SELECT id FROM contacts WHERE id = $1', [id]);
+      if (existing.rows.length === 0) {
+        await client.query('ROLLBACK');
+        throw new AppError('Contact not found', 404);
+      }
+
+      // Nullify contact_id in campaign_recipients so historical send data is preserved
+      // but the FK constraint no longer blocks deletion
+      await client.query(
+        'UPDATE campaign_recipients SET contact_id = NULL WHERE contact_id = $1',
+        [id]
+      );
+
+      // contact_list_members has ON DELETE CASCADE, so no manual cleanup needed
+
+      // Now delete the contact
+      await client.query('DELETE FROM contacts WHERE id = $1', [id]);
+
+      await client.query('COMMIT');
+    } catch (txErr) {
+      await client.query('ROLLBACK');
+      throw txErr;
+    } finally {
+      client.release();
     }
+
     res.json({ message: 'Contact deleted' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function bulkDeleteContacts(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { ids, adminPassword } = req.body;
+    await verifyAdminPassword(adminPassword);
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw new AppError('ids must be a non-empty array', 400);
+    }
+    for (const id of ids) {
+      validateUUID(id, 'contact ID');
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Nullify contact_id in campaign_recipients for all contacts being deleted
+      await client.query(
+        'UPDATE campaign_recipients SET contact_id = NULL WHERE contact_id = ANY($1)',
+        [ids]
+      );
+
+      // contact_list_members has ON DELETE CASCADE
+      const result = await client.query('DELETE FROM contacts WHERE id = ANY($1)', [ids]);
+
+      await client.query('COMMIT');
+      res.json({ message: `${result.rowCount} contact(s) deleted` });
+    } catch (txErr) {
+      await client.query('ROLLBACK');
+      throw txErr;
+    } finally {
+      client.release();
+    }
   } catch (err) {
     next(err);
   }

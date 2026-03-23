@@ -33,8 +33,13 @@ export async function updateContact(id: string, data: Partial<Contact>) {
   return res.data;
 }
 
-export async function deleteContact(id: string) {
-  const res = await apiClient.delete(`/contacts/${id}`);
+export async function deleteContact(id: string, adminPassword: string) {
+  const res = await apiClient.delete(`/contacts/${id}`, { data: { adminPassword } });
+  return res.data;
+}
+
+export async function bulkDeleteContacts(ids: string[], adminPassword: string) {
+  const res = await apiClient.delete('/contacts/bulk', { data: { ids, adminPassword } });
   return res.data;
 }
 

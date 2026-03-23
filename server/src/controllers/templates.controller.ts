@@ -3,6 +3,13 @@ import { pool } from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { detectVariables, renderTemplate } from '../utils/templateRenderer';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function validateUUID(id: string, label = 'ID'): void {
+  if (!UUID_RE.test(id)) {
+    throw new AppError(`Invalid ${label} format`, 400);
+  }
+}
+
 export async function listTemplates(_req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const result = await pool.query(
@@ -17,6 +24,7 @@ export async function listTemplates(_req: Request, res: Response, next: NextFunc
 export async function getTemplate(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { id } = req.params;
+    validateUUID(id, 'template ID');
     const result = await pool.query('SELECT * FROM templates WHERE id = $1', [id]);
     if (result.rows.length === 0) throw new AppError('Template not found', 404);
     res.json({ template: result.rows[0] });
@@ -52,6 +60,7 @@ export async function createTemplate(req: Request, res: Response, next: NextFunc
 export async function updateTemplate(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { id } = req.params;
+    validateUUID(id, 'template ID');
     const { name, subject, htmlBody, textBody } = req.body;
 
     const existing = await pool.query('SELECT * FROM templates WHERE id = $1', [id]);
@@ -93,6 +102,7 @@ export async function updateTemplate(req: Request, res: Response, next: NextFunc
 export async function deleteTemplate(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { id } = req.params;
+    validateUUID(id, 'template ID');
     const result = await pool.query(
       'UPDATE templates SET is_active = false, updated_at = NOW() WHERE id = $1 RETURNING id',
       [id]
@@ -107,6 +117,7 @@ export async function deleteTemplate(req: Request, res: Response, next: NextFunc
 export async function getTemplateVersions(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { id } = req.params;
+    validateUUID(id, 'template ID');
     const result = await pool.query(
       'SELECT id, version, subject, created_at FROM template_versions WHERE template_id = $1 ORDER BY version DESC',
       [id]
@@ -120,6 +131,7 @@ export async function getTemplateVersions(req: Request, res: Response, next: Nex
 export async function getTemplateVersion(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { id, version } = req.params;
+    validateUUID(id, 'template ID');
 
     // FIX: Validate that version is a valid number
     const versionNum = parseInt(version);
@@ -141,6 +153,7 @@ export async function getTemplateVersion(req: Request, res: Response, next: Next
 export async function previewTemplate(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { id } = req.params;
+    validateUUID(id, 'template ID');
     const { data } = req.body;
 
     const result = await pool.query('SELECT html_body FROM templates WHERE id = $1', [id]);

@@ -6,6 +6,7 @@ import {
   createContact,
   updateContact,
   deleteContact,
+  bulkDeleteContacts,
   importContacts,
   exportContacts,
 } from '../controllers/contacts.controller';
@@ -34,6 +35,7 @@ router.get('/export', exportContacts);
 router.get('/:id', getContact);
 router.post('/', validateBody(createSchema), createContact);
 router.put('/:id', validateBody(updateSchema), updateContact);
+router.delete('/bulk', bulkDeleteContacts);
 router.delete('/:id', deleteContact);
 router.post('/import', upload.single('file'), importContacts);
 

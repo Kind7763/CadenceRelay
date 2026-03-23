@@ -7,6 +7,7 @@ import listsRoutes from './lists.routes';
 import templatesRoutes from './templates.routes';
 import campaignsRoutes from './campaigns.routes';
 import analyticsRoutes from './analytics.routes';
+import adminRoutes from './admin.routes';
 import trackingRoutes from './tracking.routes';
 import webhookRoutes from './webhooks.routes';
 
@@ -30,6 +31,7 @@ router.use('/contacts', authenticate, contactsRoutes);
 router.use('/lists', authenticate, listsRoutes);
 router.use('/templates', authenticate, templatesRoutes);
 router.use('/campaigns', authenticate, campaignsRoutes);
+router.use('/admin', authenticate, adminRoutes);
 
 // Public routes
 router.use('/t', trackingRoutes);

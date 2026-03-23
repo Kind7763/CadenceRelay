@@ -9,6 +9,8 @@ import {
   updateReplyTo,
   sendTestEmail,
 } from '../api/settings.api';
+import { clearHistory } from '../api/admin.api';
+import AdminPasswordModal from '../components/ui/AdminPasswordModal';
 
 type ConnectionStatus = 'idle' | 'testing' | 'success' | 'error';
 
@@ -28,6 +30,8 @@ export default function Settings() {
 
   const [gmailErrors, setGmailErrors] = useState<Record<string, string>>({});
   const [sesErrors, setSesErrors] = useState<Record<string, string>>({});
+
+  const [clearHistoryModal, setClearHistoryModal] = useState<'campaigns' | 'contacts' | 'all' | null>(null);
 
   useEffect(() => {
     loadSettings();
@@ -374,6 +378,84 @@ export default function Settings() {
           </button>
         </div>
       </form>
+
+      {/* Clear History / Danger Zone */}
+      <div className="mt-10 rounded-xl border-2 border-red-200 bg-red-50 p-6">
+        <h2 className="text-lg font-semibold text-red-900">Danger Zone</h2>
+        <p className="mt-1 text-sm text-red-700">These actions are irreversible. Proceed with caution.</p>
+        <div className="mt-4 space-y-3">
+          <div className="flex items-center justify-between rounded-lg bg-white p-4 shadow-sm">
+            <div>
+              <h3 className="text-sm font-medium text-gray-900">Clear Campaign History</h3>
+              <p className="text-xs text-gray-500">Delete all campaigns, recipients, email events, and unsubscribes</p>
+            </div>
+            <button
+              onClick={() => setClearHistoryModal('campaigns')}
+              className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
+            >
+              Clear Campaigns
+            </button>
+          </div>
+          <div className="flex items-center justify-between rounded-lg bg-white p-4 shadow-sm">
+            <div>
+              <h3 className="text-sm font-medium text-gray-900">Clear All Contacts</h3>
+              <p className="text-xs text-gray-500">Delete all contacts and their list memberships</p>
+            </div>
+            <button
+              onClick={() => setClearHistoryModal('contacts')}
+              className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
+            >
+              Clear Contacts
+            </button>
+          </div>
+          <div className="flex items-center justify-between rounded-lg bg-white p-4 shadow-sm">
+            <div>
+              <h3 className="text-sm font-medium text-gray-900">Clear Everything</h3>
+              <p className="text-xs text-gray-500">Delete all campaigns AND contacts. A complete data reset.</p>
+            </div>
+            <button
+              onClick={() => setClearHistoryModal('all')}
+              className="rounded-lg bg-red-900 px-4 py-2 text-sm font-medium text-white hover:bg-red-950"
+            >
+              Clear All Data
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {clearHistoryModal && (
+        <AdminPasswordModal
+          title={
+            clearHistoryModal === 'campaigns'
+              ? 'Clear all campaign history?'
+              : clearHistoryModal === 'contacts'
+              ? 'Clear all contacts?'
+              : 'Clear ALL data?'
+          }
+          description={
+            clearHistoryModal === 'campaigns'
+              ? 'This will permanently delete ALL campaigns, recipients, email events, and unsubscribes. This action cannot be undone.'
+              : clearHistoryModal === 'contacts'
+              ? 'This will permanently delete ALL contacts and their list memberships. Historical send data will be preserved. This action cannot be undone.'
+              : 'This will permanently delete ALL campaigns AND contacts. This is a complete data reset and cannot be undone.'
+          }
+          confirmLabel={
+            clearHistoryModal === 'all' ? 'Delete Everything' : 'Clear History'
+          }
+          onConfirm={async (password) => {
+            await clearHistory(clearHistoryModal, password);
+            toast.success(
+              clearHistoryModal === 'campaigns'
+                ? 'All campaign history cleared'
+                : clearHistoryModal === 'contacts'
+                ? 'All contacts cleared'
+                : 'All data cleared'
+            );
+            setClearHistoryModal(null);
+          }}
+          onCancel={() => setClearHistoryModal(null)}
+        />
+      )}
     </div>
   );
 }

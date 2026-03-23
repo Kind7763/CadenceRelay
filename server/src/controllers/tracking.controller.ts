@@ -170,29 +170,48 @@ export async function unsubscribePost(req: Request, res: Response): Promise<void
     if (result.rows.length > 0) {
       const { id, campaign_id, email } = result.rows[0];
 
-      // Update contact status
-      await pool.query("UPDATE contacts SET status = 'unsubscribed', updated_at = NOW() WHERE email = $1", [email]);
+      // Use a transaction so all unsubscribe updates are atomic
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
 
-      // Update recipient
-      await pool.query("UPDATE campaign_recipients SET status = 'unsubscribed' WHERE id = $1", [id]);
+        // Update contact status
+        await client.query("UPDATE contacts SET status = 'unsubscribed', updated_at = NOW() WHERE email = $1", [email]);
 
-      // Record event
-      await pool.query(
-        "INSERT INTO email_events (campaign_recipient_id, campaign_id, event_type) VALUES ($1, $2, 'unsubscribed')",
-        [id, campaign_id]
-      );
+        // Update recipient (only if not already unsubscribed to avoid double-counting)
+        const updateResult = await client.query(
+          "UPDATE campaign_recipients SET status = 'unsubscribed' WHERE id = $1 AND status != 'unsubscribed' RETURNING id",
+          [id]
+        );
 
-      // Update campaign counter
-      await pool.query(
-        'UPDATE campaigns SET unsubscribe_count = unsubscribe_count + 1, updated_at = NOW() WHERE id = $1',
-        [campaign_id]
-      );
+        // Only insert event and increment counter if status actually changed
+        if (updateResult.rows.length > 0) {
+          // Record event
+          await client.query(
+            "INSERT INTO email_events (campaign_recipient_id, campaign_id, event_type) VALUES ($1, $2, 'unsubscribed')",
+            [id, campaign_id]
+          );
 
-      // Add to unsubscribes table
-      await pool.query(
-        'INSERT INTO unsubscribes (email, campaign_id) VALUES ($1, $2) ON CONFLICT (email) DO NOTHING',
-        [email, campaign_id]
-      );
+          // Update campaign counter
+          await client.query(
+            'UPDATE campaigns SET unsubscribe_count = unsubscribe_count + 1, updated_at = NOW() WHERE id = $1',
+            [campaign_id]
+          );
+        }
+
+        // Add to unsubscribes table
+        await client.query(
+          'INSERT INTO unsubscribes (email, campaign_id) VALUES ($1, $2) ON CONFLICT (email) DO NOTHING',
+          [email, campaign_id]
+        );
+
+        await client.query('COMMIT');
+      } catch (txErr) {
+        await client.query('ROLLBACK');
+        throw txErr;
+      } finally {
+        client.release();
+      }
     }
 
     res.send(`

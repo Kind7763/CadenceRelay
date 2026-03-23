@@ -3,6 +3,13 @@ import { pool } from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { parsePagination, buildPaginatedResult } from '../utils/pagination';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function validateUUID(id: string, label = 'ID'): void {
+  if (!UUID_RE.test(id)) {
+    throw new AppError(`Invalid ${label} format`, 400);
+  }
+}
+
 export async function listLists(_req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const result = await pool.query(
@@ -17,6 +24,7 @@ export async function listLists(_req: Request, res: Response, next: NextFunction
 export async function getList(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { id } = req.params;
+    validateUUID(id, 'list ID');
     const { page, limit, offset } = parsePagination(req.query as { page?: string; limit?: string });
 
     const listResult = await pool.query('SELECT * FROM contact_lists WHERE id = $1', [id]);
@@ -64,6 +72,7 @@ export async function createList(req: Request, res: Response, next: NextFunction
 export async function updateList(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { id } = req.params;
+    validateUUID(id, 'list ID');
     const { name, description } = req.body;
 
     const result = await pool.query(
@@ -84,10 +93,49 @@ export async function updateList(req: Request, res: Response, next: NextFunction
 export async function deleteList(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { id } = req.params;
-    const result = await pool.query('DELETE FROM contact_lists WHERE id = $1 RETURNING id', [id]);
-    if (result.rows.length === 0) {
-      throw new AppError('List not found', 404);
+    validateUUID(id, 'list ID');
+
+    // Use a transaction to handle FK constraints from campaigns.list_id
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const existing = await client.query('SELECT id FROM contact_lists WHERE id = $1', [id]);
+      if (existing.rows.length === 0) {
+        await client.query('ROLLBACK');
+        throw new AppError('List not found', 404);
+      }
+
+      // Check if any non-draft campaigns reference this list
+      const activeCampaigns = await client.query(
+        "SELECT id, name, status FROM campaigns WHERE list_id = $1 AND status NOT IN ('draft')",
+        [id]
+      );
+      if (activeCampaigns.rows.length > 0) {
+        await client.query('ROLLBACK');
+        throw new AppError(
+          `Cannot delete list: ${activeCampaigns.rows.length} campaign(s) are using this list (${activeCampaigns.rows.map((c: { name: string }) => c.name).join(', ')})`,
+          409
+        );
+      }
+
+      // Nullify list_id in draft campaigns so the FK doesn't block deletion
+      await client.query(
+        "UPDATE campaigns SET list_id = NULL, updated_at = NOW() WHERE list_id = $1 AND status = 'draft'",
+        [id]
+      );
+
+      // contact_list_members has ON DELETE CASCADE, so no manual cleanup needed
+      await client.query('DELETE FROM contact_lists WHERE id = $1', [id]);
+
+      await client.query('COMMIT');
+    } catch (txErr) {
+      await client.query('ROLLBACK');
+      throw txErr;
+    } finally {
+      client.release();
     }
+
     res.json({ message: 'List deleted' });
   } catch (err) {
     next(err);
@@ -97,6 +145,7 @@ export async function deleteList(req: Request, res: Response, next: NextFunction
 export async function addContactsToList(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { id } = req.params;
+    validateUUID(id, 'list ID');
     const { contactIds } = req.body;
 
     if (!contactIds || contactIds.length === 0) {
@@ -134,6 +183,7 @@ export async function addContactsToList(req: Request, res: Response, next: NextF
 export async function removeContactsFromList(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { id } = req.params;
+    validateUUID(id, 'list ID');
     const { contactIds } = req.body;
 
     if (!contactIds || contactIds.length === 0) {
