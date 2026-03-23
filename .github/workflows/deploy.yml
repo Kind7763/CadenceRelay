@@ -20,20 +20,32 @@ jobs:
             # Pull latest code
             git pull origin main
 
-            # Rebuild and restart containers (--no-deps prevents unnecessary rebuilds)
+            # Rebuild and restart containers
             docker compose -f docker-compose.prod.yml build --no-cache server worker client
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
 
-            # Run migrations (safe - only applies new ones, never drops)
+            # Wait for postgres to be healthy
             sleep 10
+
+            # Run SQL migration (safe - uses IF NOT EXISTS everywhere, never drops data)
+            docker compose -f docker-compose.prod.yml exec -T postgres \
+              psql -U $POSTGRES_USER -d $POSTGRES_DB -f /dev/stdin < scripts/migrate.sql
+
+            # Seed admin (skips if already exists)
             docker compose -f docker-compose.prod.yml exec -T server node -e "
+              const bcrypt = require('bcryptjs');
               const { Pool } = require('pg');
-              const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-              pool.query('SELECT 1').then(() => { console.log('DB ready'); pool.end(); }).catch(e => { console.error(e); process.exit(1); });
+              const pool = new Pool({connectionString: process.env.DATABASE_URL});
+              (async () => {
+                const r = await pool.query('SELECT id FROM admin_users WHERE username = \$1', [process.env.ADMIN_USERNAME]);
+                if (r.rows.length === 0) {
+                  const hash = await bcrypt.hash(process.env.ADMIN_PASSWORD, 12);
+                  await pool.query('INSERT INTO admin_users (username, password_hash) VALUES (\$1, \$2)', [process.env.ADMIN_USERNAME, hash]);
+                  console.log('Admin seeded');
+                } else { console.log('Admin exists'); }
+                pool.end();
+              })();
             "
-            docker compose -f docker-compose.prod.yml exec -T server npx node-pg-migrate up \
-              --migrations-dir dist/db/migrations \
-              --migration-file-language js
 
             # Cleanup old images
             docker image prune -f
