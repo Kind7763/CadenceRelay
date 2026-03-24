@@ -165,6 +165,12 @@ ALTER TABLE contacts ADD COLUMN IF NOT EXISTS category varchar(100);
 ALTER TABLE contacts ADD COLUMN IF NOT EXISTS management varchar(100);
 ALTER TABLE contacts ADD COLUMN IF NOT EXISTS address text;
 
+-- Widen classes column to handle longer values
+DO $$ BEGIN
+  ALTER TABLE contacts ALTER COLUMN classes TYPE varchar(255);
+EXCEPTION WHEN others THEN NULL;
+END $$;
+
 CREATE INDEX IF NOT EXISTS contacts_state_idx ON contacts(state);
 CREATE INDEX IF NOT EXISTS contacts_district_idx ON contacts(district);
 CREATE INDEX IF NOT EXISTS contacts_category_idx ON contacts(category);

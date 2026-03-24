@@ -418,6 +418,12 @@ export async function importContactsCSV(req: Request, res: Response, next: NextF
     const BATCH_SIZE = 500;
     let batch: ContactRow[] = [];
 
+    // Truncate a string to fit a VARCHAR(N) column
+    function truncate(val: string | null, maxLen: number): string | null {
+      if (!val) return null;
+      return val.length > maxLen ? val.substring(0, maxLen) : val;
+    }
+
     // Helper: flush a batch to the database
     async function flushBatch(rows: ContactRow[]): Promise<void> {
       if (rows.length === 0) return;
@@ -439,47 +445,66 @@ export async function importContactsCSV(req: Request, res: Response, next: NextF
         valuesPlaceholders.push(
           `($${paramIdx}, $${paramIdx + 1}, $${paramIdx + 2}, $${paramIdx + 3}, $${paramIdx + 4}, $${paramIdx + 5}, $${paramIdx + 6}, $${paramIdx + 7}, $${paramIdx + 8})`
         );
-        queryParams.push(row.email, row.name, row.state, row.district, row.block, row.classes, row.category, row.management, row.address);
+        queryParams.push(
+          truncate(row.email, 320),
+          truncate(row.name, 255),
+          truncate(row.state, 100),
+          truncate(row.district, 100),
+          truncate(row.block, 100),
+          truncate(row.classes, 255),
+          truncate(row.category, 100),
+          truncate(row.management, 100),
+          row.address // text — no limit
+        );
         paramIdx += 9;
       }
 
-      const insertResult = await pool.query(
-        `INSERT INTO contacts (email, name, state, district, block, classes, category, management, address)
-         VALUES ${valuesPlaceholders.join(', ')}
-         ON CONFLICT (email) DO UPDATE SET
-           name = COALESCE(EXCLUDED.name, contacts.name),
-           state = COALESCE(EXCLUDED.state, contacts.state),
-           district = COALESCE(EXCLUDED.district, contacts.district),
-           block = COALESCE(EXCLUDED.block, contacts.block),
-           classes = COALESCE(EXCLUDED.classes, contacts.classes),
-           category = COALESCE(EXCLUDED.category, contacts.category),
-           management = COALESCE(EXCLUDED.management, contacts.management),
-           address = COALESCE(EXCLUDED.address, contacts.address),
-           updated_at = NOW()
-         RETURNING id, (xmax = 0) AS is_new`,
-        queryParams
-      );
-
-      const newIds: string[] = [];
-      for (const row of insertResult.rows) {
-        if (row.is_new) imported++;
-        else duplicates++;
-        newIds.push(row.id);
-      }
-
-      if (listId && newIds.length > 0) {
-        const listValues: string[] = [];
-        const listParams: unknown[] = [];
-        let lIdx = 1;
-        for (const cId of newIds) {
-          listValues.push(`($${lIdx}, $${lIdx + 1})`);
-          listParams.push(cId, listId);
-          lIdx += 2;
-        }
-        await pool.query(
-          `INSERT INTO contact_list_members (contact_id, list_id) VALUES ${listValues.join(', ')} ON CONFLICT DO NOTHING`,
-          listParams
+      try {
+        const insertResult = await pool.query(
+          `INSERT INTO contacts (email, name, state, district, block, classes, category, management, address)
+           VALUES ${valuesPlaceholders.join(', ')}
+           ON CONFLICT (email) DO UPDATE SET
+             name = COALESCE(EXCLUDED.name, contacts.name),
+             state = COALESCE(EXCLUDED.state, contacts.state),
+             district = COALESCE(EXCLUDED.district, contacts.district),
+             block = COALESCE(EXCLUDED.block, contacts.block),
+             classes = COALESCE(EXCLUDED.classes, contacts.classes),
+             category = COALESCE(EXCLUDED.category, contacts.category),
+             management = COALESCE(EXCLUDED.management, contacts.management),
+             address = COALESCE(EXCLUDED.address, contacts.address),
+             updated_at = NOW()
+           RETURNING id, (xmax = 0) AS is_new`,
+          queryParams
         );
+
+        const newIds: string[] = [];
+        for (const row of insertResult.rows) {
+          if (row.is_new) imported++;
+          else duplicates++;
+          newIds.push(row.id);
+        }
+
+        if (listId && newIds.length > 0) {
+          const listValues: string[] = [];
+          const listParams: unknown[] = [];
+          let lIdx = 1;
+          for (const cId of newIds) {
+            listValues.push(`($${lIdx}, $${lIdx + 1})`);
+            listParams.push(cId, listId);
+            lIdx += 2;
+          }
+          await pool.query(
+            `INSERT INTO contact_list_members (contact_id, list_id) VALUES ${listValues.join(', ')} ON CONFLICT DO NOTHING`,
+            listParams
+          );
+        }
+      } catch (batchErr) {
+        // Log the batch error but continue importing remaining batches
+        const msg = batchErr instanceof Error ? batchErr.message : String(batchErr);
+        if (errors.length < 50) {
+          errors.push(`Batch error at rows ~${totalRows - rows.length + 1}-${totalRows}: ${msg}`);
+        }
+        skipped += uniqueRows.length;
       }
     }
 
@@ -517,16 +542,21 @@ export async function importContactsCSV(req: Request, res: Response, next: NextF
         continue;
       }
 
+      const getCol = (key: string): string | null => {
+        if (mapping[key] === undefined) return null;
+        return cols[mapping[key]]?.trim() || null;
+      };
+
       batch.push({
         email,
-        name: mapping['name'] !== undefined ? cols[mapping['name']]?.trim() || null : null,
-        state: mapping['state'] !== undefined ? cols[mapping['state']]?.trim() || null : null,
-        district: mapping['district'] !== undefined ? cols[mapping['district']]?.trim() || null : null,
-        block: mapping['block'] !== undefined ? cols[mapping['block']]?.trim() || null : null,
-        classes: mapping['classes'] !== undefined ? cols[mapping['classes']]?.trim() || null : null,
-        category: mapping['category'] !== undefined ? cols[mapping['category']]?.trim() || null : null,
-        management: mapping['management'] !== undefined ? cols[mapping['management']]?.trim() || null : null,
-        address: mapping['address'] !== undefined ? cols[mapping['address']]?.trim() || null : null,
+        name: getCol('name'),
+        state: getCol('state'),
+        district: getCol('district'),
+        block: getCol('block'),
+        classes: getCol('classes'),
+        category: getCol('category'),
+        management: getCol('management'),
+        address: getCol('address'),
       });
 
       if (batch.length >= BATCH_SIZE) {
