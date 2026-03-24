@@ -3,6 +3,7 @@ import { pool } from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { parsePagination, buildPaginatedResult } from '../utils/pagination';
 import { verifyAdminPassword } from '../utils/adminAuth';
+import { cacheThrough, cacheDel } from '../utils/cache';
 
 // Validate UUID format to avoid Postgres "invalid input syntax for type uuid" 500 errors
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -521,6 +522,9 @@ export async function importContactsCSV(req: Request, res: Response, next: NextF
       );
     }
 
+    // Invalidate contact filter cache after import
+    await cacheDel('contact-filters:*');
+
     res.json({
       imported,
       duplicates,
@@ -647,6 +651,9 @@ export async function importContacts(req: Request, res: Response, next: NextFunc
       );
     }
 
+    // Invalidate contact filter cache after import
+    await cacheDel('contact-filters:*');
+
     res.json({ imported, skipped, total: lines.length - 1, errors: errors.slice(0, 20) });
   } catch (err) {
     next(err);
@@ -714,56 +721,61 @@ export async function exportContacts(req: Request, res: Response, next: NextFunc
 export async function getContactFilters(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { state, district } = req.query;
+    const cacheKey = `contact-filters:${state || ''}:${district || ''}`;
 
-    const result: Record<string, string[]> = {};
+    const result = await cacheThrough<Record<string, string[]>>(cacheKey, async () => {
+      const filters: Record<string, string[]> = {};
 
-    // Always return states
-    const statesRes = await pool.query(
-      "SELECT DISTINCT state FROM contacts WHERE state IS NOT NULL AND state != '' ORDER BY state"
-    );
-    result.states = statesRes.rows.map((r) => r.state);
-
-    // Districts: optionally filtered by state
-    if (state) {
-      const states = (state as string).split(',').map(s => s.trim()).filter(Boolean);
-      const distRes = await pool.query(
-        "SELECT DISTINCT district FROM contacts WHERE district IS NOT NULL AND district != '' AND state = ANY($1) ORDER BY district",
-        [states]
+      // Always return states
+      const statesRes = await pool.query(
+        "SELECT DISTINCT state FROM contacts WHERE state IS NOT NULL AND state != '' ORDER BY state"
       );
-      result.districts = distRes.rows.map((r) => r.district);
-    } else {
-      const distRes = await pool.query(
-        "SELECT DISTINCT district FROM contacts WHERE district IS NOT NULL AND district != '' ORDER BY district"
-      );
-      result.districts = distRes.rows.map((r) => r.district);
-    }
+      filters.states = statesRes.rows.map((r) => r.state);
 
-    // Blocks: optionally filtered by district
-    if (district) {
-      const districts = (district as string).split(',').map(s => s.trim()).filter(Boolean);
-      const blockRes = await pool.query(
-        "SELECT DISTINCT block FROM contacts WHERE block IS NOT NULL AND block != '' AND district = ANY($1) ORDER BY block",
-        [districts]
-      );
-      result.blocks = blockRes.rows.map((r) => r.block);
-    } else {
-      const blockRes = await pool.query(
-        "SELECT DISTINCT block FROM contacts WHERE block IS NOT NULL AND block != '' ORDER BY block"
-      );
-      result.blocks = blockRes.rows.map((r) => r.block);
-    }
+      // Districts: optionally filtered by state
+      if (state) {
+        const states = (state as string).split(',').map(s => s.trim()).filter(Boolean);
+        const distRes = await pool.query(
+          "SELECT DISTINCT district FROM contacts WHERE district IS NOT NULL AND district != '' AND state = ANY($1) ORDER BY district",
+          [states]
+        );
+        filters.districts = distRes.rows.map((r) => r.district);
+      } else {
+        const distRes = await pool.query(
+          "SELECT DISTINCT district FROM contacts WHERE district IS NOT NULL AND district != '' ORDER BY district"
+        );
+        filters.districts = distRes.rows.map((r) => r.district);
+      }
 
-    // Categories
-    const catRes = await pool.query(
-      "SELECT DISTINCT category FROM contacts WHERE category IS NOT NULL AND category != '' ORDER BY category"
-    );
-    result.categories = catRes.rows.map((r) => r.category);
+      // Blocks: optionally filtered by district
+      if (district) {
+        const districts = (district as string).split(',').map(s => s.trim()).filter(Boolean);
+        const blockRes = await pool.query(
+          "SELECT DISTINCT block FROM contacts WHERE block IS NOT NULL AND block != '' AND district = ANY($1) ORDER BY block",
+          [districts]
+        );
+        filters.blocks = blockRes.rows.map((r) => r.block);
+      } else {
+        const blockRes = await pool.query(
+          "SELECT DISTINCT block FROM contacts WHERE block IS NOT NULL AND block != '' ORDER BY block"
+        );
+        filters.blocks = blockRes.rows.map((r) => r.block);
+      }
 
-    // Management types
-    const mgmtRes = await pool.query(
-      "SELECT DISTINCT management FROM contacts WHERE management IS NOT NULL AND management != '' ORDER BY management"
-    );
-    result.managements = mgmtRes.rows.map((r) => r.management);
+      // Categories
+      const catRes = await pool.query(
+        "SELECT DISTINCT category FROM contacts WHERE category IS NOT NULL AND category != '' ORDER BY category"
+      );
+      filters.categories = catRes.rows.map((r) => r.category);
+
+      // Management types
+      const mgmtRes = await pool.query(
+        "SELECT DISTINCT management FROM contacts WHERE management IS NOT NULL AND management != '' ORDER BY management"
+      );
+      filters.managements = mgmtRes.rows.map((r) => r.management);
+
+      return filters;
+    }, 300); // Cache for 5 minutes
 
     res.json(result);
   } catch (err) {

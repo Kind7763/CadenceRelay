@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { pool } from '../config/database';
 import { AppError } from '../middleware/errorHandler';
+import { cacheThrough, cacheDel } from '../utils/cache';
 
 // FIX: Mask sensitive fields so credentials are never returned in plaintext
 const SENSITIVE_KEYS = ['pass', 'password', 'secretAccessKey', 'secret', 'accessKeyId'];
@@ -39,23 +40,27 @@ function maskSensitiveValues(obj: unknown): unknown {
 
 export async function getSettings(_req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const result = await pool.query('SELECT key, value FROM settings ORDER BY key');
-    const settings: Record<string, unknown> = {};
-    for (const row of result.rows) {
-      // FIX: Mask sensitive fields before returning
-      let value = row.value;
-      if (typeof value === 'string') {
-        try {
-          const parsed = JSON.parse(value);
-          if (typeof parsed === 'object' && parsed !== null) {
-            value = JSON.stringify(maskSensitiveValues(parsed));
+    const settings = await cacheThrough<Record<string, unknown>>('settings', async () => {
+      const result = await pool.query('SELECT key, value FROM settings ORDER BY key');
+      const s: Record<string, unknown> = {};
+      for (const row of result.rows) {
+        // FIX: Mask sensitive fields before returning
+        let value = row.value;
+        if (typeof value === 'string') {
+          try {
+            const parsed = JSON.parse(value);
+            if (typeof parsed === 'object' && parsed !== null) {
+              value = JSON.stringify(maskSensitiveValues(parsed));
+            }
+          } catch {
+            // not JSON, keep as-is
           }
-        } catch {
-          // not JSON, keep as-is
         }
+        s[row.key] = value;
       }
-      settings[row.key] = value;
-    }
+      return s;
+    }, 60);
+
     res.json({ settings });
   } catch (err) {
     next(err);
@@ -74,6 +79,7 @@ export async function updateProvider(req: Request, res: Response, next: NextFunc
       [JSON.stringify(provider), 'email_provider']
     );
 
+    await cacheDel('settings');
     res.json({ message: 'Provider updated', provider });
   } catch (err) {
     next(err);
