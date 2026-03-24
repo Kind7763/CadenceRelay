@@ -462,12 +462,25 @@ export async function importContactsCSV(req: Request, res: Response, next: NextF
 
       if (validRows.length === 0) continue;
 
+      // Deduplicate within this batch — PostgreSQL ON CONFLICT can't handle
+      // the same email appearing twice in a single INSERT statement.
+      // Keep the last occurrence (later row wins).
+      const seenEmails = new Map<string, number>();
+      for (let ri = 0; ri < validRows.length; ri++) {
+        seenEmails.set(validRows[ri].email.toLowerCase(), ri);
+      }
+      const uniqueRows = [...seenEmails.values()].map(idx => validRows[idx]);
+      const inBatchDupes = validRows.length - uniqueRows.length;
+      if (inBatchDupes > 0) {
+        duplicates += inBatchDupes;
+      }
+
       // Batch insert with ON CONFLICT
       const valuesPlaceholders: string[] = [];
       const queryParams: unknown[] = [];
       let paramIdx = 1;
 
-      for (const row of validRows) {
+      for (const row of uniqueRows) {
         valuesPlaceholders.push(
           `($${paramIdx}, $${paramIdx + 1}, $${paramIdx + 2}, $${paramIdx + 3}, $${paramIdx + 4}, $${paramIdx + 5}, $${paramIdx + 6}, $${paramIdx + 7}, $${paramIdx + 8})`
         );
