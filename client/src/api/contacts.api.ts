@@ -85,13 +85,100 @@ export async function importContacts(file: File, listId?: string) {
   return res.data;
 }
 
+// Column name mapping: CSV header -> DB column (mirrors server-side COLUMN_MAP)
+const COLUMN_MAP: Record<string, string> = {
+  email: 'email',
+  name: 'name',
+  school_name: 'name',
+  state: 'state',
+  district: 'district',
+  block: 'block',
+  classes: 'classes',
+  category: 'category',
+  management: 'management',
+  address: 'address',
+};
+
+/** Parse a single CSV line handling quoted fields with commas/newlines */
+function parseCSVLine(line: string): string[] {
+  const fields: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (i + 1 < line.length && line[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        current += ch;
+      }
+    } else {
+      if (ch === '"') {
+        inQuotes = true;
+      } else if (ch === ',') {
+        fields.push(current.trim());
+        current = '';
+      } else {
+        current += ch;
+      }
+    }
+  }
+  fields.push(current.trim());
+  return fields;
+}
+
+/**
+ * Preview CSV **client-side** — reads only the first ~64KB of the file
+ * to extract headers + first 10 rows. Works instantly even for 65MB+ files.
+ */
 export async function previewCSV(file: File): Promise<CSVPreviewResult> {
-  const formData = new FormData();
-  formData.append('file', file);
-  const res = await apiClient.post('/contacts/preview-csv', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  });
-  return res.data;
+  // Read only the first 64KB — more than enough for header + 10 rows
+  const CHUNK_SIZE = 64 * 1024;
+  const slice = file.slice(0, CHUNK_SIZE);
+  const text = await slice.text();
+
+  // Split into lines (handle \r\n and \n)
+  const rawLines = text.split(/\r?\n/).filter((l) => l.trim());
+
+  if (rawLines.length < 1) {
+    throw new Error('CSV file is empty');
+  }
+
+  const headers = parseCSVLine(rawLines[0]).map((h) => h.trim());
+
+  // Auto-detect column mapping
+  const autoMapping: Record<string, string> = {};
+  for (const header of headers) {
+    const lower = header.toLowerCase();
+    if (COLUMN_MAP[lower]) {
+      autoMapping[header] = COLUMN_MAP[lower];
+    }
+  }
+
+  // Get first 10 data rows
+  const previewRows: string[][] = [];
+  for (let i = 1; i < Math.min(rawLines.length, 11); i++) {
+    previewRows.push(parseCSVLine(rawLines[i]));
+  }
+
+  // Count total lines by scanning for newlines in the entire file
+  // For very large files, estimate from file size and avg line length
+  let totalRows: number;
+  if (file.size <= CHUNK_SIZE) {
+    totalRows = rawLines.length - 1; // exact count for small files
+  } else {
+    // Estimate: (file_size / avg_bytes_per_line_in_sample) - 1 header
+    const sampleBytes = new Blob([rawLines.slice(0, 11).join('\n')]).size;
+    const avgBytesPerLine = sampleBytes / Math.min(rawLines.length, 11);
+    totalRows = Math.round(file.size / avgBytesPerLine) - 1;
+  }
+
+  return { headers, autoMapping, previewRows, totalRows };
 }
 
 /**

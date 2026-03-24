@@ -70,16 +70,39 @@ export async function listLists(_req: Request, res: Response, next: NextFunction
       'SELECT * FROM contact_lists ORDER BY created_at DESC'
     );
 
-    // For smart lists, compute dynamic contact count
-    for (const list of result.rows) {
-      if (list.is_smart && list.filter_criteria) {
+    // Batch compute smart list counts in a single query instead of N+1
+    const smartLists = result.rows.filter((l) => l.is_smart && l.filter_criteria);
+    if (smartLists.length > 0) {
+      // Build a UNION ALL of count queries for all smart lists at once
+      const unionParts: string[] = [];
+      const allParams: unknown[] = [];
+      let paramIdx = 1;
+
+      for (const list of smartLists) {
         const params: unknown[] = [];
-        const { where } = buildSmartFilterWhere(list.filter_criteria, params, 1);
-        const countRes = await pool.query(
-          `SELECT COUNT(*) FROM contacts c WHERE c.status = 'active' ${where}`,
-          params
+        const { where, paramIndex: endIdx } = buildSmartFilterWhere(list.filter_criteria, params, paramIdx);
+
+        // Add the list ID as a param so we can match results back
+        const listIdParamIdx = endIdx;
+        unionParts.push(
+          `SELECT $${listIdParamIdx}::uuid AS list_id, COUNT(*) AS cnt FROM contacts c WHERE c.status = 'active' ${where}`
         );
-        list.contact_count = parseInt(countRes.rows[0].count);
+        allParams.push(...params, list.id);
+        paramIdx = listIdParamIdx + 1;
+      }
+
+      if (unionParts.length > 0) {
+        const unionQuery = unionParts.join(' UNION ALL ');
+        const countResult = await pool.query(unionQuery, allParams);
+
+        // Map counts back to lists
+        const countMap = new Map<string, number>();
+        for (const row of countResult.rows) {
+          countMap.set(row.list_id, parseInt(row.cnt));
+        }
+        for (const list of smartLists) {
+          list.contact_count = countMap.get(list.id) || 0;
+        }
       }
     }
 

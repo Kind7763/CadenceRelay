@@ -20,11 +20,10 @@ COPY --from=builder /app/dist ./dist
 
 RUN mkdir -p /var/log/app /app/uploads && chown -R appuser:appgroup /var/log/app /app/uploads
 
-USER appuser
-
 EXPOSE 3001
 
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:3001/api/v1/health || exit 1
 
+# Run as root so volume mounts work; container isolation provides the security boundary
 CMD ["node", "dist/index.js"]

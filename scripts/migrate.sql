@@ -182,4 +182,14 @@ CREATE TABLE IF NOT EXISTS unsubscribes (
     reason text,
     created_at timestamptz DEFAULT NOW()
 );
-CREATE UNIQUE INDEX IF NOT EXISTS unsub_email_idx ON unsubscribes(email);
+-- Fix: unique per email+campaign, not just email (allow same email to unsub from multiple campaigns)
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'unsub_email_idx') THEN
+    DROP INDEX unsub_email_idx;
+  END IF;
+END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS unsub_email_campaign_idx ON unsubscribes(email, campaign_id);
+
+-- Performance indexes
+CREATE INDEX IF NOT EXISTS cr_campaign_status_idx ON campaign_recipients(campaign_id, status);
+CREATE INDEX IF NOT EXISTS contacts_created_idx ON contacts(created_at);

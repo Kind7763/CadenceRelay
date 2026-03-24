@@ -92,13 +92,75 @@ export function startCampaignDispatchWorker(): Worker {
       const campaignAttachments: AttachmentMeta[] = campaign.attachments || [];
 
       // Load contacts from list (only active, not bounced/complained/unsubscribed)
-      const contactsResult = await pool.query(
-        `SELECT c.id, c.email, c.name FROM contacts c
-         JOIN contact_list_members clm ON clm.contact_id = c.id
-         WHERE clm.list_id = $1 AND c.status = 'active'
-         AND c.id NOT IN (SELECT contact_id FROM campaign_recipients WHERE campaign_id = $2 AND contact_id IS NOT NULL)`,
-        [campaign.list_id, campaignId]
+      // Check if the list is a smart list
+      const listResult = await pool.query(
+        'SELECT is_smart, filter_criteria FROM contact_lists WHERE id = $1',
+        [campaign.list_id]
       );
+      if (listResult.rows.length === 0) throw new Error('Contact list not found');
+      const list = listResult.rows[0];
+
+      let contactsResult;
+      if (list.is_smart && list.filter_criteria) {
+        // Smart list: build dynamic query from filter_criteria
+        const criteria = typeof list.filter_criteria === 'string'
+          ? JSON.parse(list.filter_criteria) : list.filter_criteria;
+        const filterParams: unknown[] = [];
+        let filterWhere = '';
+        let paramIndex = 1;
+
+        if (criteria.state && Array.isArray(criteria.state) && criteria.state.length > 0) {
+          filterWhere += ` AND c.state = ANY($${paramIndex})`;
+          filterParams.push(criteria.state);
+          paramIndex++;
+        }
+        if (criteria.district && Array.isArray(criteria.district) && criteria.district.length > 0) {
+          filterWhere += ` AND c.district = ANY($${paramIndex})`;
+          filterParams.push(criteria.district);
+          paramIndex++;
+        }
+        if (criteria.block && Array.isArray(criteria.block) && criteria.block.length > 0) {
+          filterWhere += ` AND c.block = ANY($${paramIndex})`;
+          filterParams.push(criteria.block);
+          paramIndex++;
+        }
+        if (criteria.category && Array.isArray(criteria.category) && criteria.category.length > 0) {
+          filterWhere += ` AND c.category = ANY($${paramIndex})`;
+          filterParams.push(criteria.category);
+          paramIndex++;
+        }
+        if (criteria.management && Array.isArray(criteria.management) && criteria.management.length > 0) {
+          filterWhere += ` AND c.management = ANY($${paramIndex})`;
+          filterParams.push(criteria.management);
+          paramIndex++;
+        }
+        if (criteria.classes_min != null) {
+          filterWhere += ` AND CASE WHEN c.classes ~ '^[0-9]+-[0-9]+$' THEN CAST(split_part(c.classes, '-', 2) AS integer) >= $${paramIndex} ELSE true END`;
+          filterParams.push(criteria.classes_min);
+          paramIndex++;
+        }
+        if (criteria.classes_max != null) {
+          filterWhere += ` AND CASE WHEN c.classes ~ '^[0-9]+-[0-9]+$' THEN CAST(split_part(c.classes, '-', 1) AS integer) <= $${paramIndex} ELSE true END`;
+          filterParams.push(criteria.classes_max);
+          paramIndex++;
+        }
+
+        contactsResult = await pool.query(
+          `SELECT c.id, c.email, c.name FROM contacts c
+           WHERE c.status = 'active' ${filterWhere}
+           AND c.id NOT IN (SELECT contact_id FROM campaign_recipients WHERE campaign_id = $${paramIndex} AND contact_id IS NOT NULL)`,
+          [...filterParams, campaignId]
+        );
+      } else {
+        // Regular list: use contact_list_members join
+        contactsResult = await pool.query(
+          `SELECT c.id, c.email, c.name FROM contacts c
+           JOIN contact_list_members clm ON clm.contact_id = c.id
+           WHERE clm.list_id = $1 AND c.status = 'active'
+           AND c.id NOT IN (SELECT contact_id FROM campaign_recipients WHERE campaign_id = $2 AND contact_id IS NOT NULL)`,
+          [campaign.list_id, campaignId]
+        );
+      }
 
       const contacts = contactsResult.rows;
       logger.info(`Campaign ${campaignId}: ${contacts.length} recipients to process`);
@@ -274,11 +336,11 @@ export function startEmailSendWorker(): Worker {
 
       // Check if campaign is complete
       const stats = await pool.query(
-        'SELECT total_recipients, sent_count, failed_count FROM campaigns WHERE id = $1',
+        'SELECT total_recipients, sent_count, failed_count, bounce_count FROM campaigns WHERE id = $1',
         [campaignId]
       );
       const camp = stats.rows[0];
-      if (camp && (camp.sent_count + camp.failed_count) >= camp.total_recipients) {
+      if (camp && (Number(camp.sent_count) + Number(camp.failed_count) + Number(camp.bounce_count)) >= Number(camp.total_recipients)) {
         await pool.query(
           "UPDATE campaigns SET status = 'completed', completed_at = NOW(), updated_at = NOW() WHERE id = $1",
           [campaignId]

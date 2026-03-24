@@ -76,7 +76,7 @@ export default function CampaignCreate() {
 
   // Update preview iframe when template changes
   useEffect(() => {
-    if (previewRef.current && selectedTemplate) {
+    if (previewRef.current && selectedTemplate && selectedTemplate.html_body) {
       const doc = previewRef.current.contentDocument;
       if (doc) {
         doc.open();
