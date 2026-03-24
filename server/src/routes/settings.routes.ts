@@ -21,13 +21,13 @@ const gmailSchema = z.object({
   host: z.string().optional().default('smtp.gmail.com'),
   port: z.number().optional().default(587),
   user: z.string().min(1),
-  pass: z.string().min(1),
+  pass: z.string().default(''),
 });
 
 const sesSchema = z.object({
   region: z.string().min(1),
-  accessKeyId: z.string().min(1),
-  secretAccessKey: z.string().min(1),
+  accessKeyId: z.string().default(''),
+  secretAccessKey: z.string().default(''),
   fromEmail: z.string().email(),
 });
 
