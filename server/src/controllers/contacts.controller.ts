@@ -46,9 +46,52 @@ export async function listContacts(req: Request, res: Response, next: NextFuncti
       paramIndex++;
     }
     if (listId) {
-      whereClause += ` AND c.id IN (SELECT contact_id FROM contact_list_members WHERE list_id = $${paramIndex})`;
-      params.push(listId);
-      paramIndex++;
+      // Check if this is a smart list — smart lists use dynamic filter criteria, not contact_list_members
+      const listResult = await pool.query('SELECT is_smart, filter_criteria FROM contact_lists WHERE id = $1', [listId]);
+      const list = listResult.rows[0];
+      if (list?.is_smart && list.filter_criteria) {
+        const criteria = list.filter_criteria as Record<string, unknown>;
+        if (criteria.state && Array.isArray(criteria.state) && criteria.state.length > 0) {
+          whereClause += ` AND c.state = ANY($${paramIndex})`;
+          params.push(criteria.state);
+          paramIndex++;
+        }
+        if (criteria.district && Array.isArray(criteria.district) && criteria.district.length > 0) {
+          whereClause += ` AND c.district = ANY($${paramIndex})`;
+          params.push(criteria.district);
+          paramIndex++;
+        }
+        if (criteria.block && Array.isArray(criteria.block) && criteria.block.length > 0) {
+          whereClause += ` AND c.block = ANY($${paramIndex})`;
+          params.push(criteria.block);
+          paramIndex++;
+        }
+        if (criteria.category && Array.isArray(criteria.category) && criteria.category.length > 0) {
+          whereClause += ` AND c.category = ANY($${paramIndex})`;
+          params.push(criteria.category);
+          paramIndex++;
+        }
+        if (criteria.management && Array.isArray(criteria.management) && criteria.management.length > 0) {
+          whereClause += ` AND c.management = ANY($${paramIndex})`;
+          params.push(criteria.management);
+          paramIndex++;
+        }
+        if (criteria.classes_min != null) {
+          whereClause += ` AND CASE WHEN c.classes ~ '^[0-9]+-[0-9]+$' THEN CAST(split_part(c.classes, '-', 2) AS integer) >= $${paramIndex} ELSE true END`;
+          params.push(criteria.classes_min);
+          paramIndex++;
+        }
+        if (criteria.classes_max != null) {
+          whereClause += ` AND CASE WHEN c.classes ~ '^[0-9]+-[0-9]+$' THEN CAST(split_part(c.classes, '-', 1) AS integer) <= $${paramIndex} ELSE true END`;
+          params.push(criteria.classes_max);
+          paramIndex++;
+        }
+      } else {
+        // Regular list — use contact_list_members
+        whereClause += ` AND c.id IN (SELECT contact_id FROM contact_list_members WHERE list_id = $${paramIndex})`;
+        params.push(listId);
+        paramIndex++;
+      }
     }
     if (minSendCount) {
       whereClause += ` AND c.send_count >= $${paramIndex}`;
