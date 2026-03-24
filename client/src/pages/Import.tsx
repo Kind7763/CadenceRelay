@@ -128,12 +128,26 @@ function ImportContent() {
       if (uploadState.status !== 'cancelled') {
         const isCancelled = err instanceof Error && err.name === 'CanceledError';
         if (!isCancelled) {
+          // Extract actual error message from server response or Error object
+          let errorMsg = 'Import failed. Please check the file format and try again.';
+          if (err && typeof err === 'object') {
+            const axiosErr = err as { response?: { data?: { error?: string; message?: string }; status?: number }; message?: string };
+            if (axiosErr.response?.data?.error) {
+              errorMsg = axiosErr.response.data.error;
+            } else if (axiosErr.response?.data?.message) {
+              errorMsg = axiosErr.response.data.message;
+            } else if (axiosErr.response?.status === 413) {
+              errorMsg = 'File is too large. Maximum upload size is 100MB.';
+            } else if (axiosErr.message) {
+              errorMsg = axiosErr.message;
+            }
+          }
           setUploadState((prev) => ({
             ...prev,
             status: 'error',
-            error: 'Import failed. Please check the file format and try again.',
+            error: errorMsg,
           }));
-          toast.error('Import failed. Please check the file format and try again.');
+          toast.error(errorMsg);
         }
       }
     } finally {

@@ -30,6 +30,8 @@ function ContactsContent() {
   const [categoryFilter, setCategoryFilter] = useState('');
   const [managementFilter, setManagementFilter] = useState('');
 
+  const [sortBy, setSortBy] = useState('');
+  const [sortDir, setSortDir] = useState<'ASC' | 'DESC'>('DESC');
   const [showAddModal, setShowAddModal] = useState(false);
   const [newEmail, setNewEmail] = useState('');
   const [newName, setNewName] = useState('');
@@ -51,6 +53,8 @@ function ContactsContent() {
     block: blockFilter || undefined,
     category: categoryFilter || undefined,
     management: managementFilter || undefined,
+    sortBy: sortBy || undefined,
+    sortDir: sortBy ? sortDir : undefined,
   });
 
   const { data: lists = [] } = useListsList();
@@ -129,6 +133,21 @@ function ContactsContent() {
     }
 
     setDeleteModal(null);
+  }
+
+  function handleSort(column: string) {
+    if (sortBy === column) {
+      setSortDir((prev) => (prev === 'ASC' ? 'DESC' : 'ASC'));
+    } else {
+      setSortBy(column);
+      setSortDir('ASC');
+    }
+    setPage(1);
+  }
+
+  function SortIndicator({ column }: { column: string }) {
+    if (sortBy !== column) return <span className="ml-1 text-gray-300">&#8597;</span>;
+    return <span className="ml-1">{sortDir === 'ASC' ? '\u2191' : '\u2193'}</span>;
   }
 
   const activeFilterCount = [stateFilter, districtFilter, blockFilter, categoryFilter, managementFilter].filter(Boolean).length;
@@ -376,13 +395,25 @@ function ContactsContent() {
                         className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
                       />
                     </th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-600">Name</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-600">Email</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-600">State</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-600">District</th>
+                    <th className="px-4 py-3 text-left font-medium text-gray-600 cursor-pointer select-none hover:text-gray-900" onClick={() => handleSort('name')}>
+                      Name<SortIndicator column="name" />
+                    </th>
+                    <th className="px-4 py-3 text-left font-medium text-gray-600 cursor-pointer select-none hover:text-gray-900" onClick={() => handleSort('email')}>
+                      Email<SortIndicator column="email" />
+                    </th>
+                    <th className="px-4 py-3 text-left font-medium text-gray-600 cursor-pointer select-none hover:text-gray-900" onClick={() => handleSort('state')}>
+                      State<SortIndicator column="state" />
+                    </th>
+                    <th className="px-4 py-3 text-left font-medium text-gray-600 cursor-pointer select-none hover:text-gray-900" onClick={() => handleSort('district')}>
+                      District<SortIndicator column="district" />
+                    </th>
                     <th className="px-4 py-3 text-left font-medium text-gray-600">Category</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-600">Status</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-600">Sent</th>
+                    <th className="px-4 py-3 text-left font-medium text-gray-600 cursor-pointer select-none hover:text-gray-900" onClick={() => handleSort('status')}>
+                      Status<SortIndicator column="status" />
+                    </th>
+                    <th className="px-4 py-3 text-left font-medium text-gray-600 cursor-pointer select-none hover:text-gray-900" onClick={() => handleSort('send_count')}>
+                      Sent<SortIndicator column="send_count" />
+                    </th>
                     <th className="px-4 py-3 text-left font-medium text-gray-600">Actions</th>
                   </tr>
                 </thead>
