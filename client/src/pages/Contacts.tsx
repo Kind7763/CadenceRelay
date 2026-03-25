@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import {
@@ -21,71 +21,7 @@ function isValidEmail(email: string): boolean {
 }
 
 /* ─── Inline Editable Cell ─── */
-function InlineEditCell({
-  value,
-  contactId,
-  field,
-  onSave,
-  className = '',
-}: {
-  value: string;
-  contactId: string;
-  field: string;
-  onSave: (id: string, field: string, value: string) => void;
-  className?: string;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [editValue, setEditValue] = useState(value);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (editing && inputRef.current) {
-      inputRef.current.focus();
-      inputRef.current.select();
-    }
-  }, [editing]);
-
-  useEffect(() => {
-    setEditValue(value);
-  }, [value]);
-
-  function commit() {
-    setEditing(false);
-    if (editValue.trim() !== value) {
-      onSave(contactId, field, editValue.trim());
-    }
-  }
-
-  if (editing) {
-    return (
-      <input
-        ref={inputRef}
-        type="text"
-        value={editValue}
-        onChange={(e) => setEditValue(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') commit();
-          if (e.key === 'Escape') { setEditValue(value); setEditing(false); }
-        }}
-        className={`w-full rounded border border-primary-300 bg-white px-1.5 py-0.5 text-sm focus:border-primary-500 focus:outline-none ${className}`}
-      />
-    );
-  }
-
-  return (
-    <span
-      className={`group/cell inline-flex cursor-pointer items-center gap-1 rounded px-1 -mx-1 hover:bg-gray-100 ${className}`}
-      onClick={(e) => { e.stopPropagation(); setEditing(true); }}
-      title="Click to edit"
-    >
-      {value || '-'}
-      <svg className="h-3 w-3 flex-shrink-0 text-gray-300 opacity-0 group-hover/cell:opacity-100 transition-opacity" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-      </svg>
-    </span>
-  );
-}
+/* InlineEditCell removed — contacts table now navigates to detail on click */
 
 /* ─── Edit Contact Modal (reused for per-row edit) ─── */
 function EditContactModal({
@@ -786,13 +722,6 @@ function ContactsContent() {
   }
 
   // Inline edit save handler
-  const handleInlineSave = useCallback((contactId: string, field: string, value: string) => {
-    updateContactMutation.mutate({
-      id: contactId,
-      data: { [field]: value || null },
-    });
-  }, [updateContactMutation]);
-
   // Bulk update handler (shared between BulkEdit and SetVariable modals)
   async function handleBulkUpdate(contactIds: string[], updates: Record<string, unknown>) {
     await bulkUpdateMutation.mutateAsync({
