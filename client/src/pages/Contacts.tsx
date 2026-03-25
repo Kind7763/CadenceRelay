@@ -1018,10 +1018,10 @@ function ContactsContent() {
         <>
           <div className="mt-2 overflow-hidden rounded-xl bg-white shadow-sm">
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full text-sm table-fixed">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="w-10 px-4 py-3">
+                    <th className="w-10 px-3 py-3">
                       <input
                         type="checkbox"
                         checked={contacts.length > 0 && selectedIds.size === contacts.length}
@@ -1029,26 +1029,26 @@ function ContactsContent() {
                         className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
                       />
                     </th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-600 cursor-pointer select-none hover:text-gray-900" onClick={() => handleSort('name')}>
+                    <th className="w-[18%] px-3 py-3 text-left font-medium text-gray-600 cursor-pointer select-none hover:text-gray-900" onClick={() => handleSort('name')}>
                       Name<SortIndicator column="name" />
                     </th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-600 cursor-pointer select-none hover:text-gray-900" onClick={() => handleSort('email')}>
+                    <th className="w-[22%] px-3 py-3 text-left font-medium text-gray-600 cursor-pointer select-none hover:text-gray-900" onClick={() => handleSort('email')}>
                       Email<SortIndicator column="email" />
                     </th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-600 cursor-pointer select-none hover:text-gray-900" onClick={() => handleSort('state')}>
+                    <th className="w-[10%] px-3 py-3 text-left font-medium text-gray-600 cursor-pointer select-none hover:text-gray-900 hidden lg:table-cell" onClick={() => handleSort('state')}>
                       State<SortIndicator column="state" />
                     </th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-600 cursor-pointer select-none hover:text-gray-900" onClick={() => handleSort('district')}>
+                    <th className="w-[10%] px-3 py-3 text-left font-medium text-gray-600 cursor-pointer select-none hover:text-gray-900 hidden xl:table-cell" onClick={() => handleSort('district')}>
                       District<SortIndicator column="district" />
                     </th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-600">Category</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-600 cursor-pointer select-none hover:text-gray-900" onClick={() => handleSort('status')}>
+                    <th className="w-[14%] px-3 py-3 text-left font-medium text-gray-600 hidden xl:table-cell">Category</th>
+                    <th className="w-[8%] px-3 py-3 text-left font-medium text-gray-600 cursor-pointer select-none hover:text-gray-900" onClick={() => handleSort('status')}>
                       Status<SortIndicator column="status" />
                     </th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-600 cursor-pointer select-none hover:text-gray-900" onClick={() => handleSort('send_count')}>
+                    <th className="w-[5%] px-3 py-3 text-center font-medium text-gray-600 cursor-pointer select-none hover:text-gray-900" onClick={() => handleSort('send_count')}>
                       Sent<SortIndicator column="send_count" />
                     </th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-600">Actions</th>
+                    <th className="w-[10%] px-3 py-3 text-right font-medium text-gray-600">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
@@ -1067,7 +1067,7 @@ function ContactsContent() {
                     </tr>
                   ) : contacts.map((c) => (
                     <tr key={c.id} className={`hover:bg-gray-50 ${selectedIds.has(c.id) ? 'bg-primary-50' : ''}`}>
-                      <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                      <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                         <input
                           type="checkbox"
                           checked={selectedIds.has(c.id)}
@@ -1075,42 +1075,42 @@ function ContactsContent() {
                           className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
                         />
                       </td>
-                      <td className="px-4 py-3 max-w-[200px]">
-                        <InlineEditCell value={c.name || ''} contactId={c.id} field="name" onSave={handleInlineSave} className="truncate" />
+                      <td className="px-3 py-3 cursor-pointer truncate" onClick={() => navigate(`/contacts/${c.id}`)} title={c.name || ''}>
+                        <span className="font-medium text-gray-900">{c.name || <span className="text-gray-400 italic">No name</span>}</span>
                       </td>
-                      <td className="px-4 py-3">
-                        <InlineEditCell value={c.email} contactId={c.id} field="email" onSave={handleInlineSave} />
+                      <td className="px-3 py-3 cursor-pointer truncate text-xs text-gray-600" onClick={() => navigate(`/contacts/${c.id}`)} title={c.email}>
+                        {c.email}
                       </td>
-                      <td className="px-4 py-3 text-xs">
-                        <InlineEditCell value={c.state || ''} contactId={c.id} field="state" onSave={handleInlineSave} />
+                      <td className="px-3 py-3 text-xs cursor-pointer hidden lg:table-cell truncate" onClick={() => navigate(`/contacts/${c.id}`)}>
+                        {c.state || <span className="text-gray-300">-</span>}
                       </td>
-                      <td className="px-4 py-3 text-xs">
-                        <InlineEditCell value={c.district || ''} contactId={c.id} field="district" onSave={handleInlineSave} />
+                      <td className="px-3 py-3 text-xs cursor-pointer hidden xl:table-cell truncate" onClick={() => navigate(`/contacts/${c.id}`)}>
+                        {c.district || <span className="text-gray-300">-</span>}
                       </td>
-                      <td className="px-4 py-3 text-xs max-w-[150px]">
-                        <InlineEditCell value={c.category || ''} contactId={c.id} field="category" onSave={handleInlineSave} className="truncate" />
+                      <td className="px-3 py-3 text-xs cursor-pointer hidden xl:table-cell truncate" onClick={() => navigate(`/contacts/${c.id}`)} title={c.category || ''}>
+                        {c.category || <span className="text-gray-300">-</span>}
                       </td>
-                      <td className="px-4 py-3 cursor-pointer" onClick={() => navigate(`/contacts/${c.id}`)}>
-                        <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${
+                      <td className="px-3 py-3 cursor-pointer" onClick={() => navigate(`/contacts/${c.id}`)}>
+                        <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap ${
                           c.status === 'active' ? 'bg-green-100 text-green-700' :
                           c.status === 'bounced' ? 'bg-red-100 text-red-700' :
                           c.status === 'complained' ? 'bg-orange-100 text-orange-700' :
                           'bg-gray-100 text-gray-700'
                         }`}>{c.status}</span>
                       </td>
-                      <td className="px-4 py-3 cursor-pointer" onClick={() => navigate(`/contacts/${c.id}`)}>{c.send_count}</td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
+                      <td className="px-3 py-3 text-center cursor-pointer" onClick={() => navigate(`/contacts/${c.id}`)}>{c.send_count}</td>
+                      <td className="px-3 py-3 text-right">
+                        <div className="flex items-center justify-end gap-1">
                           <button
                             onClick={(e) => { e.stopPropagation(); setEditingContact(c); }}
-                            className="text-primary-600 hover:text-primary-800 text-xs"
+                            className="rounded px-2 py-1 text-xs text-primary-600 hover:bg-primary-50 hover:text-primary-800"
                             title="Edit contact"
                           >
                             Edit
                           </button>
                           <button
                             onClick={(e) => { e.stopPropagation(); setDeleteModal({ type: 'single', id: c.id }); }}
-                            className="text-red-600 hover:text-red-800 text-xs"
+                            className="rounded px-2 py-1 text-xs text-red-600 hover:bg-red-50 hover:text-red-800"
                           >
                             Delete
                           </button>
