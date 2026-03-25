@@ -10,7 +10,7 @@ import { createSmartList, ContactList } from '../api/lists.api';
 import { useContactsList, useCreateContact, useDeleteContact, useBulkDeleteContacts, useBulkUpdateContacts, useUpdateContact } from '../hooks/useContacts';
 import { useListsList } from '../hooks/useLists';
 import { useContactFilters } from '../hooks/useFilters';
-import { useCustomVariables } from '../hooks/useCustomVariables';
+import { useCustomVariables, useCreateCustomVariable } from '../hooks/useCustomVariables';
 import { CustomVariable } from '../api/customVariables.api';
 import { TableSkeleton } from '../components/ui/Skeleton';
 import ErrorBoundary from '../components/ErrorBoundary';
@@ -540,10 +540,13 @@ function ContactsContent() {
   const [sortBy, setSortBy] = useState('');
   const [sortDir, setSortDir] = useState<'ASC' | 'DESC'>('DESC');
   const [showAddModal, setShowAddModal] = useState(false);
-  const [newEmail, setNewEmail] = useState('');
-  const [newName, setNewName] = useState('');
+  const [newContact, setNewContact] = useState<Record<string, string>>({ email: '', name: '', state: '', district: '', block: '', classes: '', category: '', management: '', address: '' });
+  const [newMetadata, setNewMetadata] = useState<Record<string, string>>({});
   const [newListId, setNewListId] = useState('');
   const [emailError, setEmailError] = useState('');
+  const [showInlineCreateVar, setShowInlineCreateVar] = useState(false);
+  const [inlineVarName, setInlineVarName] = useState('');
+  const [inlineVarType, setInlineVarType] = useState<'text' | 'number' | 'date' | 'select'>('text');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleteModal, setDeleteModal] = useState<{ type: 'single' | 'bulk'; id?: string } | null>(null);
   const [showFilters, setShowFilters] = useState(false);
@@ -578,6 +581,7 @@ function ContactsContent() {
   const { data: customVariables = [] } = useCustomVariables();
 
   const createContactMutation = useCreateContact();
+  const createVarMutation = useCreateCustomVariable();
   const deleteContactMutation = useDeleteContact();
   const bulkDeleteMutation = useBulkDeleteContacts();
   const bulkUpdateMutation = useBulkUpdateContacts();
@@ -611,29 +615,61 @@ function ContactsContent() {
     }
   }
 
+  function resetAddForm() {
+    setNewContact({ email: '', name: '', state: '', district: '', block: '', classes: '', category: '', management: '', address: '' });
+    setNewMetadata({});
+    setNewListId('');
+    setEmailError('');
+    setShowInlineCreateVar(false);
+    setInlineVarName('');
+    setInlineVarType('text');
+  }
+
   async function handleAdd() {
-    if (!newEmail.trim()) {
+    if (!newContact.email.trim()) {
       setEmailError('Email is required');
       return;
     }
-    if (!isValidEmail(newEmail)) {
+    if (!isValidEmail(newContact.email)) {
       setEmailError('Please enter a valid email address');
       return;
     }
     setEmailError('');
     try {
+      // Build metadata from custom variable values
+      const meta: Record<string, string> = {};
+      for (const [k, v] of Object.entries(newMetadata)) {
+        if (v.trim()) meta[k] = v;
+      }
       await createContactMutation.mutateAsync({
-        email: newEmail,
-        name: newName || undefined,
+        email: newContact.email,
+        name: newContact.name || undefined,
+        state: newContact.state || undefined,
+        district: newContact.district || undefined,
+        block: newContact.block || undefined,
+        classes: newContact.classes || undefined,
+        category: newContact.category || undefined,
+        management: newContact.management || undefined,
+        address: newContact.address || undefined,
+        metadata: Object.keys(meta).length > 0 ? meta : undefined,
         listIds: newListId ? [newListId] : undefined,
       });
       setShowAddModal(false);
-      setNewEmail('');
-      setNewName('');
-      setNewListId('');
-      setEmailError('');
+      resetAddForm();
     } catch {
       // error toast handled by mutation
+    }
+  }
+
+  async function handleInlineCreateVar() {
+    if (!inlineVarName.trim()) return;
+    try {
+      await createVarMutation.mutateAsync({ name: inlineVarName, type: inlineVarType });
+      setShowInlineCreateVar(false);
+      setInlineVarName('');
+      setInlineVarType('text');
+    } catch {
+      // handled by mutation
     }
   }
 
@@ -1067,31 +1103,125 @@ function ContactsContent() {
         />
       )}
 
-      {/* Add Modal */}
+      {/* Add Contact Modal */}
       {showAddModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="w-full max-w-md rounded-xl bg-white p-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => { setShowAddModal(false); resetAddForm(); }}>
+          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-semibold">Add Contact</h3>
+
             <div className="mt-4 space-y-3">
               <div>
-                <input
-                  type="email"
-                  placeholder="Email *"
-                  value={newEmail}
-                  onChange={(e) => { setNewEmail(e.target.value); setEmailError(''); }}
-                  className={`w-full rounded-lg border px-3 py-2 text-sm ${emailError ? 'border-red-300 focus:border-red-500' : 'focus:border-primary-500'} focus:outline-none`}
-                />
+                <label className="mb-1 block text-xs font-medium text-gray-600">Email *</label>
+                <input type="email" placeholder="contact@school.com" value={newContact.email}
+                  onChange={(e) => { setNewContact({ ...newContact, email: e.target.value }); setEmailError(''); }}
+                  className={`w-full rounded-lg border px-3 py-2 text-sm ${emailError ? 'border-red-300' : ''} focus:border-primary-500 focus:outline-none`} />
                 {emailError && <p className="mt-1 text-xs text-red-500">{emailError}</p>}
               </div>
-              <input type="text" placeholder="Name (optional)" value={newName} onChange={(e) => setNewName(e.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm" />
-              <select value={newListId} onChange={(e) => setNewListId(e.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm">
-                <option value="">No list</option>
-                {lists.filter((l: ContactList) => !l.is_smart).map((l: ContactList) => <option key={l.id} value={l.id}>{l.name}</option>)}
-              </select>
+
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-600">Name</label>
+                <input type="text" placeholder="School name" value={newContact.name}
+                  onChange={(e) => setNewContact({ ...newContact, name: e.target.value })}
+                  className="w-full rounded-lg border px-3 py-2 text-sm focus:border-primary-500 focus:outline-none" />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                {['state', 'district', 'block', 'classes', 'category', 'management'].map((field) => (
+                  <div key={field}>
+                    <label className="mb-1 block text-xs font-medium text-gray-600 capitalize">{field}</label>
+                    <input type="text" placeholder={field} value={newContact[field] || ''}
+                      onChange={(e) => setNewContact({ ...newContact, [field]: e.target.value })}
+                      className="w-full rounded-lg border px-3 py-2 text-sm focus:border-primary-500 focus:outline-none" />
+                  </div>
+                ))}
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-600">Address</label>
+                <textarea placeholder="Full address" value={newContact.address}
+                  onChange={(e) => setNewContact({ ...newContact, address: e.target.value })}
+                  rows={2} className="w-full rounded-lg border px-3 py-2 text-sm focus:border-primary-500 focus:outline-none" />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-600">Add to List</label>
+                <select value={newListId} onChange={(e) => setNewListId(e.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm">
+                  <option value="">No list</option>
+                  {lists.filter((l: ContactList) => !l.is_smart).map((l: ContactList) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                </select>
+              </div>
             </div>
+
+            {/* Custom Variables */}
+            {customVariables.length > 0 && (
+              <div className="mt-4 border-t pt-4">
+                <h4 className="text-sm font-medium text-gray-700">Custom Variables</h4>
+                <div className="mt-2 space-y-2">
+                  {customVariables.map((cv: CustomVariable) => (
+                    <div key={cv.id}>
+                      <label className="mb-1 block text-xs font-medium text-gray-600">
+                        {cv.name} <span className="text-gray-400">{'{{' + cv.key + '}}'}</span>
+                        {cv.required && <span className="text-red-500"> *</span>}
+                      </label>
+                      {cv.type === 'select' ? (
+                        <select value={newMetadata[cv.key] || ''} onChange={(e) => setNewMetadata({ ...newMetadata, [cv.key]: e.target.value })}
+                          className="w-full rounded-lg border px-3 py-2 text-sm">
+                          <option value="">Select...</option>
+                          {(cv.options || []).map((opt: string) => <option key={opt} value={opt}>{opt}</option>)}
+                        </select>
+                      ) : (
+                        <input type={cv.type === 'number' ? 'number' : cv.type === 'date' ? 'date' : 'text'}
+                          placeholder={cv.default_value || cv.name} value={newMetadata[cv.key] || ''}
+                          onChange={(e) => setNewMetadata({ ...newMetadata, [cv.key]: e.target.value })}
+                          className="w-full rounded-lg border px-3 py-2 text-sm focus:border-primary-500 focus:outline-none" />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Inline Create Variable */}
+            <div className="mt-3 border-t pt-3">
+              {!showInlineCreateVar ? (
+                <button onClick={() => setShowInlineCreateVar(true)}
+                  className="text-xs font-medium text-primary-600 hover:text-primary-800">
+                  + Create new custom variable
+                </button>
+              ) : (
+                <div className="space-y-2 rounded-lg bg-gray-50 p-3">
+                  <p className="text-xs font-medium text-gray-700">New Custom Variable</p>
+                  <div className="flex gap-2">
+                    <input type="text" placeholder="Variable name (e.g. Principal Name)" value={inlineVarName}
+                      onChange={(e) => setInlineVarName(e.target.value)}
+                      className="flex-1 rounded-lg border px-3 py-1.5 text-sm focus:border-primary-500 focus:outline-none"
+                      onKeyDown={(e) => { if (e.key === 'Enter') handleInlineCreateVar(); }} />
+                    <select value={inlineVarType} onChange={(e) => setInlineVarType(e.target.value as 'text' | 'number' | 'date' | 'select')}
+                      className="rounded-lg border px-2 py-1.5 text-sm">
+                      <option value="text">Text</option>
+                      <option value="number">Number</option>
+                      <option value="date">Date</option>
+                      <option value="select">Select</option>
+                    </select>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={handleInlineCreateVar} disabled={!inlineVarName.trim() || createVarMutation.isPending}
+                      className="rounded-lg bg-green-600 px-3 py-1 text-xs text-white hover:bg-green-700 disabled:opacity-50">
+                      {createVarMutation.isPending ? 'Creating...' : 'Create & Add Field'}
+                    </button>
+                    <button onClick={() => { setShowInlineCreateVar(false); setInlineVarName(''); }}
+                      className="rounded-lg border px-3 py-1 text-xs text-gray-600 hover:bg-gray-100">Cancel</button>
+                  </div>
+                </div>
+              )}
+            </div>
+
             <div className="mt-4 flex justify-end gap-2">
-              <button onClick={() => { setShowAddModal(false); setEmailError(''); setNewEmail(''); setNewName(''); setNewListId(''); }} className="rounded-lg border px-4 py-2 text-sm">Cancel</button>
-              <button onClick={handleAdd} className="rounded-lg bg-primary-600 px-4 py-2 text-sm text-white">Add</button>
+              <button onClick={() => { setShowAddModal(false); resetAddForm(); }} className="rounded-lg border px-4 py-2 text-sm">Cancel</button>
+              <button onClick={handleAdd} disabled={createContactMutation.isPending}
+                className="rounded-lg bg-primary-600 px-4 py-2 text-sm text-white hover:bg-primary-700 disabled:opacity-50">
+                {createContactMutation.isPending ? 'Adding...' : 'Add Contact'}
+              </button>
             </div>
           </div>
         </div>

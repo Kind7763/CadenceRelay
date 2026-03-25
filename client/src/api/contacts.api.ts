@@ -55,7 +55,19 @@ export async function getContact(id: string) {
   return res.data;
 }
 
-export async function createContact(data: { email: string; name?: string; listIds?: string[] }) {
+export async function createContact(data: {
+  email: string;
+  name?: string;
+  state?: string;
+  district?: string;
+  block?: string;
+  classes?: string;
+  category?: string;
+  management?: string;
+  address?: string;
+  metadata?: Record<string, unknown>;
+  listIds?: string[];
+}) {
   const res = await apiClient.post('/contacts', data);
   return res.data;
 }

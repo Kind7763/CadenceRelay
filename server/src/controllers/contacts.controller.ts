@@ -204,7 +204,7 @@ export async function getContact(req: Request, res: Response, next: NextFunction
 
 export async function createContact(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { email, name, metadata, listIds } = req.body;
+    const { email, name, state, district, block, classes, category, management, address, metadata, listIds } = req.body;
 
     const existing = await pool.query('SELECT id FROM contacts WHERE email = $1', [email]);
     if (existing.rows.length > 0) {
@@ -212,8 +212,9 @@ export async function createContact(req: Request, res: Response, next: NextFunct
     }
 
     const result = await pool.query(
-      'INSERT INTO contacts (email, name, metadata) VALUES ($1, $2, $3) RETURNING *',
-      [email, name || null, metadata || {}]
+      `INSERT INTO contacts (email, name, state, district, block, classes, category, management, address, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+      [email, name || null, state || null, district || null, block || null, classes || null, category || null, management || null, address || null, metadata || {}]
     );
 
     const contact = result.rows[0];

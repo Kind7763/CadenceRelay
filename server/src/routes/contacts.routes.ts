@@ -34,6 +34,13 @@ const upload = multer({ storage: diskStorage, limits: { fileSize: 150 * 1024 * 1
 const createSchema = z.object({
   email: z.string().email(),
   name: z.string().optional(),
+  state: z.string().nullable().optional(),
+  district: z.string().nullable().optional(),
+  block: z.string().nullable().optional(),
+  classes: z.string().nullable().optional(),
+  category: z.string().nullable().optional(),
+  management: z.string().nullable().optional(),
+  address: z.string().nullable().optional(),
   metadata: z.record(z.unknown()).optional(),
   listIds: z.array(z.string().uuid()).optional(),
 });
