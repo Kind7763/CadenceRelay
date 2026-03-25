@@ -117,6 +117,20 @@ function EditContactModal({
     return meta;
   });
   const [saving, setSaving] = useState(false);
+  const [showCreateVar, setShowCreateVar] = useState(false);
+  const [newVarName, setNewVarName] = useState('');
+  const [newVarType, setNewVarType] = useState<'text' | 'number' | 'date' | 'select'>('text');
+  const createVarMut = useCreateCustomVariable();
+
+  async function handleCreateVar() {
+    if (!newVarName.trim()) return;
+    try {
+      await createVarMut.mutateAsync({ name: newVarName, type: newVarType });
+      setShowCreateVar(false);
+      setNewVarName('');
+      setNewVarType('text');
+    } catch { /* handled by mutation */ }
+  }
 
   async function handleSave() {
     if (!editEmail.trim()) return;
@@ -217,7 +231,7 @@ function EditContactModal({
               {customVariables.map((cv) => (
                 <div key={cv.id}>
                   <label className="mb-1 block text-sm font-medium text-gray-700">
-                    {cv.name}{cv.required && ' *'}
+                    {cv.name}{cv.required && ' *'} <span className="text-xs text-gray-400">{'{{' + cv.key + '}}'}</span>
                   </label>
                   {cv.type === 'select' ? (
                     <select
@@ -241,6 +255,41 @@ function EditContactModal({
               ))}
             </>
           )}
+
+          {/* Inline Create Variable */}
+          <div className="border-t border-gray-200 pt-3">
+            {!showCreateVar ? (
+              <button onClick={() => setShowCreateVar(true)}
+                className="text-xs font-medium text-primary-600 hover:text-primary-800">
+                + Create new custom variable
+              </button>
+            ) : (
+              <div className="space-y-2 rounded-lg bg-gray-50 p-3">
+                <p className="text-xs font-medium text-gray-700">New Custom Variable</p>
+                <div className="flex gap-2">
+                  <input type="text" placeholder="Variable name (e.g. Principal Name)" value={newVarName}
+                    onChange={(e) => setNewVarName(e.target.value)}
+                    className="flex-1 rounded-lg border px-3 py-1.5 text-sm focus:border-primary-500 focus:outline-none"
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleCreateVar(); }} />
+                  <select value={newVarType} onChange={(e) => setNewVarType(e.target.value as 'text' | 'number' | 'date' | 'select')}
+                    className="rounded-lg border px-2 py-1.5 text-sm">
+                    <option value="text">Text</option>
+                    <option value="number">Number</option>
+                    <option value="date">Date</option>
+                    <option value="select">Select</option>
+                  </select>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={handleCreateVar} disabled={!newVarName.trim() || createVarMut.isPending}
+                    className="rounded-lg bg-green-600 px-3 py-1 text-xs text-white hover:bg-green-700 disabled:opacity-50">
+                    {createVarMut.isPending ? 'Creating...' : 'Create & Add Field'}
+                  </button>
+                  <button onClick={() => { setShowCreateVar(false); setNewVarName(''); }}
+                    className="rounded-lg border px-3 py-1 text-xs text-gray-600 hover:bg-gray-100">Cancel</button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
         <div className="mt-4 flex justify-end gap-2">
           <button onClick={onClose} disabled={saving}
