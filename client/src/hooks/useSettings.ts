@@ -49,7 +49,7 @@ export function useUpdateGmailConfig() {
 export function useUpdateSesConfig() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (config: { region: string; accessKeyId: string; secretAccessKey: string; fromEmail: string }) =>
+    mutationFn: (config: { region: string; accessKeyId: string; secretAccessKey: string; fromEmail: string; fromName?: string }) =>
       updateSesConfig(config),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settings'] });
