@@ -217,7 +217,7 @@ function EditContactModal({
                 </div>
                 <div className="flex gap-2">
                   <button onClick={handleCreateVar} disabled={!newVarName.trim() || createVarMut.isPending}
-                    className="rounded-lg bg-green-600 px-3 py-1 text-xs text-white hover:bg-green-700 disabled:opacity-50">
+                    className="rounded-lg bg-primary-600 px-3 py-1 text-xs text-white hover:bg-primary-700 disabled:opacity-50">
                     {createVarMut.isPending ? 'Creating...' : 'Create & Add Field'}
                   </button>
                   <button onClick={() => { setShowCreateVar(false); setNewVarName(''); }}
@@ -1184,7 +1184,7 @@ function ContactsContent() {
                   </div>
                   <div className="flex gap-2">
                     <button onClick={handleInlineCreateVar} disabled={!inlineVarName.trim() || createVarMutation.isPending}
-                      className="rounded-lg bg-green-600 px-3 py-1 text-xs text-white hover:bg-green-700 disabled:opacity-50">
+                      className="rounded-lg bg-primary-600 px-3 py-1 text-xs text-white hover:bg-primary-700 disabled:opacity-50">
                       {createVarMutation.isPending ? 'Creating...' : 'Create & Add Field'}
                     </button>
                     <button onClick={() => { setShowInlineCreateVar(false); setInlineVarName(''); }}

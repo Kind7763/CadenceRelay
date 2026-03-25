@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { getContact, updateContact, Contact } from '../api/contacts.api';
+import { getContact, updateContact, deleteContact, Contact } from '../api/contacts.api';
 import { useCustomVariables } from '../hooks/useCustomVariables';
 
 interface SendHistoryItem {
@@ -25,6 +25,16 @@ export default function ContactDetail() {
   const [editStatus, setEditStatus] = useState('');
   const [editMetadata, setEditMetadata] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const [editState, setEditState] = useState('');
+  const [editDistrict, setEditDistrict] = useState('');
+  const [editBlock, setEditBlock] = useState('');
+  const [editClasses, setEditClasses] = useState('');
+  const [editCategory, setEditCategory] = useState('');
+  const [editManagement, setEditManagement] = useState('');
+  const [editAddress, setEditAddress] = useState('');
   const navigate = useNavigate();
   const { data: customVariables = [] } = useCustomVariables();
 
@@ -46,6 +56,13 @@ export default function ContactDetail() {
     setEditName(contact.name || '');
     setEditEmail(contact.email);
     setEditStatus(contact.status);
+    setEditState(contact.state || '');
+    setEditDistrict(contact.district || '');
+    setEditBlock(contact.block || '');
+    setEditClasses(contact.classes || '');
+    setEditCategory(contact.category || '');
+    setEditManagement(contact.management || '');
+    setEditAddress(contact.address || '');
     // Populate metadata values from contact
     const meta: Record<string, string> = {};
     for (const cv of customVariables) {
@@ -53,6 +70,20 @@ export default function ContactDetail() {
     }
     setEditMetadata(meta);
     setShowEditModal(true);
+  }
+
+  async function handleDelete() {
+    if (!id || !deletePassword) return;
+    setDeleting(true);
+    try {
+      await deleteContact(id, deletePassword);
+      toast.success('Contact deleted');
+      navigate('/contacts');
+    } catch {
+      toast.error('Failed to delete — check admin password');
+    } finally {
+      setDeleting(false);
+    }
   }
 
   async function handleSaveEdit() {
@@ -69,6 +100,13 @@ export default function ContactDetail() {
         email: editEmail,
         name: editName || null,
         status: editStatus,
+        state: editState || null,
+        district: editDistrict || null,
+        block: editBlock || null,
+        classes: editClasses || null,
+        category: editCategory || null,
+        management: editManagement || null,
+        address: editAddress || null,
         metadata: mergedMetadata,
       } as Partial<Contact>);
       toast.success('Contact updated');
@@ -95,12 +133,20 @@ export default function ContactDetail() {
             <h1 className="text-2xl font-bold">{contact.name || contact.email}</h1>
             <p className="text-gray-500">{contact.email}</p>
           </div>
-          <button
-            onClick={openEditModal}
-            className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
-          >
-            Edit
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={openEditModal}
+              className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            >
+              Edit
+            </button>
+            <button
+              onClick={() => setShowDeleteConfirm(true)}
+              className="rounded-lg border border-red-300 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50"
+            >
+              Delete
+            </button>
+          </div>
         </div>
         <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
           <div>
@@ -245,41 +291,66 @@ export default function ContactDetail() {
 
       {/* Edit Contact Modal */}
       {showEditModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="w-full max-w-md rounded-xl bg-white p-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-lg rounded-xl bg-white p-6 max-h-[90vh] overflow-y-auto">
             <h3 className="text-lg font-semibold">Edit Contact</h3>
             <div className="mt-4 space-y-3">
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">Email</label>
-                <input
-                  type="email"
-                  value={editEmail}
-                  onChange={(e) => setEditEmail(e.target.value)}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">Name</label>
-                <input
-                  type="text"
-                  value={editName}
-                  onChange={(e) => setEditName(e.target.value)}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none"
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">Email *</label>
+                  <input type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">Name</label>
+                  <input type="text" value={editName} onChange={(e) => setEditName(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none" />
+                </div>
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Status</label>
-                <select
-                  value={editStatus}
-                  onChange={(e) => setEditStatus(e.target.value)}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none"
-                >
+                <select value={editStatus} onChange={(e) => setEditStatus(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none">
                   <option value="active">Active</option>
                   <option value="bounced">Bounced</option>
                   <option value="complained">Complained</option>
                   <option value="unsubscribed">Unsubscribed</option>
                 </select>
               </div>
+
+              {/* School Information */}
+              <div className="border-t border-gray-200 pt-3 mt-1">
+                <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">School Information</p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">State</label>
+                  <input type="text" value={editState} onChange={(e) => setEditState(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">District</label>
+                  <input type="text" value={editDistrict} onChange={(e) => setEditDistrict(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">Block</label>
+                  <input type="text" value={editBlock} onChange={(e) => setEditBlock(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">Classes</label>
+                  <input type="text" value={editClasses} onChange={(e) => setEditClasses(e.target.value)} placeholder="e.g. 1-12" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">Category</label>
+                  <input type="text" value={editCategory} onChange={(e) => setEditCategory(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">Management</label>
+                  <input type="text" value={editManagement} onChange={(e) => setEditManagement(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none" />
+                </div>
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">Address</label>
+                <textarea value={editAddress} onChange={(e) => setEditAddress(e.target.value)} rows={2} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none" />
+              </div>
+
+              {/* Custom Variables */}
               {customVariables.length > 0 && (
                 <>
                   <div className="border-t border-gray-200 pt-3 mt-1">
@@ -316,20 +387,29 @@ export default function ContactDetail() {
               )}
             </div>
             <div className="mt-4 flex justify-end gap-2">
-              <button
-                onClick={() => setShowEditModal(false)}
-                disabled={saving}
-                className="rounded-lg border border-gray-300 px-4 py-2 text-sm hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSaveEdit}
-                disabled={saving || !editEmail.trim()}
-                className="rounded-lg bg-primary-600 px-4 py-2 text-sm text-white hover:bg-primary-700 disabled:opacity-50"
-              >
-                {saving ? 'Saving...' : 'Save'}
-              </button>
+              <button onClick={() => setShowEditModal(false)} disabled={saving} className="rounded-lg border border-gray-300 px-4 py-2 text-sm hover:bg-gray-50">Cancel</button>
+              <button onClick={handleSaveEdit} disabled={saving || !editEmail.trim()} className="rounded-lg bg-primary-600 px-4 py-2 text-sm text-white hover:bg-primary-700 disabled:opacity-50">{saving ? 'Saving...' : 'Save'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-sm rounded-xl bg-white p-6">
+            <h3 className="text-lg font-semibold text-red-600">Delete Contact</h3>
+            <p className="mt-2 text-sm text-gray-600">This will permanently delete <strong>{contact.name || contact.email}</strong> and all associated data. Enter admin password to confirm.</p>
+            <input
+              type="password"
+              placeholder="Admin password"
+              value={deletePassword}
+              onChange={(e) => setDeletePassword(e.target.value)}
+              className="mt-3 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none"
+            />
+            <div className="mt-4 flex justify-end gap-2">
+              <button onClick={() => { setShowDeleteConfirm(false); setDeletePassword(''); }} disabled={deleting} className="rounded-lg border border-gray-300 px-4 py-2 text-sm hover:bg-gray-50">Cancel</button>
+              <button onClick={handleDelete} disabled={deleting || !deletePassword} className="rounded-lg bg-red-600 px-4 py-2 text-sm text-white hover:bg-red-700 disabled:opacity-50">{deleting ? 'Deleting...' : 'Delete'}</button>
             </div>
           </div>
         </div>

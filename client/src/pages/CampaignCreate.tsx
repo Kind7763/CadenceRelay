@@ -445,7 +445,7 @@ export default function CampaignCreate() {
 
           <div className="flex gap-2">
             <button onClick={() => setStep(3)} className="rounded-lg border px-6 py-2 text-sm">Back</button>
-            <button onClick={() => setShowConfirm(true)} disabled={creating} className="rounded-lg bg-green-600 px-6 py-2 text-sm text-white hover:bg-green-700 disabled:opacity-50">
+            <button onClick={() => setShowConfirm(true)} disabled={creating} className="rounded-lg bg-primary-600 px-6 py-2 text-sm text-white hover:bg-primary-700 disabled:opacity-50">
               {creating ? 'Creating...' : scheduleType === 'now' ? 'Send Now' : 'Schedule Campaign'}
             </button>
           </div>
@@ -477,7 +477,7 @@ export default function CampaignCreate() {
             </div>
             <div className="mt-4 flex justify-end gap-2">
               <button onClick={() => setShowConfirm(false)} className="rounded-lg border px-4 py-2 text-sm">Cancel</button>
-              <button onClick={handleCreate} disabled={creating} className="rounded-lg bg-green-600 px-4 py-2 text-sm text-white hover:bg-green-700 disabled:opacity-50">
+              <button onClick={handleCreate} disabled={creating} className="rounded-lg bg-primary-600 px-4 py-2 text-sm text-white hover:bg-primary-700 disabled:opacity-50">
                 {creating ? 'Processing...' : 'Yes, proceed'}
               </button>
             </div>

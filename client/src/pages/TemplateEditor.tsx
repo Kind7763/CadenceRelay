@@ -335,7 +335,7 @@ export default function TemplateEditor() {
             </div>
             <div className="mt-4 flex justify-end gap-2">
               <button onClick={() => { setShowTestModal(false); setTestEmail(''); }} className="rounded-lg border px-4 py-2 text-sm">Cancel</button>
-              <button onClick={handleSendTest} disabled={sendingTest || !testEmail.trim()} className="rounded-lg bg-green-600 px-4 py-2 text-sm text-white hover:bg-green-700 disabled:opacity-50">
+              <button onClick={handleSendTest} disabled={sendingTest || !testEmail.trim()} className="rounded-lg bg-primary-600 px-4 py-2 text-sm text-white hover:bg-primary-700 disabled:opacity-50">
                 {sendingTest ? 'Sending...' : 'Send Test'}
               </button>
             </div>
