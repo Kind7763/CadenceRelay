@@ -251,18 +251,39 @@ export async function updateContact(req: Request, res: Response, next: NextFunct
   try {
     const { id } = req.params;
     validateUUID(id, 'contact ID');
-    const { email, name, metadata, status } = req.body;
+    const { email, name, metadata, status, state, district, block, category, management, classes, address } = req.body;
 
-    // FIX: Pass metadata as a proper JSON object (not stringified) so COALESCE works correctly with the jsonb column
+    // Build dynamic SET clause for provided fields
+    const setClauses: string[] = [];
+    const params: unknown[] = [];
+    let paramIdx = 1;
+
+    if (email !== undefined) { setClauses.push(`email = $${paramIdx}`); params.push(email); paramIdx++; }
+    if (name !== undefined) { setClauses.push(`name = $${paramIdx}`); params.push(name); paramIdx++; }
+    if (status !== undefined) { setClauses.push(`status = $${paramIdx}`); params.push(status); paramIdx++; }
+    if (state !== undefined) { setClauses.push(`state = $${paramIdx}`); params.push(state); paramIdx++; }
+    if (district !== undefined) { setClauses.push(`district = $${paramIdx}`); params.push(district); paramIdx++; }
+    if (block !== undefined) { setClauses.push(`block = $${paramIdx}`); params.push(block); paramIdx++; }
+    if (category !== undefined) { setClauses.push(`category = $${paramIdx}`); params.push(category); paramIdx++; }
+    if (management !== undefined) { setClauses.push(`management = $${paramIdx}`); params.push(management); paramIdx++; }
+    if (classes !== undefined) { setClauses.push(`classes = $${paramIdx}`); params.push(classes); paramIdx++; }
+    if (address !== undefined) { setClauses.push(`address = $${paramIdx}`); params.push(address); paramIdx++; }
+    if (metadata !== undefined) {
+      setClauses.push(`metadata = COALESCE($${paramIdx}::jsonb, metadata)`);
+      params.push(JSON.stringify(metadata));
+      paramIdx++;
+    }
+
+    if (setClauses.length === 0) {
+      throw new AppError('No fields to update', 400);
+    }
+
+    setClauses.push('updated_at = NOW()');
+
+    params.push(id);
     const result = await pool.query(
-      `UPDATE contacts SET
-        email = COALESCE($1, email),
-        name = COALESCE($2, name),
-        metadata = COALESCE($3::jsonb, metadata),
-        status = COALESCE($4, status),
-        updated_at = NOW()
-       WHERE id = $5 RETURNING *`,
-      [email, name, metadata ? JSON.stringify(metadata) : null, status, id]
+      `UPDATE contacts SET ${setClauses.join(', ')} WHERE id = $${paramIdx} RETURNING *`,
+      params
     );
 
     if (result.rows.length === 0) {
@@ -315,6 +336,62 @@ export async function deleteContact(req: Request, res: Response, next: NextFunct
     }
 
     res.json({ message: 'Contact deleted' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function bulkUpdateContacts(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { contactIds, updates } = req.body;
+
+    if (!Array.isArray(contactIds) || contactIds.length === 0) {
+      throw new AppError('contactIds must be a non-empty array', 400);
+    }
+    if (!updates || typeof updates !== 'object') {
+      throw new AppError('updates must be an object', 400);
+    }
+    for (const id of contactIds) {
+      validateUUID(id, 'contact ID');
+    }
+
+    // Build dynamic SET clause — only update fields present in `updates`
+    const setClauses: string[] = [];
+    const params: unknown[] = [];
+    let paramIdx = 1;
+
+    const allowedFields = ['status', 'state', 'district', 'block', 'category', 'management', 'name', 'classes', 'address'];
+    for (const field of allowedFields) {
+      if (updates[field] !== undefined) {
+        setClauses.push(`${field} = $${paramIdx}`);
+        params.push(updates[field]);
+        paramIdx++;
+      }
+    }
+
+    // Handle metadata merge: use jsonb concatenation to MERGE with existing
+    if (updates.metadata && typeof updates.metadata === 'object' && Object.keys(updates.metadata).length > 0) {
+      setClauses.push(`metadata = COALESCE(metadata, '{}'::jsonb) || $${paramIdx}::jsonb`);
+      params.push(JSON.stringify(updates.metadata));
+      paramIdx++;
+    }
+
+    if (setClauses.length === 0) {
+      throw new AppError('No valid fields to update', 400);
+    }
+
+    setClauses.push('updated_at = NOW()');
+
+    // Execute single efficient UPDATE with ANY array
+    params.push(contactIds);
+    const query = `UPDATE contacts SET ${setClauses.join(', ')} WHERE id = ANY($${paramIdx}) RETURNING id`;
+
+    const result = await pool.query(query, params);
+
+    // Invalidate contact filter cache since state/district/etc may have changed
+    await cacheDel('contact-filters:*');
+
+    res.json({ updated: result.rowCount });
   } catch (err) {
     next(err);
   }

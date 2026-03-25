@@ -3,8 +3,11 @@ import toast from 'react-hot-toast';
 import {
   listContacts,
   createContact,
+  updateContact,
   deleteContact,
   bulkDeleteContacts,
+  bulkUpdateContacts,
+  BulkUpdatePayload,
 } from '../api/contacts.api';
 
 export interface ContactsParams {
@@ -70,6 +73,35 @@ export function useDeleteContact() {
     },
     onError: () => {
       toast.error('Failed to delete contact');
+    },
+  });
+}
+
+export function useUpdateContact() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: Record<string, unknown> }) =>
+      updateContact(id, data as Parameters<typeof updateContact>[1]),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['contacts'] });
+      toast.success('Contact updated');
+    },
+    onError: () => {
+      toast.error('Failed to update contact');
+    },
+  });
+}
+
+export function useBulkUpdateContacts() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: BulkUpdatePayload) => bulkUpdateContacts(payload),
+    onSuccess: (_data) => {
+      queryClient.invalidateQueries({ queryKey: ['contacts'] });
+      toast.success(`${_data.updated} contact(s) updated`);
+    },
+    onError: () => {
+      toast.error('Failed to update contacts');
     },
   });
 }

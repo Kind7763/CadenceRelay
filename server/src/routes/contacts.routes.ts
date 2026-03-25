@@ -9,6 +9,7 @@ import {
   updateContact,
   deleteContact,
   bulkDeleteContacts,
+  bulkUpdateContacts,
   importContacts,
   importContactsCSV,
   previewCSV,
@@ -39,9 +40,16 @@ const createSchema = z.object({
 
 const updateSchema = z.object({
   email: z.string().email().optional(),
-  name: z.string().optional(),
+  name: z.string().nullable().optional(),
   metadata: z.record(z.unknown()).optional(),
   status: z.enum(['active', 'bounced', 'complained', 'unsubscribed']).optional(),
+  state: z.string().nullable().optional(),
+  district: z.string().nullable().optional(),
+  block: z.string().nullable().optional(),
+  category: z.string().nullable().optional(),
+  management: z.string().nullable().optional(),
+  classes: z.string().nullable().optional(),
+  address: z.string().nullable().optional(),
 });
 
 router.get('/', listContacts);
@@ -50,6 +58,7 @@ router.get('/filters', getContactFilters);
 router.get('/:id', getContact);
 router.post('/', validateBody(createSchema), createContact);
 router.put('/:id', validateBody(updateSchema), updateContact);
+router.put('/bulk-update', bulkUpdateContacts);
 router.delete('/bulk', bulkDeleteContacts);
 router.delete('/:id', deleteContact);
 router.post('/import', upload.single('file'), importContacts);

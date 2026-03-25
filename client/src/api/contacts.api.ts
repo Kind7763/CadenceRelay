@@ -227,6 +227,27 @@ export async function importContactsCSV(
   return res.data;
 }
 
+export interface BulkUpdatePayload {
+  contactIds: string[];
+  updates: {
+    status?: string;
+    state?: string;
+    district?: string;
+    block?: string;
+    category?: string;
+    management?: string;
+    name?: string;
+    classes?: string;
+    address?: string;
+    metadata?: Record<string, string>;
+  };
+}
+
+export async function bulkUpdateContacts(payload: BulkUpdatePayload): Promise<{ updated: number }> {
+  const res = await apiClient.put('/contacts/bulk-update', payload);
+  return res.data;
+}
+
 export async function exportContacts(listId?: string) {
   const params = listId ? { listId } : {};
   const res = await apiClient.get('/contacts/export', { params, responseType: 'blob' });
