@@ -58,6 +58,8 @@ function SettingsContent() {
         // If keys are masked, show empty — user must re-enter to change
         if (typeof sc.accessKeyId === 'string' && sc.accessKeyId.startsWith('****')) sc.accessKeyId = '';
         if (typeof sc.secretAccessKey === 'string' && sc.secretAccessKey.startsWith('****')) sc.secretAccessKey = '';
+        // Ensure fromName always exists in state
+        if (!sc.fromName) sc.fromName = '';
         setSes(sc);
       }
       if (settingsData.throttle_defaults) setThrottle(settingsData.throttle_defaults);
@@ -116,14 +118,27 @@ function SettingsContent() {
   async function handleSaveSes(e: FormEvent) {
     e.preventDefault();
     if (!validateSes()) return;
-    updateSesMutation.mutate(ses);
+    // Explicitly include all fields to ensure fromName is sent
+    updateSesMutation.mutate({
+      region: ses.region,
+      accessKeyId: ses.accessKeyId,
+      secretAccessKey: ses.secretAccessKey,
+      fromEmail: ses.fromEmail,
+      fromName: ses.fromName || '',
+    });
   }
 
   async function handleTestSes() {
     if (!validateSes()) return;
     setSesStatus('testing');
     try {
-      await updateSesMutation.mutateAsync(ses);
+      await updateSesMutation.mutateAsync({
+        region: ses.region,
+        accessKeyId: ses.accessKeyId,
+        secretAccessKey: ses.secretAccessKey,
+        fromEmail: ses.fromEmail,
+        fromName: ses.fromName || '',
+      });
       await sendTestEmail(ses.fromEmail);
       setSesStatus('success');
       toast.success('SES connection test passed');
