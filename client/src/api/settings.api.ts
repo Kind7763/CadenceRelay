@@ -20,6 +20,7 @@ export async function updateSesConfig(config: {
   accessKeyId: string;
   secretAccessKey: string;
   fromEmail: string;
+  fromName?: string;
 }) {
   const res = await apiClient.put('/settings/ses', config);
   return res.data;
