@@ -28,7 +28,13 @@ export async function trackOpen(req: Request, res: Response, _next: NextFunction
           [recipient.id, recipient.campaign_id, req.ip, req.get('user-agent')]
         );
 
-        // Update first open timestamp
+        // Always increment open_count and update last_opened_at
+        await client.query(
+          "UPDATE campaign_recipients SET open_count = COALESCE(open_count, 0) + 1, last_opened_at = NOW() WHERE id = $1",
+          [recipient.id]
+        );
+
+        // Update first open timestamp + campaign counter only on first open
         if (!recipient.opened_at) {
           await client.query(
             "UPDATE campaign_recipients SET status = 'opened', opened_at = NOW() WHERE id = $1",
@@ -113,7 +119,13 @@ export async function trackClick(req: Request, res: Response, next: NextFunction
         [recipient.id, recipient.campaign_id, JSON.stringify({ url: originalUrl, linkIndex: idx }), req.ip, req.get('user-agent')]
       );
 
-      // Update first click timestamp
+      // Always increment click_count and update last_clicked_at
+      await client.query(
+        "UPDATE campaign_recipients SET click_count = COALESCE(click_count, 0) + 1, last_clicked_at = NOW() WHERE id = $1",
+        [recipient.id]
+      );
+
+      // Update first click timestamp + campaign counter only on first click
       if (!recipient.clicked_at) {
         await client.query(
           "UPDATE campaign_recipients SET status = 'clicked', clicked_at = NOW() WHERE id = $1",

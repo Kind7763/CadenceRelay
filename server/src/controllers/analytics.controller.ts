@@ -161,6 +161,102 @@ export async function getCampaignAnalytics(req: Request, res: Response, next: Ne
   }
 }
 
+/**
+ * Get detailed event history for a specific campaign recipient
+ * Shows every open/click with timestamp, IP, user agent
+ */
+export async function getRecipientEvents(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { recipientId } = req.params;
+    validateUUID(recipientId, 'recipient ID');
+
+    const events = await pool.query(
+      `SELECT id, event_type, metadata, ip_address, user_agent, created_at
+       FROM email_events
+       WHERE campaign_recipient_id = $1
+       ORDER BY created_at DESC
+       LIMIT 200`,
+      [recipientId]
+    );
+
+    // Also get the recipient summary
+    const recipient = await pool.query(
+      `SELECT cr.*, c.name as contact_name, c.email as contact_email
+       FROM campaign_recipients cr
+       LEFT JOIN contacts c ON c.id = cr.contact_id
+       WHERE cr.id = $1`,
+      [recipientId]
+    );
+
+    res.json({
+      recipient: recipient.rows[0] || null,
+      events: events.rows,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Get detailed engagement analytics for a specific contact across all campaigns
+ */
+export async function getContactAnalytics(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { contactId } = req.params;
+    validateUUID(contactId, 'contact ID');
+
+    // Per-campaign breakdown with open/click counts
+    const campaigns = await pool.query(
+      `SELECT cr.id as recipient_id, cr.campaign_id, cam.name as campaign_name,
+        cr.status, cr.sent_at, cr.opened_at, cr.clicked_at, cr.bounced_at,
+        COALESCE(cr.open_count, 0) as open_count, COALESCE(cr.click_count, 0) as click_count,
+        cr.last_opened_at, cr.last_clicked_at, cr.error_message
+       FROM campaign_recipients cr
+       JOIN campaigns cam ON cam.id = cr.campaign_id
+       WHERE cr.contact_id = $1
+       ORDER BY cr.sent_at DESC NULLS LAST`,
+      [contactId]
+    );
+
+    // Aggregate stats
+    const stats = await pool.query(
+      `SELECT
+        COUNT(*) as total_campaigns,
+        COUNT(*) FILTER (WHERE cr.status = 'sent' OR cr.status = 'delivered' OR cr.status = 'opened' OR cr.status = 'clicked') as delivered,
+        COUNT(*) FILTER (WHERE cr.opened_at IS NOT NULL) as opened,
+        COUNT(*) FILTER (WHERE cr.clicked_at IS NOT NULL) as clicked,
+        COUNT(*) FILTER (WHERE cr.status = 'bounced') as bounced,
+        COUNT(*) FILTER (WHERE cr.status = 'failed') as failed,
+        SUM(COALESCE(cr.open_count, 0)) as total_opens,
+        SUM(COALESCE(cr.click_count, 0)) as total_clicks
+       FROM campaign_recipients cr
+       WHERE cr.contact_id = $1`,
+      [contactId]
+    );
+
+    // Recent events timeline
+    const events = await pool.query(
+      `SELECT ee.event_type, ee.metadata, ee.ip_address, ee.user_agent, ee.created_at,
+        cam.name as campaign_name
+       FROM email_events ee
+       JOIN campaign_recipients cr ON cr.id = ee.campaign_recipient_id
+       JOIN campaigns cam ON cam.id = ee.campaign_id
+       WHERE cr.contact_id = $1
+       ORDER BY ee.created_at DESC
+       LIMIT 100`,
+      [contactId]
+    );
+
+    res.json({
+      campaigns: campaigns.rows,
+      stats: stats.rows[0],
+      events: events.rows,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function exportAnalytics(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { from, to } = req.query;

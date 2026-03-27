@@ -10,6 +10,16 @@ export async function getCampaignAnalytics(id: string) {
   return res.data;
 }
 
+export async function getRecipientEvents(recipientId: string) {
+  const res = await apiClient.get(`/analytics/recipients/${recipientId}/events`);
+  return res.data;
+}
+
+export async function getContactAnalytics(contactId: string) {
+  const res = await apiClient.get(`/analytics/contacts/${contactId}`);
+  return res.data;
+}
+
 export async function exportAnalytics(params: Record<string, string> = {}) {
   const res = await apiClient.get('/analytics/export', { params, responseType: 'blob' });
   const url = window.URL.createObjectURL(new Blob([res.data]));

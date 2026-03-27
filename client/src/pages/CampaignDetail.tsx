@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { getCampaign, pauseCampaign, resumeCampaign, getCampaignRecipients, Campaign } from '../api/campaigns.api';
+import { getRecipientEvents } from '../api/analytics.api';
 
 const statusColors: Record<string, string> = {
   draft: 'bg-gray-100 text-gray-700',
@@ -21,6 +22,19 @@ interface Recipient {
   clicked_at: string | null;
   bounced_at: string | null;
   error_message: string | null;
+  open_count?: number;
+  click_count?: number;
+  last_opened_at?: string | null;
+  last_clicked_at?: string | null;
+}
+
+interface RecipientEvent {
+  id: string;
+  event_type: string;
+  metadata: Record<string, unknown>;
+  ip_address: string;
+  user_agent: string;
+  created_at: string;
 }
 
 export default function CampaignDetail() {
@@ -32,7 +46,28 @@ export default function CampaignDetail() {
   const [recipientPage, setRecipientPage] = useState(1);
   const [recipientFilter, setRecipientFilter] = useState('');
   const [loading, setLoading] = useState(true);
+  const [expandedRecipient, setExpandedRecipient] = useState<string | null>(null);
+  const [recipientEvents, setRecipientEvents] = useState<RecipientEvent[]>([]);
+  const [eventsLoading, setEventsLoading] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  async function toggleRecipientEvents(recipientId: string) {
+    if (expandedRecipient === recipientId) {
+      setExpandedRecipient(null);
+      setRecipientEvents([]);
+      return;
+    }
+    setExpandedRecipient(recipientId);
+    setEventsLoading(true);
+    try {
+      const res = await getRecipientEvents(recipientId);
+      setRecipientEvents(res.events);
+    } catch {
+      toast.error('Failed to load events');
+    } finally {
+      setEventsLoading(false);
+    }
+  }
 
   const fetchCampaign = useCallback(async () => {
     if (!id) return;
@@ -196,23 +231,86 @@ export default function CampaignDetail() {
                 <th className="px-3 py-2 text-left font-medium text-gray-600">Email</th>
                 <th className="px-3 py-2 text-left font-medium text-gray-600">Status</th>
                 <th className="px-3 py-2 text-left font-medium text-gray-600">Sent</th>
-                <th className="px-3 py-2 text-left font-medium text-gray-600">Opened</th>
-                <th className="px-3 py-2 text-left font-medium text-gray-600">Clicked</th>
+                <th className="px-3 py-2 text-center font-medium text-gray-600">Opens</th>
+                <th className="px-3 py-2 text-center font-medium text-gray-600">Clicks</th>
+                <th className="px-3 py-2 text-left font-medium text-gray-600">Last Opened</th>
                 <th className="px-3 py-2 text-left font-medium text-gray-600">Error</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {recipients.length === 0 ? (
-                <tr><td colSpan={6} className="px-3 py-4 text-center text-gray-400">No recipients</td></tr>
+                <tr><td colSpan={7} className="px-3 py-4 text-center text-gray-400">No recipients</td></tr>
               ) : recipients.map((r) => (
-                <tr key={r.id} className="hover:bg-gray-50">
-                  <td className="px-3 py-2">{r.email}</td>
-                  <td className="px-3 py-2"><span className={`rounded-full px-2 py-0.5 text-xs ${statusColors[r.status] || 'bg-gray-100'}`}>{r.status}</span></td>
-                  <td className="px-3 py-2 text-xs">{r.sent_at ? new Date(r.sent_at).toLocaleString() : '-'}</td>
-                  <td className="px-3 py-2 text-xs">{r.opened_at ? new Date(r.opened_at).toLocaleString() : '-'}</td>
-                  <td className="px-3 py-2 text-xs">{r.clicked_at ? new Date(r.clicked_at).toLocaleString() : '-'}</td>
-                  <td className="px-3 py-2 text-xs text-red-500">{r.error_message || '-'}</td>
-                </tr>
+                <React.Fragment key={r.id}>
+                  <tr
+                    className="hover:bg-gray-50 cursor-pointer"
+                    onClick={() => toggleRecipientEvents(r.id)}
+                  >
+                    <td className="px-3 py-2">
+                      <span className="mr-1 text-gray-400">{expandedRecipient === r.id ? '▼' : '▶'}</span>
+                      {r.email}
+                    </td>
+                    <td className="px-3 py-2"><span className={`rounded-full px-2 py-0.5 text-xs ${statusColors[r.status] || 'bg-gray-100'}`}>{r.status}</span></td>
+                    <td className="px-3 py-2 text-xs">{r.sent_at ? new Date(r.sent_at).toLocaleString() : '-'}</td>
+                    <td className="px-3 py-2 text-center">
+                      {(r.open_count || 0) > 0 ? (
+                        <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700">{r.open_count}</span>
+                      ) : <span className="text-xs text-gray-400">0</span>}
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      {(r.click_count || 0) > 0 ? (
+                        <span className="inline-flex items-center rounded-full bg-purple-100 px-2 py-0.5 text-xs font-semibold text-purple-700">{r.click_count}</span>
+                      ) : <span className="text-xs text-gray-400">0</span>}
+                    </td>
+                    <td className="px-3 py-2 text-xs">{r.last_opened_at ? new Date(r.last_opened_at).toLocaleString() : '-'}</td>
+                    <td className="px-3 py-2 text-xs text-red-500">{r.error_message || '-'}</td>
+                  </tr>
+                  {expandedRecipient === r.id && (
+                    <tr>
+                      <td colSpan={7} className="bg-gray-50 px-6 py-3">
+                        {eventsLoading ? (
+                          <p className="text-sm text-gray-400">Loading events...</p>
+                        ) : recipientEvents.length === 0 ? (
+                          <p className="text-sm text-gray-400">No events recorded</p>
+                        ) : (
+                          <div className="max-h-64 overflow-y-auto">
+                            <table className="w-full text-xs">
+                              <thead>
+                                <tr className="text-gray-500">
+                                  <th className="pb-1 text-left font-medium">Event</th>
+                                  <th className="pb-1 text-left font-medium">Timestamp</th>
+                                  <th className="pb-1 text-left font-medium">IP Address</th>
+                                  <th className="pb-1 text-left font-medium">Details</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-200">
+                                {recipientEvents.map((ev) => (
+                                  <tr key={ev.id}>
+                                    <td className="py-1.5">
+                                      <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${
+                                        ev.event_type === 'opened' ? 'bg-green-100 text-green-700' :
+                                        ev.event_type === 'clicked' ? 'bg-purple-100 text-purple-700' :
+                                        ev.event_type === 'sent' ? 'bg-blue-100 text-blue-700' :
+                                        ev.event_type === 'bounced' ? 'bg-orange-100 text-orange-700' :
+                                        ev.event_type === 'failed' ? 'bg-red-100 text-red-700' :
+                                        'bg-gray-100 text-gray-700'
+                                      }`}>{ev.event_type}</span>
+                                    </td>
+                                    <td className="py-1.5">{new Date(ev.created_at).toLocaleString()}</td>
+                                    <td className="py-1.5 font-mono">{ev.ip_address || '-'}</td>
+                                    <td className="py-1.5 truncate max-w-[200px]">
+                                      {ev.event_type === 'clicked' && ev.metadata?.url ? String(ev.metadata.url) : ev.user_agent ? ev.user_agent.substring(0, 60) + '...' : '-'}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
               ))}
             </tbody>
           </table>
