@@ -119,7 +119,7 @@ export async function getTemplateVersions(req: Request, res: Response, next: Nex
     const { id } = req.params;
     validateUUID(id, 'template ID');
     const result = await pool.query(
-      'SELECT id, version, subject, created_at FROM template_versions WHERE template_id = $1 ORDER BY version DESC',
+      'SELECT id, version, subject, label, created_at FROM template_versions WHERE template_id = $1 ORDER BY version DESC',
       [id]
     );
     res.json({ versions: result.rows });
@@ -145,6 +145,75 @@ export async function getTemplateVersion(req: Request, res: Response, next: Next
     );
     if (result.rows.length === 0) throw new AppError('Version not found', 404);
     res.json({ version: result.rows[0] });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Restore a template to a previous version — creates a NEW version with the old content
+ */
+export async function restoreVersion(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { id, version } = req.params;
+    validateUUID(id, 'template ID');
+    const versionNum = parseInt(version);
+    if (isNaN(versionNum) || versionNum < 1) throw new AppError('Invalid version number', 400);
+
+    // Get the old version's content
+    const oldVersion = await pool.query(
+      'SELECT subject, html_body, text_body, variables FROM template_versions WHERE template_id = $1 AND version = $2',
+      [id, versionNum]
+    );
+    if (oldVersion.rows.length === 0) throw new AppError('Version not found', 404);
+
+    const old = oldVersion.rows[0];
+
+    // Get current version number
+    const current = await pool.query('SELECT version FROM templates WHERE id = $1', [id]);
+    if (current.rows.length === 0) throw new AppError('Template not found', 404);
+
+    const newVersionNum = current.rows[0].version + 1;
+
+    // Update the main template with old version's content
+    await pool.query(
+      `UPDATE templates SET subject = $1, html_body = $2, text_body = $3, variables = $4, version = $5, updated_at = NOW() WHERE id = $6`,
+      [old.subject, old.html_body, old.text_body, old.variables, newVersionNum, id]
+    );
+
+    // Create a new version entry (labeled as restored)
+    await pool.query(
+      `INSERT INTO template_versions (template_id, version, subject, html_body, text_body, variables, label)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [id, newVersionNum, old.subject, old.html_body, old.text_body, old.variables, `Restored from v${versionNum}`]
+    );
+
+    res.json({ message: `Restored to v${versionNum} as new v${newVersionNum}`, version: newVersionNum });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Update a version's label/nickname
+ */
+export async function updateVersionLabel(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { id, version } = req.params;
+    validateUUID(id, 'template ID');
+    const versionNum = parseInt(version);
+    if (isNaN(versionNum) || versionNum < 1) throw new AppError('Invalid version number', 400);
+
+    const { label } = req.body;
+    if (typeof label !== 'string') throw new AppError('Label must be a string', 400);
+
+    const result = await pool.query(
+      'UPDATE template_versions SET label = $1 WHERE template_id = $2 AND version = $3 RETURNING id',
+      [label.trim().substring(0, 100) || null, id, versionNum]
+    );
+    if (result.rows.length === 0) throw new AppError('Version not found', 404);
+
+    res.json({ message: 'Label updated' });
   } catch (err) {
     next(err);
   }

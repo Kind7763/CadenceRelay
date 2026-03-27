@@ -7,6 +7,8 @@ import {
   deleteTemplate,
   getTemplateVersions,
   getTemplateVersion,
+  restoreVersion,
+  updateVersionLabel,
   previewTemplate,
 } from '../controllers/templates.controller';
 import { validateBody } from '../middleware/validateRequest';
@@ -35,6 +37,8 @@ router.put('/:id', validateBody(updateSchema), updateTemplate);
 router.delete('/:id', deleteTemplate);
 router.get('/:id/versions', getTemplateVersions);
 router.get('/:id/versions/:version', getTemplateVersion);
+router.post('/:id/versions/:version/restore', restoreVersion);
+router.put('/:id/versions/:version/label', updateVersionLabel);
 router.post('/:id/preview', previewTemplate);
 
 export default router;

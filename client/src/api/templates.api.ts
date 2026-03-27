@@ -47,6 +47,16 @@ export async function getTemplateVersion(id: string, version: number) {
   return res.data.version;
 }
 
+export async function restoreTemplateVersion(id: string, version: number) {
+  const res = await apiClient.post(`/templates/${id}/versions/${version}/restore`);
+  return res.data;
+}
+
+export async function updateVersionLabel(id: string, version: number, label: string) {
+  const res = await apiClient.put(`/templates/${id}/versions/${version}/label`, { label });
+  return res.data;
+}
+
 export async function previewTemplate(id: string, data?: Record<string, string>) {
   const res = await apiClient.post(`/templates/${id}/preview`, { data });
   return res.data.html as string;

@@ -200,6 +200,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS unsub_email_campaign_idx ON unsubscribes(email
 CREATE INDEX IF NOT EXISTS cr_campaign_status_idx ON campaign_recipients(campaign_id, status);
 CREATE INDEX IF NOT EXISTS contacts_created_idx ON contacts(created_at);
 
+-- Version label/nickname for template versions
+ALTER TABLE template_versions ADD COLUMN IF NOT EXISTS label varchar(100);
+
 -- Open/click count tracking on campaign_recipients
 ALTER TABLE campaign_recipients ADD COLUMN IF NOT EXISTS open_count integer DEFAULT 0;
 ALTER TABLE campaign_recipients ADD COLUMN IF NOT EXISTS click_count integer DEFAULT 0;

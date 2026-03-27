@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
 import toast from 'react-hot-toast';
-import { getTemplate, createTemplate, updateTemplate, getTemplateVersions } from '../api/templates.api';
+import { getTemplate, createTemplate, updateTemplate, getTemplateVersions, getTemplateVersion, restoreTemplateVersion, updateVersionLabel } from '../api/templates.api';
 import { sendTestEmail } from '../api/settings.api';
 import { useCustomVariables } from '../hooks/useCustomVariables';
 
@@ -43,7 +43,7 @@ export default function TemplateEditor() {
   const [name, setName] = useState('');
   const [subject, setSubject] = useState('');
   const [htmlBody, setHtmlBody] = useState(DEFAULT_HTML);
-  const [versions, setVersions] = useState<{ version: number; created_at: string }[]>([]);
+  const [versions, setVersions] = useState<{ version: number; subject: string; label?: string; created_at: string }[]>([]);
   const [saving, setSaving] = useState(false);
   const [variables, setVariables] = useState<string[]>([]);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
@@ -51,6 +51,11 @@ export default function TemplateEditor() {
   const [testEmail, setTestEmail] = useState('');
   const [sendingTest, setSendingTest] = useState(false);
   const [showVariablesPanel, setShowVariablesPanel] = useState(false);
+  const [showVersionHistory, setShowVersionHistory] = useState(false);
+  const [previewingVersion, setPreviewingVersion] = useState<number | null>(null);
+  const [previewVersionHtml, setPreviewVersionHtml] = useState('');
+  const [editingLabel, setEditingLabel] = useState<number | null>(null);
+  const [labelText, setLabelText] = useState('');
 
   const { data: customVariables = [] } = useCustomVariables();
 
@@ -174,6 +179,56 @@ export default function TemplateEditor() {
     }
   }
 
+  async function handlePreviewVersion(version: number) {
+    if (!id) return;
+    if (previewingVersion === version) {
+      setPreviewingVersion(null);
+      setPreviewVersionHtml('');
+      return;
+    }
+    try {
+      const v = await getTemplateVersion(id, version);
+      setPreviewingVersion(version);
+      setPreviewVersionHtml(v.html_body);
+    } catch {
+      toast.error('Failed to load version');
+    }
+  }
+
+  async function handleRestoreVersion(version: number) {
+    if (!id) return;
+    if (!confirm(`Restore to v${version}? This creates a new version with that content.`)) return;
+    try {
+      const res = await restoreTemplateVersion(id, version);
+      toast.success(res.message);
+      // Reload template and versions
+      const t = await getTemplate(id);
+      setName(t.name);
+      setSubject(t.subject);
+      setHtmlBody(t.html_body);
+      setVariables(t.variables || []);
+      savedStateRef.current = { name: t.name, subject: t.subject, htmlBody: t.html_body };
+      setHasUnsavedChanges(false);
+      getTemplateVersions(id).then(setVersions).catch(() => {});
+      setPreviewingVersion(null);
+      setPreviewVersionHtml('');
+    } catch {
+      toast.error('Failed to restore version');
+    }
+  }
+
+  async function handleSaveLabel(version: number) {
+    if (!id) return;
+    try {
+      await updateVersionLabel(id, version, labelText);
+      toast.success('Label saved');
+      setEditingLabel(null);
+      getTemplateVersions(id).then(setVersions).catch(() => {});
+    } catch {
+      toast.error('Failed to save label');
+    }
+  }
+
   function handleBack() {
     if (hasUnsavedChanges) {
       if (!confirm('You have unsaved changes. Are you sure you want to leave?')) return;
@@ -201,7 +256,10 @@ export default function TemplateEditor() {
           className="flex-1 rounded border px-2 py-1 text-sm"
         />
         {versions.length > 0 && (
-          <span className="text-xs text-gray-400">v{versions[0]?.version || 1}</span>
+          <span className="rounded bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">
+            v{versions[0]?.version || 1}
+            {versions[0]?.label && <span className="ml-1 text-gray-400">({versions[0].label})</span>}
+          </span>
         )}
         {hasUnsavedChanges && (
           <span className="text-xs text-orange-500 font-medium">Unsaved</span>
@@ -212,6 +270,14 @@ export default function TemplateEditor() {
         >
           Variables
         </button>
+        {!isNew && versions.length > 1 && (
+          <button
+            onClick={() => { setShowVersionHistory(!showVersionHistory); setShowVariablesPanel(false); }}
+            className={`rounded-lg border px-3 py-1.5 text-sm ${showVersionHistory ? 'border-primary-300 bg-primary-50 text-primary-700' : 'border-gray-300 hover:bg-gray-50'}`}
+          >
+            History ({versions.length})
+          </button>
+        )}
         <button onClick={() => setShowTestModal(true)} className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50">
           Send Test
         </button>
@@ -285,7 +351,85 @@ export default function TemplateEditor() {
           </div>
         )}
 
-        <div className={showVariablesPanel ? 'flex flex-1 overflow-hidden' : 'flex flex-1 overflow-hidden'}>
+        {/* Version History Panel */}
+        {showVersionHistory && (
+          <div className="w-72 flex-shrink-0 overflow-y-auto border-r border-gray-200 bg-white">
+            <div className="sticky top-0 z-10 border-b bg-white px-3 py-2.5">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500">Version History</h3>
+                <button onClick={() => { setShowVersionHistory(false); setPreviewingVersion(null); setPreviewVersionHtml(''); }} className="text-gray-400 hover:text-gray-600 text-xs">&times;</button>
+              </div>
+            </div>
+            <div className="divide-y divide-gray-100">
+              {versions.map((v, i) => (
+                <div
+                  key={v.version}
+                  className={`px-3 py-3 ${previewingVersion === v.version ? 'bg-primary-50 border-l-2 border-primary-500' : 'hover:bg-gray-50'}`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm font-semibold text-gray-800">v{v.version}</span>
+                      {i === 0 && <span className="rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700">Current</span>}
+                    </div>
+                    <span className="text-[10px] text-gray-400">{new Date(v.created_at).toLocaleDateString()}</span>
+                  </div>
+
+                  {/* Label / nickname */}
+                  {editingLabel === v.version ? (
+                    <div className="mt-1.5 flex gap-1">
+                      <input
+                        type="text"
+                        value={labelText}
+                        onChange={(e) => setLabelText(e.target.value)}
+                        placeholder="e.g. Final version"
+                        className="flex-1 rounded border border-gray-300 px-1.5 py-0.5 text-xs focus:border-primary-500 focus:outline-none"
+                        maxLength={100}
+                        autoFocus
+                        onKeyDown={(e) => { if (e.key === 'Enter') handleSaveLabel(v.version); if (e.key === 'Escape') setEditingLabel(null); }}
+                      />
+                      <button onClick={() => handleSaveLabel(v.version)} className="text-xs text-primary-600 hover:text-primary-800">Save</button>
+                    </div>
+                  ) : (
+                    <div className="mt-0.5 flex items-center gap-1">
+                      {v.label ? (
+                        <span className="text-xs text-primary-600 font-medium">{v.label}</span>
+                      ) : null}
+                      <button
+                        onClick={() => { setEditingLabel(v.version); setLabelText(v.label || ''); }}
+                        className="text-[10px] text-gray-400 hover:text-gray-600"
+                      >
+                        {v.label ? 'edit' : '+ label'}
+                      </button>
+                    </div>
+                  )}
+
+                  <p className="mt-1 text-xs text-gray-500 truncate">{v.subject}</p>
+                  <p className="text-[10px] text-gray-400">{new Date(v.created_at).toLocaleTimeString()}</p>
+
+                  {/* Actions */}
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      onClick={() => handlePreviewVersion(v.version)}
+                      className={`text-xs ${previewingVersion === v.version ? 'text-primary-700 font-medium' : 'text-primary-600 hover:text-primary-800'}`}
+                    >
+                      {previewingVersion === v.version ? 'Hide Preview' : 'Preview'}
+                    </button>
+                    {i !== 0 && (
+                      <button
+                        onClick={() => handleRestoreVersion(v.version)}
+                        className="text-xs text-orange-600 hover:text-orange-800"
+                      >
+                        Restore
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className={showVariablesPanel || showVersionHistory ? 'flex flex-1 overflow-hidden' : 'flex flex-1 overflow-hidden'}>
           <div className="w-1/2 border-r border-gray-200">
             <Editor
               height="100%"
@@ -303,14 +447,32 @@ export default function TemplateEditor() {
             />
           </div>
           <div className="w-1/2 bg-gray-100 p-4">
-            <div className="mb-2 text-xs font-medium text-gray-500">Preview</div>
-            <iframe
-              ref={iframeRef}
-              className="h-full w-full rounded-lg border bg-white"
-              title="Template Preview"
-              sandbox="allow-same-origin"
-              onLoad={handleIframeLoad}
-            />
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-xs font-medium text-gray-500">
+                {previewingVersion ? `Preview — v${previewingVersion}` : 'Preview'}
+              </span>
+              {previewingVersion && (
+                <button onClick={() => { setPreviewingVersion(null); setPreviewVersionHtml(''); }} className="text-xs text-primary-600">
+                  Back to current
+                </button>
+              )}
+            </div>
+            {previewingVersion && previewVersionHtml ? (
+              <iframe
+                className="h-full w-full rounded-lg border bg-white"
+                title="Version Preview"
+                sandbox="allow-same-origin"
+                srcDoc={previewVersionHtml}
+              />
+            ) : (
+              <iframe
+                ref={iframeRef}
+                className="h-full w-full rounded-lg border bg-white"
+                title="Template Preview"
+                sandbox="allow-same-origin"
+                onLoad={handleIframeLoad}
+              />
+            )}
           </div>
         </div>
       </div>
