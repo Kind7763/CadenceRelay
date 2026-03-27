@@ -102,10 +102,14 @@ export async function createCampaign(req: Request, res: Response, next: NextFunc
       };
     });
 
+    // Allow empty templateId/listId for draft campaigns
+    const finalTemplateId = templateId && UUID_RE.test(templateId) ? templateId : null;
+    const finalListId = listId && UUID_RE.test(listId) ? listId : null;
+
     const result = await pool.query(
       `INSERT INTO campaigns (name, template_id, list_id, provider, throttle_per_second, throttle_per_hour, attachments)
        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [name, templateId, listId, provider || 'ses', throttlePerSecond || 5, throttlePerHour || 5000, JSON.stringify(attachments)]
+      [name, finalTemplateId, finalListId, provider || 'ses', throttlePerSecond || 5, throttlePerHour || 5000, JSON.stringify(attachments)]
     );
 
     res.status(201).json({ campaign: result.rows[0] });

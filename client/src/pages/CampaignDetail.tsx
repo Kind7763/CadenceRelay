@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { getCampaign, pauseCampaign, resumeCampaign, getCampaignRecipients, Campaign } from '../api/campaigns.api';
+import { getCampaign, pauseCampaign, resumeCampaign, getCampaignRecipients, scheduleCampaign, Campaign } from '../api/campaigns.api';
 import { getRecipientEvents } from '../api/analytics.api';
 
 const statusColors: Record<string, string> = {
@@ -49,7 +49,25 @@ export default function CampaignDetail() {
   const [expandedRecipient, setExpandedRecipient] = useState<string | null>(null);
   const [recipientEvents, setRecipientEvents] = useState<RecipientEvent[]>([]);
   const [eventsLoading, setEventsLoading] = useState(false);
+  const [showReschedule, setShowReschedule] = useState(false);
+  const [newScheduledAt, setNewScheduledAt] = useState('');
+  const [rescheduling, setRescheduling] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  async function handleReschedule() {
+    if (!id || !newScheduledAt) return;
+    setRescheduling(true);
+    try {
+      await scheduleCampaign(id, new Date(newScheduledAt).toISOString());
+      toast.success('Campaign rescheduled');
+      setShowReschedule(false);
+      fetchCampaign();
+    } catch {
+      toast.error('Failed to reschedule — time must be in the future');
+    } finally {
+      setRescheduling(false);
+    }
+  }
 
   async function toggleRecipientEvents(recipientId: string) {
     if (expandedRecipient === recipientId) {
@@ -189,6 +207,96 @@ export default function CampaignDetail() {
           </div>
         </div>
       )}
+
+      {/* Campaign Info Card */}
+      <div className="mt-6 rounded-xl bg-white p-5 shadow-sm">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5 text-sm">
+          <div>
+            <span className="text-xs text-gray-500">Provider</span>
+            <p className="font-medium capitalize">{campaign.provider}</p>
+          </div>
+          <div>
+            <span className="text-xs text-gray-500">Template</span>
+            <p className="font-medium">{campaign.template_name || '-'}</p>
+          </div>
+          <div>
+            <span className="text-xs text-gray-500">List</span>
+            <p className="font-medium">{campaign.list_name || '-'}</p>
+          </div>
+          <div>
+            <span className="text-xs text-gray-500">Created</span>
+            <p className="font-medium">{new Date(campaign.created_at).toLocaleString()}</p>
+          </div>
+          {campaign.started_at && (
+            <div>
+              <span className="text-xs text-gray-500">Started</span>
+              <p className="font-medium">{new Date(campaign.started_at).toLocaleString()}</p>
+            </div>
+          )}
+          {campaign.completed_at && (
+            <div>
+              <span className="text-xs text-gray-500">Completed</span>
+              <p className="font-medium">{new Date(campaign.completed_at).toLocaleString()}</p>
+            </div>
+          )}
+        </div>
+
+        {/* Scheduled info */}
+        {(campaign.status === 'scheduled' || campaign.scheduled_at) && (
+          <div className="mt-4 flex items-center gap-3 rounded-lg bg-blue-50 p-3">
+            <div className="text-blue-600">
+              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-medium text-blue-800">
+                {campaign.status === 'scheduled' ? 'Scheduled to send' : 'Was scheduled for'}
+              </p>
+              <p className="text-lg font-bold text-blue-900">
+                {campaign.scheduled_at ? new Date(campaign.scheduled_at).toLocaleString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
+              </p>
+              {campaign.status === 'scheduled' && campaign.scheduled_at && (
+                <p className="text-xs text-blue-600">
+                  {(() => {
+                    const diff = new Date(campaign.scheduled_at).getTime() - Date.now();
+                    if (diff <= 0) return 'Starting soon...';
+                    const hours = Math.floor(diff / (1000 * 60 * 60));
+                    const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+                    if (hours > 24) return `in ${Math.floor(hours / 24)}d ${hours % 24}h`;
+                    if (hours > 0) return `in ${hours}h ${mins}m`;
+                    return `in ${mins} minutes`;
+                  })()}
+                </p>
+              )}
+            </div>
+            {campaign.status === 'scheduled' && (
+              <div className="flex gap-2">
+                {!showReschedule ? (
+                  <button
+                    onClick={() => { setShowReschedule(true); setNewScheduledAt(campaign.scheduled_at ? new Date(campaign.scheduled_at).toISOString().slice(0, 16) : ''); }}
+                    className="rounded-lg border border-blue-300 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
+                  >
+                    Reschedule
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="datetime-local"
+                      value={newScheduledAt}
+                      onChange={(e) => setNewScheduledAt(e.target.value)}
+                      min={new Date().toISOString().slice(0, 16)}
+                      className="rounded border border-blue-300 px-2 py-1 text-xs"
+                    />
+                    <button onClick={handleReschedule} disabled={rescheduling || !newScheduledAt} className="rounded bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-700 disabled:opacity-50">
+                      {rescheduling ? '...' : 'Save'}
+                    </button>
+                    <button onClick={() => setShowReschedule(false)} className="text-xs text-gray-500">Cancel</button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Stats */}
       <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-6">

@@ -62,6 +62,10 @@ export default function CampaignCreate() {
   const [campaignUploadState, setCampaignUploadState] = useState<UploadState>(INITIAL_UPLOAD_STATE);
   const [showUploadProgress, setShowUploadProgress] = useState(false);
   const abortRef = useRef<(() => void) | null>(null);
+  const [draftId, setDraftId] = useState<string | null>(null);
+  const [savingDraft, setSavingDraft] = useState(false);
+  const [lastSaved, setLastSaved] = useState<Date | null>(null);
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const previewRef = useRef<HTMLIFrameElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -196,6 +200,64 @@ export default function CampaignCreate() {
       abortRef.current = null;
     }
   }
+
+  async function handleSaveDraft() {
+    if (!name.trim()) {
+      toast.error('Campaign name is required to save as draft');
+      return;
+    }
+    setSavingDraft(true);
+    try {
+      if (draftId) {
+        // Update existing draft
+        const { updateCampaign } = await import('../api/campaigns.api');
+        await updateCampaign(draftId, {
+          name,
+          templateId: templateId || undefined,
+          listId: listId || undefined,
+          provider,
+          throttlePerSecond,
+          throttlePerHour,
+        });
+        setLastSaved(new Date());
+        toast.success('Draft saved');
+      } else {
+        // Create new draft (without attachments for auto-save speed)
+        const campaign = await createCampaign({
+          name: name || 'Untitled Campaign',
+          templateId: templateId || '',
+          listId: listId || '',
+          provider,
+          throttlePerSecond,
+          throttlePerHour,
+        });
+        setDraftId(campaign.id);
+        setLastSaved(new Date());
+        toast.success('Saved as draft');
+      }
+    } catch {
+      toast.error('Failed to save draft');
+    } finally {
+      setSavingDraft(false);
+    }
+  }
+
+  // Auto-save draft every 30 seconds if there are unsaved changes and a name exists
+  useEffect(() => {
+    if (!name.trim()) return;
+
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(() => {
+      // Only auto-save if user has entered meaningful data
+      if (name.trim() && (templateId || listId)) {
+        handleSaveDraft();
+      }
+    }, 30000); // 30 seconds
+
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, [name, templateId, listId, provider, throttlePerSecond, throttlePerHour]);
 
   function handleCancelUpload() {
     if (abortRef.current) {
@@ -443,11 +505,23 @@ export default function CampaignCreate() {
             </span>
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
             <button onClick={() => setStep(3)} className="rounded-lg border px-6 py-2 text-sm">Back</button>
+            <button
+              onClick={handleSaveDraft}
+              disabled={savingDraft || creating || !name.trim()}
+              className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              {savingDraft ? 'Saving...' : 'Save as Draft'}
+            </button>
             <button onClick={() => setShowConfirm(true)} disabled={creating} className="rounded-lg bg-primary-600 px-6 py-2 text-sm text-white hover:bg-primary-700 disabled:opacity-50">
               {creating ? 'Creating...' : scheduleType === 'now' ? 'Send Now' : 'Schedule Campaign'}
             </button>
+            {lastSaved && (
+              <span className="text-xs text-gray-400">
+                Auto-saved {lastSaved.toLocaleTimeString()}
+              </span>
+            )}
           </div>
         </div>
       )}
