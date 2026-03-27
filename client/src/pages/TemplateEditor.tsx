@@ -72,6 +72,7 @@ export default function TemplateEditor() {
   ];
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const htmlFileInputRef = useRef<HTMLInputElement>(null);
   const savedStateRef = useRef({ name: '', subject: '', htmlBody: DEFAULT_HTML });
 
   useEffect(() => {
@@ -236,6 +237,32 @@ export default function TemplateEditor() {
     navigate('/templates');
   }
 
+  function handleImportHtml(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.name.endsWith('.html') && !file.name.endsWith('.htm') && file.type !== 'text/html') {
+      toast.error('Please select an HTML file (.html or .htm)');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('File too large. Max 5MB.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const content = ev.target?.result as string;
+      if (content) {
+        if (hasUnsavedChanges && !confirm('This will replace your current template content. Continue?')) return;
+        setHtmlBody(content);
+        toast.success(`Imported ${file.name}`);
+      }
+    };
+    reader.onerror = () => toast.error('Failed to read file');
+    reader.readAsText(file);
+    // Reset input so same file can be imported again
+    e.target.value = '';
+  }
+
   return (
     <div className="flex h-full flex-col">
       {/* Toolbar */}
@@ -278,6 +305,10 @@ export default function TemplateEditor() {
             History ({versions.length})
           </button>
         )}
+        <button onClick={() => htmlFileInputRef.current?.click()} className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50">
+          Import HTML
+        </button>
+        <input ref={htmlFileInputRef} type="file" accept=".html,.htm,text/html" className="hidden" onChange={handleImportHtml} />
         <button onClick={() => setShowTestModal(true)} className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50">
           Send Test
         </button>
