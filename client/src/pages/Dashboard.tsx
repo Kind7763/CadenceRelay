@@ -265,26 +265,41 @@ function DashboardContent() {
               <input type="date" value={toDate} onChange={(e) => { setToDate(e.target.value); setDatePreset(0); }}
                 className="w-full rounded-lg border border-gray-300 px-2 py-1.5 text-xs" />
             </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-500">Campaign</label>
-              <select
-                multiple
-                value={campaignFilter}
-                onChange={(e) => {
-                  const selected = Array.from(e.target.selectedOptions, (o) => o.value);
-                  setCampaignFilter(selected);
-                }}
-                className="w-full rounded-lg border border-gray-300 px-2 py-1 text-xs"
-                style={{ minHeight: '60px', maxHeight: '120px' }}
-              >
-                {campaigns.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-              <p className="mt-0.5 text-[10px] text-gray-400">Hold Ctrl/Cmd to select multiple</p>
-              {campaignFilter.length > 0 && (
-                <button onClick={() => setCampaignFilter([])} className="mt-1 text-[10px] text-primary-600 hover:text-primary-800">
-                  Clear ({campaignFilter.length} selected)
-                </button>
-              )}
+            <div className="col-span-2">
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-medium text-gray-500">Campaigns</label>
+                {campaignFilter.length > 0 && (
+                  <button onClick={() => setCampaignFilter([])} className="text-[10px] text-primary-600 hover:text-primary-800">
+                    Clear all ({campaignFilter.length})
+                  </button>
+                )}
+              </div>
+              <div className="max-h-36 overflow-y-auto rounded-lg border border-gray-300 bg-white">
+                {campaigns.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-gray-400">No campaigns</p>
+                ) : campaigns.map((c) => (
+                  <label
+                    key={c.id}
+                    className={`flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer hover:bg-gray-50 ${
+                      campaignFilter.includes(c.id) ? 'bg-primary-50' : ''
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={campaignFilter.includes(c.id)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setCampaignFilter([...campaignFilter, c.id]);
+                        } else {
+                          setCampaignFilter(campaignFilter.filter((id) => id !== c.id));
+                        }
+                      }}
+                      className="h-3.5 w-3.5 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                    />
+                    <span className="truncate">{c.name}</span>
+                  </label>
+                ))}
+              </div>
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-gray-500">Status</label>
