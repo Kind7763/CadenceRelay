@@ -20,26 +20,54 @@ function escapeCSV(value: string | null | undefined): string {
 
 export async function getDashboard(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { from, to } = req.query;
+    const { from, to, campaignId, status, provider } = req.query;
     let dateFilter = '';
+    let volumeDateFilter = '';
     const params: unknown[] = [];
+    const volumeParams: unknown[] = [];
 
-    // FIX: Validate date params
+    // Date filters
     if (from) {
       const fromDate = new Date(from as string);
-      if (isNaN(fromDate.getTime())) {
-        throw new AppError('Invalid "from" date parameter', 400);
-      }
+      if (isNaN(fromDate.getTime())) throw new AppError('Invalid "from" date parameter', 400);
       params.push(from);
       dateFilter += ` AND c.created_at >= $${params.length}`;
+      volumeParams.push(from);
+      volumeDateFilter += ` AND ee.created_at >= $${volumeParams.length}`;
     }
     if (to) {
       const toDate = new Date(to as string);
-      if (isNaN(toDate.getTime())) {
-        throw new AppError('Invalid "to" date parameter', 400);
-      }
+      if (isNaN(toDate.getTime())) throw new AppError('Invalid "to" date parameter', 400);
       params.push(to);
       dateFilter += ` AND c.created_at <= $${params.length}`;
+      volumeParams.push(to);
+      volumeDateFilter += ` AND ee.created_at <= $${volumeParams.length}`;
+    }
+
+    // Campaign filter
+    if (campaignId) {
+      validateUUID(campaignId as string, 'campaign ID');
+      params.push(campaignId);
+      dateFilter += ` AND c.id = $${params.length}`;
+      volumeParams.push(campaignId);
+      volumeDateFilter += ` AND ee.campaign_id = $${volumeParams.length}`;
+    }
+
+    // Status filter
+    if (status) {
+      params.push(status);
+      dateFilter += ` AND c.status = $${params.length}`;
+    }
+
+    // Provider filter
+    if (provider) {
+      params.push(provider);
+      dateFilter += ` AND c.provider = $${params.length}`;
+    }
+
+    // Default volume date range: last 30 days (only if no date filters given)
+    if (!from && !to) {
+      volumeDateFilter = ` AND ee.created_at >= NOW() - INTERVAL '30 days'` + volumeDateFilter;
     }
 
     // Aggregate stats
@@ -59,8 +87,6 @@ export async function getDashboard(req: Request, res: Response, next: NextFuncti
     );
 
     const rawStats = statsResult.rows[0];
-
-    // FIX: Parse string values from postgres SUM/COALESCE to numbers
     const stats = {
       total_sent: Number(rawStats.total_sent),
       total_bounced: Number(rawStats.total_bounced),
@@ -75,27 +101,77 @@ export async function getDashboard(req: Request, res: Response, next: NextFuncti
     const openRate = stats.total_sent > 0 ? ((stats.total_opens / stats.total_sent) * 100).toFixed(1) : '0';
     const clickRate = stats.total_sent > 0 ? ((stats.total_clicks / stats.total_sent) * 100).toFixed(1) : '0';
     const bounceRate = stats.total_sent > 0 ? ((stats.total_bounced / stats.total_sent) * 100).toFixed(1) : '0';
+    const deliveryRate = stats.total_sent > 0 ? (((stats.total_sent - stats.total_bounced - stats.total_failed) / stats.total_sent) * 100).toFixed(1) : '0';
+    const unsubRate = stats.total_sent > 0 ? ((stats.total_unsubscribes / stats.total_sent) * 100).toFixed(1) : '0';
+    const complaintRate = stats.total_sent > 0 ? ((stats.total_complaints / stats.total_sent) * 100).toFixed(1) : '0';
+    const ctor = stats.total_opens > 0 ? ((stats.total_clicks / stats.total_opens) * 100).toFixed(1) : '0';
 
-    // Send volume per day (last 30 days)
+    // Send volume per day
     const volumeResult = await pool.query(
       `SELECT
         DATE(ee.created_at) as date,
         COUNT(*) FILTER (WHERE ee.event_type = 'sent') as sent,
         COUNT(*) FILTER (WHERE ee.event_type = 'opened') as opened,
         COUNT(*) FILTER (WHERE ee.event_type = 'clicked') as clicked,
-        COUNT(*) FILTER (WHERE ee.event_type = 'bounced') as bounced
+        COUNT(*) FILTER (WHERE ee.event_type = 'bounced') as bounced,
+        COUNT(*) FILTER (WHERE ee.event_type = 'failed') as failed
        FROM email_events ee
-       WHERE ee.created_at >= NOW() - INTERVAL '30 days'
+       WHERE 1=1 ${volumeDateFilter}
        GROUP BY DATE(ee.created_at)
-       ORDER BY date`
+       ORDER BY date`,
+      volumeParams
     );
 
-    // Recent campaigns
-    const recentResult = await pool.query(
-      `SELECT c.id, c.name, c.status, c.sent_count, c.open_count, c.click_count, c.bounce_count, c.total_recipients, c.created_at
+    // Top performing campaigns (by open rate)
+    const topCampaigns = await pool.query(
+      `SELECT c.id, c.name, c.status, c.provider, c.sent_count, c.open_count, c.click_count,
+        c.bounce_count, c.failed_count, c.total_recipients, c.complaint_count, c.unsubscribe_count,
+        c.started_at, c.completed_at, c.created_at,
+        CASE WHEN c.sent_count > 0 THEN ROUND((c.open_count::numeric / c.sent_count) * 100, 1) ELSE 0 END as open_rate,
+        CASE WHEN c.sent_count > 0 THEN ROUND((c.click_count::numeric / c.sent_count) * 100, 1) ELSE 0 END as click_rate
        FROM campaigns c
-       ORDER BY c.created_at DESC
+       WHERE c.sent_count > 0 ${dateFilter}
+       ORDER BY open_rate DESC, c.sent_count DESC
+       LIMIT 20`,
+      params
+    );
+
+    // Provider breakdown
+    const providerStats = await pool.query(
+      `SELECT c.provider,
+        COUNT(*) as campaign_count,
+        COALESCE(SUM(c.sent_count), 0) as sent,
+        COALESCE(SUM(c.bounce_count), 0) as bounced,
+        COALESCE(SUM(c.open_count), 0) as opens,
+        COALESCE(SUM(c.click_count), 0) as clicks
+       FROM campaigns c
+       WHERE c.sent_count > 0 ${dateFilter}
+       GROUP BY c.provider`,
+      params
+    );
+
+    // Bounce domain analysis (top bouncing domains)
+    const bounceDomains = await pool.query(
+      `SELECT
+        SPLIT_PART(cr.email, '@', 2) as domain,
+        COUNT(*) as bounce_count
+       FROM campaign_recipients cr
+       WHERE cr.status = 'bounced'
+       GROUP BY domain
+       ORDER BY bounce_count DESC
        LIMIT 10`
+    );
+
+    // Hourly heatmap (which hours get most opens)
+    const hourlyHeatmap = await pool.query(
+      `SELECT
+        EXTRACT(DOW FROM ee.created_at) as day_of_week,
+        EXTRACT(HOUR FROM ee.created_at) as hour,
+        COUNT(*) as open_count
+       FROM email_events ee
+       WHERE ee.event_type = 'opened'
+       GROUP BY day_of_week, hour
+       ORDER BY day_of_week, hour`
     );
 
     // Contact stats
@@ -109,16 +185,31 @@ export async function getDashboard(req: Request, res: Response, next: NextFuncti
        FROM contacts`
     );
 
+    // Campaign status breakdown
+    const statusBreakdown = await pool.query(
+      `SELECT status, COUNT(*) as count FROM campaigns WHERE 1=1 ${dateFilter} GROUP BY status`,
+      params
+    );
+
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.json({
       stats: {
         ...stats,
         open_rate: openRate,
         click_rate: clickRate,
         bounce_rate: bounceRate,
+        delivery_rate: deliveryRate,
+        unsub_rate: unsubRate,
+        complaint_rate: complaintRate,
+        ctor,
       },
       volume: volumeResult.rows,
-      recentCampaigns: recentResult.rows,
+      topCampaigns: topCampaigns.rows,
+      providerStats: providerStats.rows,
+      bounceDomains: bounceDomains.rows,
+      hourlyHeatmap: hourlyHeatmap.rows,
       contactStats: contactStats.rows[0],
+      statusBreakdown: statusBreakdown.rows,
     });
   } catch (err) {
     next(err);
@@ -259,22 +350,49 @@ export async function getContactAnalytics(req: Request, res: Response, next: Nex
 
 export async function exportAnalytics(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { from, to } = req.query;
+    const { from, to, campaignId, status: statusFilter, provider: providerFilter, type } = req.query;
     let dateFilter = '';
     const params: unknown[] = [];
 
-    if (from) {
-      params.push(from);
-      dateFilter += ` AND c.created_at >= $${params.length}`;
-    }
-    if (to) {
-      params.push(to);
-      dateFilter += ` AND c.created_at <= $${params.length}`;
+    if (from) { params.push(from); dateFilter += ` AND c.created_at >= $${params.length}`; }
+    if (to) { params.push(to); dateFilter += ` AND c.created_at <= $${params.length}`; }
+    if (campaignId) { validateUUID(campaignId as string, 'campaign ID'); params.push(campaignId); dateFilter += ` AND c.id = $${params.length}`; }
+    if (statusFilter) { params.push(statusFilter); dateFilter += ` AND c.status = $${params.length}`; }
+    if (providerFilter) { params.push(providerFilter); dateFilter += ` AND c.provider = $${params.length}`; }
+
+    if (type === 'recipients' && campaignId) {
+      // Export per-recipient data for a specific campaign
+      const result = await pool.query(
+        `SELECT cr.email, cr.status, cr.sent_at, cr.opened_at, cr.clicked_at, cr.bounced_at,
+          COALESCE(cr.open_count, 0) as open_count, COALESCE(cr.click_count, 0) as click_count,
+          cr.last_opened_at, cr.error_message
+         FROM campaign_recipients cr
+         WHERE cr.campaign_id = $1
+         ORDER BY cr.created_at`,
+        [campaignId]
+      );
+
+      const header = 'Email,Status,Sent At,Opened At,Clicked At,Bounced At,Open Count,Click Count,Last Opened At,Error\n';
+      const rows = result.rows.map((r) =>
+        [r.email, r.status, r.sent_at || '', r.opened_at || '', r.clicked_at || '', r.bounced_at || '',
+          r.open_count, r.click_count, r.last_opened_at || '', r.error_message || '']
+          .map((v) => escapeCSV(String(v))).join(',')
+      ).join('\n');
+
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename=recipients-export-${new Date().toISOString().slice(0, 10)}.csv`);
+      res.send(header + rows);
+      return;
     }
 
+    // Default: campaign summary export
     const result = await pool.query(
       `SELECT c.name, c.status, c.provider, c.total_recipients, c.sent_count, c.failed_count,
         c.bounce_count, c.open_count, c.click_count, c.complaint_count, c.unsubscribe_count,
+        CASE WHEN c.sent_count > 0 THEN ROUND((c.open_count::numeric / c.sent_count) * 100, 1) ELSE 0 END as open_rate,
+        CASE WHEN c.sent_count > 0 THEN ROUND((c.click_count::numeric / c.sent_count) * 100, 1) ELSE 0 END as click_rate,
+        CASE WHEN c.sent_count > 0 THEN ROUND((c.bounce_count::numeric / c.sent_count) * 100, 1) ELSE 0 END as bounce_rate,
+        CASE WHEN c.open_count > 0 THEN ROUND((c.click_count::numeric / c.open_count) * 100, 1) ELSE 0 END as ctor,
         c.started_at, c.completed_at, c.created_at
        FROM campaigns c
        WHERE 1=1 ${dateFilter}
@@ -282,13 +400,17 @@ export async function exportAnalytics(req: Request, res: Response, next: NextFun
       params
     );
 
-    const header = 'name,status,provider,total_recipients,sent,failed,bounced,opens,clicks,complaints,unsubscribes,started_at,completed_at,created_at\n';
+    const header = 'Campaign Name,Status,Provider,Total Recipients,Sent,Failed,Bounced,Opens,Clicks,Complaints,Unsubscribes,Open Rate %,Click Rate %,Bounce Rate %,CTOR %,Started At,Completed At,Created At\n';
     const rows = result.rows.map((r) =>
-      `${escapeCSV(r.name)},${escapeCSV(r.status)},${escapeCSV(r.provider)},${r.total_recipients},${r.sent_count},${r.failed_count},${r.bounce_count},${r.open_count},${r.click_count},${r.complaint_count},${r.unsubscribe_count},${r.started_at || ''},${r.completed_at || ''},${r.created_at}`
+      [r.name, r.status, r.provider, r.total_recipients, r.sent_count, r.failed_count,
+        r.bounce_count, r.open_count, r.click_count, r.complaint_count, r.unsubscribe_count,
+        r.open_rate, r.click_rate, r.bounce_rate, r.ctor,
+        r.started_at || '', r.completed_at || '', r.created_at]
+        .map((v) => escapeCSV(String(v))).join(',')
     ).join('\n');
 
     res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', 'attachment; filename=analytics.csv');
+    res.setHeader('Content-Disposition', `attachment; filename=analytics-report-${new Date().toISOString().slice(0, 10)}.csv`);
     res.send(header + rows);
   } catch (err) {
     next(err);
