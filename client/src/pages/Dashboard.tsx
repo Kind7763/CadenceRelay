@@ -41,7 +41,7 @@ function DashboardContent() {
   const [datePreset, setDatePreset] = useState(30);
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
-  const [campaignFilter, setCampaignFilter] = useState('');
+  const [campaignFilter, setCampaignFilter] = useState<string[]>([]);
   const [statusFilter, setStatusFilter] = useState('');
   const [providerFilter, setProviderFilter] = useState('');
   const [campaigns, setCampaigns] = useState<{ id: string; name: string }[]>([]);
@@ -64,7 +64,7 @@ function DashboardContent() {
     }
     if (fromDate) f.from = fromDate;
     if (toDate) f.to = toDate;
-    if (campaignFilter) f.campaignId = campaignFilter;
+    if (campaignFilter.length > 0) f.campaignIds = campaignFilter.join(',');
     if (statusFilter) f.status = statusFilter;
     if (providerFilter) f.provider = providerFilter;
     return f;
@@ -202,12 +202,12 @@ function DashboardContent() {
     setDatePreset(30);
     setFromDate('');
     setToDate('');
-    setCampaignFilter('');
+    setCampaignFilter([]);
     setStatusFilter('');
     setProviderFilter('');
   }
 
-  const hasActiveFilters = campaignFilter || statusFilter || providerFilter || fromDate || toDate;
+  const hasActiveFilters = campaignFilter.length > 0 || statusFilter || providerFilter || fromDate || toDate;
 
   return (
     <div className="p-6">
@@ -267,11 +267,24 @@ function DashboardContent() {
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-gray-500">Campaign</label>
-              <select value={campaignFilter} onChange={(e) => setCampaignFilter(e.target.value)}
-                className="w-full rounded-lg border border-gray-300 px-2 py-1.5 text-xs">
-                <option value="">All Campaigns</option>
+              <select
+                multiple
+                value={campaignFilter}
+                onChange={(e) => {
+                  const selected = Array.from(e.target.selectedOptions, (o) => o.value);
+                  setCampaignFilter(selected);
+                }}
+                className="w-full rounded-lg border border-gray-300 px-2 py-1 text-xs"
+                style={{ minHeight: '60px', maxHeight: '120px' }}
+              >
                 {campaigns.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
+              <p className="mt-0.5 text-[10px] text-gray-400">Hold Ctrl/Cmd to select multiple</p>
+              {campaignFilter.length > 0 && (
+                <button onClick={() => setCampaignFilter([])} className="mt-1 text-[10px] text-primary-600 hover:text-primary-800">
+                  Clear ({campaignFilter.length} selected)
+                </button>
+              )}
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-gray-500">Status</label>
