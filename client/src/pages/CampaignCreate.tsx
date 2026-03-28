@@ -1,30 +1,56 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { createCampaign, getCampaign, updateCampaign, scheduleCampaign, sendCampaign } from '../api/campaigns.api';
+import {
+  createCampaign, getCampaign, updateCampaign, scheduleCampaign, sendCampaign,
+  addAttachments as apiAddAttachments, addAttachmentsTracked, removeAttachment as apiRemoveAttachment,
+  CampaignAttachment,
+} from '../api/campaigns.api';
 import { listTemplates, Template } from '../api/templates.api';
 import { listLists, ContactList } from '../api/lists.api';
 import UploadProgress, { FileUploadProgress } from '../components/ui/UploadProgress';
 import { UploadState, INITIAL_UPLOAD_STATE, formatFileSize, validateFileSize, getFileTypeIcon } from '../lib/uploadHelper';
 
 /** File type icon SVG component */
-function FileIcon({ filename }: { filename: string }) {
+function FileIcon({ filename, contentType }: { filename: string; contentType?: string }) {
   const type = getFileTypeIcon(filename);
   const colors: Record<string, string> = {
     pdf: 'text-red-500', word: 'text-blue-600', excel: 'text-green-600',
     powerpoint: 'text-orange-500', image: 'text-purple-500', archive: 'text-yellow-600',
     video: 'text-pink-500', audio: 'text-indigo-500', text: 'text-gray-500', file: 'text-gray-400',
   };
-  const color = colors[type] || 'text-gray-400';
 
-  if (type === 'image') {
+  // Determine icon type from contentType if filename-based detection gives generic 'file'
+  let effectiveType = type;
+  if (type === 'file' && contentType) {
+    if (contentType.startsWith('image/')) effectiveType = 'image';
+    else if (contentType === 'application/pdf') effectiveType = 'pdf';
+    else if (contentType.includes('word') || contentType.includes('document')) effectiveType = 'word';
+    else if (contentType.includes('sheet') || contentType.includes('excel')) effectiveType = 'excel';
+    else if (contentType.includes('presentation') || contentType.includes('powerpoint')) effectiveType = 'powerpoint';
+    else if (contentType.startsWith('video/')) effectiveType = 'video';
+    else if (contentType.startsWith('audio/')) effectiveType = 'audio';
+    else if (contentType.startsWith('text/')) effectiveType = 'text';
+    else if (contentType.includes('zip') || contentType.includes('tar') || contentType.includes('compress')) effectiveType = 'archive';
+  }
+  const color = colors[effectiveType] || 'text-gray-400';
+
+  if (effectiveType === 'pdf') {
+    return (
+      <svg className={`h-4 w-4 ${color}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+        <text x="7.5" y="17" fontSize="6" fill="currentColor" fontWeight="bold">PDF</text>
+      </svg>
+    );
+  }
+  if (effectiveType === 'image') {
     return (
       <svg className={`h-4 w-4 ${color}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
       </svg>
     );
   }
-  if (type === 'excel') {
+  if (effectiveType === 'excel') {
     return (
       <svg className={`h-4 w-4 ${color}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
@@ -35,6 +61,20 @@ function FileIcon({ filename }: { filename: string }) {
     <svg className={`h-4 w-4 ${color}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
     </svg>
+  );
+}
+
+/** Thumbnail preview for image attachments stored on server */
+function AttachmentThumbnail({ campaignId, index, contentType }: { campaignId: string; index: number; contentType: string }) {
+  if (!contentType.startsWith('image/')) return null;
+  const src = `/api/campaigns/${campaignId}/attachments/${index}/download?inline=true`;
+  return (
+    <img
+      src={src}
+      alt="preview"
+      className="h-8 w-8 rounded object-cover border border-gray-200"
+      onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+    />
   );
 }
 
@@ -60,6 +100,9 @@ export default function CampaignCreate() {
   const [creating, setCreating] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [attachments, setAttachments] = useState<File[]>([]);
+  // Existing attachments from the DB (already uploaded for this campaign)
+  const [existingAttachments, setExistingAttachments] = useState<CampaignAttachment[]>([]);
+  const [removingAttachmentIdx, setRemovingAttachmentIdx] = useState<number | null>(null);
 
   // Upload progress state for campaign creation
   const [campaignUploadState, setCampaignUploadState] = useState<UploadState>(INITIAL_UPLOAD_STATE);
@@ -72,6 +115,12 @@ export default function CampaignCreate() {
 
   const previewRef = useRef<HTMLIFrameElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Combined count for the 10-file limit
+  const totalAttachmentCount = existingAttachments.length + attachments.length;
+  const totalAttachmentSize =
+    existingAttachments.reduce((s, a) => s + (a.size || 0), 0) +
+    attachments.reduce((s, f) => s + f.size, 0);
 
   useEffect(() => {
     listTemplates().then(setTemplates).catch(() => {});
@@ -87,6 +136,10 @@ export default function CampaignCreate() {
         setThrottlePerSecond(c.throttle_per_second || 5);
         setThrottlePerHour(c.throttle_per_hour || 5000);
         setDraftId(c.id);
+        // Load existing attachments from the campaign
+        if (c.attachments && c.attachments.length > 0) {
+          setExistingAttachments(c.attachments);
+        }
         setEditLoaded(true);
       }).catch(() => toast.error('Failed to load campaign'));
     }
@@ -124,11 +177,12 @@ export default function CampaignCreate() {
       errors.forEach((err) => toast.error(err));
     }
 
-    // Check total count
-    const totalCount = attachments.length + valid.length;
-    if (totalCount > 10) {
-      toast.error(`Maximum 10 files allowed. You already have ${attachments.length}.`);
-      const allowed = 10 - attachments.length;
+    // Check total count including existing attachments
+    const currentTotal = existingAttachments.length + attachments.length;
+    const newTotal = currentTotal + valid.length;
+    if (newTotal > 10) {
+      toast.error(`Maximum 10 files allowed. You already have ${currentTotal}.`);
+      const allowed = 10 - currentTotal;
       if (allowed > 0) {
         setAttachments((prev) => [...prev, ...valid.slice(0, allowed)]);
       }
@@ -138,7 +192,22 @@ export default function CampaignCreate() {
     if (valid.length > 0) {
       setAttachments((prev) => [...prev, ...valid]);
     }
-  }, [attachments.length]);
+  }, [attachments.length, existingAttachments.length]);
+
+  /** Remove an existing (already-uploaded) attachment from the server */
+  async function handleRemoveExistingAttachment(index: number) {
+    if (!draftId) return;
+    setRemovingAttachmentIdx(index);
+    try {
+      await apiRemoveAttachment(draftId, index);
+      setExistingAttachments((prev) => prev.filter((_, i) => i !== index));
+      toast.success('Attachment removed');
+    } catch {
+      toast.error('Failed to remove attachment');
+    } finally {
+      setRemovingAttachmentIdx(null);
+    }
+  }
 
   function validateScheduleDate(): boolean {
     if (scheduleType === 'later') {
@@ -165,9 +234,9 @@ export default function CampaignCreate() {
     if (scheduleType === 'later' && !validateScheduleDate()) return;
 
     setCreating(true);
-    const hasAttachments = attachments.length > 0;
+    const hasNewAttachments = attachments.length > 0;
 
-    if (hasAttachments) {
+    if (hasNewAttachments) {
       setShowUploadProgress(true);
       setCampaignUploadState({ ...INITIAL_UPLOAD_STATE, status: 'uploading' });
     }
@@ -179,24 +248,37 @@ export default function CampaignCreate() {
       let campaignId: string;
 
       if (isEditing && draftId) {
-        // Editing existing draft — update it
+        // Editing existing draft -- update fields
         await updateCampaign(draftId, {
           name, templateId, listId, provider, throttlePerSecond, throttlePerHour,
         });
         campaignId = draftId;
-        // TODO: handle attachments for existing campaigns if needed
+
+        // Upload new attachments to the existing campaign
+        if (hasNewAttachments) {
+          const { promise, abort } = addAttachmentsTracked(
+            campaignId,
+            attachments,
+            (state) => setCampaignUploadState(state),
+            controller.signal,
+          );
+          abortRef.current = abort;
+          const updatedAttachments = await promise;
+          setExistingAttachments(updatedAttachments);
+          setAttachments([]);
+        }
       } else {
-        // Creating new campaign
+        // Creating new campaign (includes attachments in the create call)
         const campaign = await createCampaign({
           name, templateId, listId, provider, throttlePerSecond, throttlePerHour,
-          attachments: hasAttachments ? attachments : undefined,
-          onProgress: hasAttachments ? (state) => setCampaignUploadState(state) : undefined,
+          attachments: hasNewAttachments ? attachments : undefined,
+          onProgress: hasNewAttachments ? (state) => setCampaignUploadState(state) : undefined,
           signal: controller.signal,
         });
         campaignId = campaign.id;
       }
 
-      if (hasAttachments && !isEditing) {
+      if (hasNewAttachments) {
         setCampaignUploadState((prev) => ({ ...prev, status: 'complete', progress: 100 }));
       }
 
@@ -215,7 +297,7 @@ export default function CampaignCreate() {
         setCampaignUploadState((prev) => ({ ...prev, status: 'cancelled' }));
         toast('Upload cancelled');
       } else {
-        if (hasAttachments) {
+        if (hasNewAttachments) {
           setCampaignUploadState((prev) => ({
             ...prev,
             status: 'error',
@@ -240,8 +322,8 @@ export default function CampaignCreate() {
     try {
       if (draftId) {
         // Update existing draft
-        const { updateCampaign } = await import('../api/campaigns.api');
-        await updateCampaign(draftId, {
+        const { updateCampaign: updateCampaignApi } = await import('../api/campaigns.api');
+        await updateCampaignApi(draftId, {
           name,
           templateId: templateId || undefined,
           listId: listId || undefined,
@@ -249,10 +331,22 @@ export default function CampaignCreate() {
           throttlePerSecond,
           throttlePerHour,
         });
+
+        // Upload any new file attachments to the existing draft
+        if (attachments.length > 0) {
+          try {
+            const updatedAttachments = await apiAddAttachments(draftId, attachments);
+            setExistingAttachments(updatedAttachments);
+            setAttachments([]);
+          } catch {
+            toast.error('Draft saved but attachment upload failed');
+          }
+        }
+
         setLastSaved(new Date());
         toast.success('Draft saved');
       } else {
-        // Create new draft (without attachments for auto-save speed)
+        // Create new draft with attachments if present
         const campaign = await createCampaign({
           name: name || 'Untitled Campaign',
           templateId: templateId || '',
@@ -260,8 +354,14 @@ export default function CampaignCreate() {
           provider,
           throttlePerSecond,
           throttlePerHour,
+          attachments: attachments.length > 0 ? attachments : undefined,
         });
         setDraftId(campaign.id);
+        // Move new attachments into existing (they're now on the server)
+        if (campaign.attachments && campaign.attachments.length > 0) {
+          setExistingAttachments(campaign.attachments);
+          setAttachments([]);
+        }
         setLastSaved(new Date());
         toast.success('Saved as draft');
       }
@@ -309,6 +409,110 @@ export default function CampaignCreate() {
         id: `attachment-${i}`,
       }))
     : [];
+
+  /** Render the combined attachment list (existing + new) for Step 1 */
+  function renderAttachmentsList() {
+    const hasAny = existingAttachments.length > 0 || attachments.length > 0;
+    if (!hasAny) return null;
+
+    return (
+      <div className="mt-2 space-y-1">
+        {/* Existing (already uploaded) attachments */}
+        {existingAttachments.map((att, i) => (
+          <div key={`existing-${i}`} className="flex items-center justify-between rounded-lg bg-blue-50 border border-blue-100 px-3 py-2 text-sm">
+            <div className="flex items-center gap-2">
+              {draftId && att.contentType?.startsWith('image/') ? (
+                <AttachmentThumbnail campaignId={draftId} index={i} contentType={att.contentType} />
+              ) : (
+                <FileIcon filename={att.filename} contentType={att.contentType} />
+              )}
+              <span className="truncate">{att.filename}</span>
+              <span className="text-xs text-gray-400">({formatFileSize(att.size)})</span>
+              <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-600">Uploaded</span>
+            </div>
+            <button
+              onClick={() => handleRemoveExistingAttachment(i)}
+              disabled={removingAttachmentIdx === i}
+              className="text-xs text-red-500 hover:text-red-700 disabled:opacity-50"
+            >
+              {removingAttachmentIdx === i ? 'Removing...' : 'Remove'}
+            </button>
+          </div>
+        ))}
+        {/* New (pending upload) attachments */}
+        {attachments.map((file, i) => (
+          <div key={`new-${i}`} className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2 text-sm">
+            <div className="flex items-center gap-2">
+              {file.type.startsWith('image/') ? (
+                <img
+                  src={URL.createObjectURL(file)}
+                  alt="preview"
+                  className="h-8 w-8 rounded object-cover border border-gray-200"
+                />
+              ) : (
+                <FileIcon filename={file.name} contentType={file.type} />
+              )}
+              <span className="truncate">{file.name}</span>
+              <span className="text-xs text-gray-400">({formatFileSize(file.size)})</span>
+              <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-600">New</span>
+            </div>
+            <button onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))} className="text-xs text-red-500 hover:text-red-700">Remove</button>
+          </div>
+        ))}
+        <p className="text-xs text-gray-400">
+          {totalAttachmentCount} file(s), {formatFileSize(totalAttachmentSize)} total
+        </p>
+      </div>
+    );
+  }
+
+  /** Render the attachments section in the Review step */
+  function renderReviewAttachments() {
+    const hasAny = existingAttachments.length > 0 || attachments.length > 0;
+    if (!hasAny) return null;
+
+    return (
+      <div className="rounded-lg bg-gray-50 p-3 text-sm">
+        <span className="text-gray-500">Attachments:</span>
+        <ul className="mt-1 space-y-0.5">
+          {existingAttachments.map((att, i) => (
+            <li key={`existing-${i}`} className="flex items-center gap-1">
+              {draftId && att.contentType?.startsWith('image/') ? (
+                <AttachmentThumbnail campaignId={draftId} index={i} contentType={att.contentType} />
+              ) : (
+                <FileIcon filename={att.filename} contentType={att.contentType} />
+              )}
+              <span className="font-medium">{att.filename}</span>
+              <span className="text-gray-400">({formatFileSize(att.size)})</span>
+              <span className="rounded bg-blue-100 px-1 py-0.5 text-[10px] text-blue-600">Uploaded</span>
+            </li>
+          ))}
+          {attachments.map((f, i) => (
+            <li key={`new-${i}`} className="flex items-center gap-1">
+              <FileIcon filename={f.name} contentType={f.type} />
+              <span className="font-medium">{f.name}</span>
+              <span className="text-gray-400">({formatFileSize(f.size)})</span>
+              <span className="rounded bg-amber-100 px-1 py-0.5 text-[10px] text-amber-600">New</span>
+            </li>
+          ))}
+        </ul>
+        <p className="mt-1 text-xs text-gray-400">
+          Total: {formatFileSize(totalAttachmentSize)}
+        </p>
+      </div>
+    );
+  }
+
+  /** Render attachment summary for the confirmation dialog */
+  function renderConfirmAttachments() {
+    if (totalAttachmentCount === 0) return null;
+    return (
+      <>
+        <br />
+        <strong>Attachments:</strong> {totalAttachmentCount} file(s), {formatFileSize(totalAttachmentSize)}
+      </>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-3xl p-6">
@@ -364,26 +568,13 @@ export default function CampaignCreate() {
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="rounded-lg border border-dashed border-gray-300 px-4 py-2 text-sm text-gray-600 hover:border-gray-400 hover:bg-gray-50"
+                disabled={totalAttachmentCount >= 10}
+                className="rounded-lg border border-dashed border-gray-300 px-4 py-2 text-sm text-gray-600 hover:border-gray-400 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 + Add Files
               </button>
             </div>
-            {attachments.length > 0 && (
-              <div className="mt-2 space-y-1">
-                {attachments.map((file, i) => (
-                  <div key={i} className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2 text-sm">
-                    <div className="flex items-center gap-2">
-                      <FileIcon filename={file.name} />
-                      <span className="truncate">{file.name}</span>
-                      <span className="text-xs text-gray-400">({formatFileSize(file.size)})</span>
-                    </div>
-                    <button onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))} className="text-xs text-red-500 hover:text-red-700">Remove</button>
-                  </div>
-                ))}
-                <p className="text-xs text-gray-400">{attachments.length} file(s), {formatFileSize(attachments.reduce((s, f) => s + f.size, 0))} total</p>
-              </div>
-            )}
+            {renderAttachmentsList()}
           </div>
           <button disabled={!name || !listId} onClick={() => setStep(2)} className="rounded-lg bg-primary-600 px-6 py-2 text-sm text-white disabled:opacity-50">Next</button>
         </div>
@@ -496,23 +687,7 @@ export default function CampaignCreate() {
           </div>
 
           {/* Attachments in review */}
-          {attachments.length > 0 && (
-            <div className="rounded-lg bg-gray-50 p-3 text-sm">
-              <span className="text-gray-500">Attachments:</span>
-              <ul className="mt-1 space-y-0.5">
-                {attachments.map((f, i) => (
-                  <li key={i} className="flex items-center gap-1">
-                    <FileIcon filename={f.name} />
-                    <span className="font-medium">{f.name}</span>
-                    <span className="text-gray-400">({formatFileSize(f.size)})</span>
-                  </li>
-                ))}
-              </ul>
-              <p className="mt-1 text-xs text-gray-400">
-                Total: {formatFileSize(attachments.reduce((s, f) => s + f.size, 0))}
-              </p>
-            </div>
-          )}
+          {renderReviewAttachments()}
 
           {/* Upload progress during campaign creation */}
           {showUploadProgress && uploadProgressFiles.length > 0 && (
@@ -572,12 +747,7 @@ export default function CampaignCreate() {
               <strong>Campaign:</strong> {name}<br />
               <strong>Template:</strong> {selectedTemplate?.name}<br />
               <strong>List:</strong> {selectedList?.name} ({contactCount} contacts)
-              {attachments.length > 0 && (
-                <>
-                  <br />
-                  <strong>Attachments:</strong> {attachments.length} file(s), {formatFileSize(attachments.reduce((s, f) => s + f.size, 0))}
-                </>
-              )}
+              {renderConfirmAttachments()}
             </div>
             <div className="mt-4 flex justify-end gap-2">
               <button onClick={() => setShowConfirm(false)} className="rounded-lg border px-4 py-2 text-sm">Cancel</button>

@@ -3,7 +3,7 @@ import multer from 'multer';
 import {
   listCampaigns, getCampaign, createCampaign, updateCampaign, deleteCampaign,
   bulkDeleteCampaigns, scheduleCampaign, sendCampaign, pauseCampaign, resumeCampaign,
-  getCampaignRecipients, addAttachments, removeAttachment,
+  getCampaignRecipients, addAttachments, removeAttachment, downloadAttachment,
 } from '../controllers/campaigns.controller';
 import { validateBody } from '../middleware/validateRequest';
 import { z } from 'zod';
@@ -57,5 +57,8 @@ router.get('/:id/recipients', getCampaignRecipients);
 // Attachment management
 router.post('/:id/attachments', upload.array('attachments', 10), addAttachments);
 router.delete('/:id/attachments/:index', removeAttachment);
+// Download / preview attachments
+router.get('/:id/attachments/:index', downloadAttachment);
+router.get('/:id/attachments/:index/preview', downloadAttachment);
 
 export default router;

@@ -67,7 +67,7 @@ export async function getCampaign(req: Request, res: Response, next: NextFunctio
     const { id } = req.params;
     validateUUID(id, 'campaign ID');
     const result = await pool.query(
-      `SELECT c.*, t.name as template_name, t.subject as template_subject, cl.name as list_name
+      `SELECT c.*, t.name as template_name, t.subject as template_subject, t.html_body as template_html_body, cl.name as list_name
        FROM campaigns c
        LEFT JOIN templates t ON t.id = c.template_id
        LEFT JOIN contact_lists cl ON cl.id = c.list_id
@@ -437,6 +437,49 @@ export async function removeAttachment(req: Request, res: Response, next: NextFu
     );
 
     res.json({ attachments, removed: removed.filename });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function downloadAttachment(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { id, index } = req.params;
+    validateUUID(id, 'campaign ID');
+
+    const idx = parseInt(index);
+    if (isNaN(idx) || idx < 0) {
+      throw new AppError('Invalid attachment index', 400);
+    }
+
+    const result = await pool.query('SELECT attachments FROM campaigns WHERE id = $1', [id]);
+    if (result.rows.length === 0) throw new AppError('Campaign not found', 404);
+
+    const attachments = result.rows[0].attachments || [];
+    if (idx >= attachments.length) {
+      throw new AppError('Attachment not found', 404);
+    }
+
+    const attachment = attachments[idx];
+    const filePath = attachment.storagePath;
+
+    if (!filePath || !fs.existsSync(filePath)) {
+      throw new AppError('Attachment file not found on disk', 404);
+    }
+
+    const contentType = attachment.contentType || 'application/octet-stream';
+    const filename = attachment.filename || `attachment-${idx}`;
+
+    // Determine disposition: inline for preview (images/PDFs) or attachment for download
+    const inline = req.query.inline === 'true';
+    const inlineAllowed = /^(image\/|application\/pdf)/.test(contentType);
+    const disposition = inline && inlineAllowed ? 'inline' : 'attachment';
+
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `${disposition}; filename="${encodeURIComponent(filename)}"`);
+
+    const fileStream = fs.createReadStream(filePath);
+    fileStream.pipe(res);
   } catch (err) {
     next(err);
   }

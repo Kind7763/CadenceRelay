@@ -52,7 +52,9 @@ export default function CampaignDetail() {
   const [showReschedule, setShowReschedule] = useState(false);
   const [newScheduledAt, setNewScheduledAt] = useState('');
   const [rescheduling, setRescheduling] = useState(false);
+  const [previewAttachment, setPreviewAttachment] = useState<{ url: string; filename: string } | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
   async function handleReschedule() {
     if (!id || !newScheduledAt) return;
@@ -319,6 +321,147 @@ export default function CampaignDetail() {
           </div>
         ))}
       </div>
+
+      {/* Email Preview */}
+      {(campaign.template_subject || campaign.template_html_body || (campaign.attachments && campaign.attachments.length > 0)) && (
+        <div className="mt-6 rounded-xl bg-white shadow-sm overflow-hidden">
+          <div className="border-b border-gray-200 px-6 py-4">
+            <h2 className="text-lg font-semibold">Email Preview</h2>
+          </div>
+
+          {/* Subject line */}
+          {campaign.template_subject && (
+            <div className="border-b border-gray-100 px-6 py-3">
+              <span className="text-xs font-medium uppercase tracking-wide text-gray-400">Subject</span>
+              <p className="mt-1 text-sm font-semibold text-gray-800">{campaign.template_subject}</p>
+            </div>
+          )}
+
+          {/* Email body preview */}
+          {campaign.template_html_body && (
+            <div className="px-6 py-4">
+              <div className="mx-auto max-w-3xl rounded-lg border border-gray-200 bg-white shadow-inner">
+                <iframe
+                  ref={iframeRef}
+                  sandbox="allow-same-origin"
+                  title="Email body preview"
+                  srcDoc={campaign.template_html_body}
+                  className="w-full border-0"
+                  style={{ minHeight: '400px' }}
+                  onLoad={() => {
+                    const iframe = iframeRef.current;
+                    if (iframe?.contentDocument?.body) {
+                      const height = iframe.contentDocument.body.scrollHeight;
+                      iframe.style.height = Math.min(Math.max(height + 32, 200), 800) + 'px';
+                    }
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Attachments */}
+          {campaign.attachments && campaign.attachments.length > 0 && (
+            <div className="border-t border-gray-100 px-6 py-4">
+              <span className="text-xs font-medium uppercase tracking-wide text-gray-400">
+                Attachments ({campaign.attachments.length})
+              </span>
+              <div className="mt-3 flex flex-wrap gap-3">
+                {campaign.attachments.map((att, idx) => {
+                  const isImage = att.contentType.startsWith('image/');
+                  const isPdf = att.contentType === 'application/pdf';
+                  const canPreview = isImage || isPdf;
+                  const icon = isPdf ? '\u{1F4C4}' : isImage ? '\u{1F5BC}' : '\u{1F4CE}';
+                  const sizeStr = att.size < 1024
+                    ? `${att.size} B`
+                    : att.size < 1024 * 1024
+                      ? `${(att.size / 1024).toFixed(1)} KB`
+                      : `${(att.size / (1024 * 1024)).toFixed(1)} MB`;
+
+                  const previewUrl = `/api/v1/campaigns/${id}/attachments/${idx}?inline=true`;
+                  const downloadUrl = `/api/v1/campaigns/${id}/attachments/${idx}`;
+
+                  return (
+                    <div
+                      key={idx}
+                      className="flex w-64 flex-col rounded-lg border border-gray-200 bg-gray-50 p-3"
+                    >
+                      {/* Thumbnail for images */}
+                      {isImage && (
+                        <div className="mb-2 flex items-center justify-center overflow-hidden rounded bg-white" style={{ height: 80 }}>
+                          <img
+                            src={previewUrl}
+                            alt={att.filename}
+                            className="max-h-full max-w-full object-contain"
+                          />
+                        </div>
+                      )}
+                      <div className="flex items-start gap-2">
+                        <span className="text-lg leading-none">{icon}</span>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium text-gray-800" title={att.filename}>
+                            {att.filename}
+                          </p>
+                          <p className="text-xs text-gray-400">{sizeStr}</p>
+                        </div>
+                      </div>
+                      <div className="mt-2 flex gap-2">
+                        {canPreview && (
+                          <button
+                            onClick={() => setPreviewAttachment({ url: previewUrl, filename: att.filename })}
+                            className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-100"
+                          >
+                            Preview
+                          </button>
+                        )}
+                        <a
+                          href={downloadUrl}
+                          download={att.filename}
+                          className="flex-1 rounded border border-primary-300 px-2 py-1 text-center text-xs font-medium text-primary-600 hover:bg-primary-50"
+                        >
+                          Download
+                        </a>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Attachment Preview Modal */}
+      {previewAttachment && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={() => setPreviewAttachment(null)}
+        >
+          <div
+            className="relative flex h-[90vh] w-full max-w-5xl flex-col rounded-xl bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b px-5 py-3">
+              <h3 className="truncate text-sm font-semibold text-gray-800">{previewAttachment.filename}</h3>
+              <button
+                onClick={() => setPreviewAttachment(null)}
+                className="rounded-full p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+              >
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="flex-1 overflow-hidden">
+              <iframe
+                src={previewAttachment.url}
+                title={`Preview: ${previewAttachment.filename}`}
+                className="h-full w-full border-0"
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Recipients */}
       <div className="mt-6 rounded-xl bg-white p-6 shadow-sm">

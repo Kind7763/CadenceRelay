@@ -16,6 +16,7 @@ export interface Campaign {
   template_id: string;
   template_name?: string;
   template_subject?: string;
+  template_html_body?: string;
   list_id: string;
   list_name?: string;
   scheduled_at: string | null;
