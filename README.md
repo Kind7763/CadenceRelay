@@ -34,7 +34,7 @@ Most email tools either cost a fortune at scale (Mailchimp charges $800/mo for 1
 - **Takes 10 minutes** to deploy with Docker Compose
 - **Doesn't land in spam** — built-in deliverability best practices, proper headers, throttling
 - **Tracks everything** — opens, clicks, bounces, complaints, with per-recipient event history
-- **Handles 280K+ contacts** — tested with India's entire school database
+- **Handles 280K+ contacts** — tested with large-scale real-world datasets
 
 <br />
 
@@ -83,7 +83,7 @@ Smart lists with dynamic filters (state, district, category, management). CSV im
 | **Attachments** | Up to 10 files (25MB each) with preview, thumbnail, and download |
 | **Personalization** | Handlebars variables: `{{name}}`, `{{school_name}}`, `{{state}}`, custom fields |
 | **Reply-To** | Custom reply-to address so responses go where you want |
-| **From Name** | Configurable display name (e.g., "BITS Pilani - YEB") |
+| **From Name** | Configurable display name (e.g., "Acme Corp - Marketing") |
 
 ### Tracking & Analytics
 | Feature | Description |
@@ -479,12 +479,6 @@ CadenceRelay is **source-available** under a custom license. See [LICENSE](LICEN
 - Personal/non-commercial use: **Free**
 - Commercial/SaaS use: **Requires license** — contact pulkitpareek18@gmail.com
 - All rights reserved by [Pulkit Pareek](https://github.com/pulkitpareek18)
-
----
-
-## Acknowledgments
-
-Built by [Pulkit Pareek](https://github.com/pulkitpareek18) for the Young Entrepreneurs Bootcamp (YEB) at BITS Pilani, Goa Campus.
 
 ---
 
