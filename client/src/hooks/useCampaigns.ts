@@ -17,13 +17,15 @@ import {
   listCampaignLabels,
 } from '../api/campaigns.api';
 
-export function useCampaignsList(params: { page: number; limit?: number; status?: string; search?: string }) {
+export function useCampaignsList(params: { page: number; limit?: number; status?: string; search?: string; archived?: string; starred?: string }) {
   const queryParams: Record<string, string> = {
     page: String(params.page),
     limit: String(params.limit || 20),
   };
   if (params.status) queryParams.status = params.status;
   if (params.search) queryParams.search = params.search;
+  if (params.archived) queryParams.archived = params.archived;
+  if (params.starred) queryParams.starred = params.starred;
 
   return useQuery({
     queryKey: ['campaigns', queryParams],

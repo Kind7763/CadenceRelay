@@ -127,6 +127,8 @@ function CampaignsContent() {
     page,
     status: statusFilter || undefined,
     search: search || undefined,
+    archived: viewTab === 'archived' ? 'true' : undefined,
+    starred: viewTab === 'starred' ? 'true' : undefined,
   });
 
   const deleteMutation = useDeleteCampaign();
