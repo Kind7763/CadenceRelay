@@ -5,7 +5,6 @@ import {
   UsersIcon,
   QueueListIcon,
   DocumentTextIcon,
-  ChartBarIcon,
   Cog6ToothIcon,
   ArrowUpTrayIcon,
   XMarkIcon,
@@ -18,7 +17,6 @@ const navigation = [
   { name: 'Import', href: '/import', icon: ArrowUpTrayIcon },
   { name: 'Lists', href: '/lists', icon: QueueListIcon },
   { name: 'Templates', href: '/templates', icon: DocumentTextIcon },
-  { name: 'Analytics', href: '/analytics', icon: ChartBarIcon },
   { name: 'Settings', href: '/settings', icon: Cog6ToothIcon },
 ];
 
