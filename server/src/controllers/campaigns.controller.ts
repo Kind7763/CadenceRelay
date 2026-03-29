@@ -664,7 +664,7 @@ export async function getCampaignRecipients(req: Request, res: Response, next: N
     const { id } = req.params;
     validateUUID(id, 'campaign ID');
     const { page, limit, offset } = parsePagination(req.query as { page?: string; limit?: string });
-    const { status } = req.query;
+    const { status, excludeEmails } = req.query;
 
     let whereClause = 'WHERE cr.campaign_id = $1';
     const params: unknown[] = [id];
@@ -674,6 +674,16 @@ export async function getCampaignRecipients(req: Request, res: Response, next: N
       whereClause += ` AND cr.status = $${idx}`;
       params.push(status);
       idx++;
+    }
+
+    // Exclude specific contacts (useful for filtering out test sends)
+    if (excludeEmails) {
+      const emails = (excludeEmails as string).split(',').map((e) => e.trim().toLowerCase());
+      if (emails.length > 0) {
+        whereClause += ` AND LOWER(cr.email) != ALL($${idx})`;
+        params.push(emails);
+        idx++;
+      }
     }
 
     const countResult = await pool.query(

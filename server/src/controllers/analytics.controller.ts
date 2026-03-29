@@ -20,7 +20,7 @@ function escapeCSV(value: string | null | undefined): string {
 
 export async function getDashboard(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { from, to, campaignId, campaignIds, status, provider } = req.query;
+    const { from, to, campaignId, campaignIds, excludeCampaignIds, status, provider } = req.query;
     let dateFilter = '';
     let volumeDateFilter = '';
     const params: unknown[] = [];
@@ -59,6 +59,17 @@ export async function getDashboard(req: Request, res: Response, next: NextFuncti
       dateFilter += ` AND c.id = $${params.length}`;
       volumeParams.push(campaignId);
       volumeDateFilter += ` AND ee.campaign_id = $${volumeParams.length}`;
+    }
+
+    // Exclude campaigns filter
+    if (excludeCampaignIds) {
+      const excludeIds = (excludeCampaignIds as string).split(',').filter((id) => UUID_RE.test(id.trim()));
+      if (excludeIds.length > 0) {
+        params.push(excludeIds);
+        dateFilter += ` AND c.id != ALL($${params.length})`;
+        volumeParams.push(excludeIds);
+        volumeDateFilter += ` AND ee.campaign_id != ALL($${volumeParams.length})`;
+      }
     }
 
     // Status filter

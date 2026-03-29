@@ -96,16 +96,51 @@ function FileIcon({ filename, contentType }: { filename: string; contentType?: s
 }
 
 /** Thumbnail preview for image attachments stored on server */
-function AttachmentThumbnail({ campaignId, index, contentType }: { campaignId: string; index: number; contentType: string }) {
-  if (!contentType.startsWith('image/')) return null;
-  const src = `/api/campaigns/${campaignId}/attachments/${index}/download?inline=true`;
+function AttachmentThumbnail({ campaignId, index, contentType, filename }: { campaignId: string; index: number; contentType: string; filename?: string }) {
+  const [showPreview, setShowPreview] = useState(false);
+  const src = `/api/v1/campaigns/${campaignId}/attachments/${index}?inline=true`;
+  const isImage = contentType.startsWith('image/');
+  const isPdf = contentType === 'application/pdf';
+  const canPreview = isImage || isPdf;
+
   return (
-    <img
-      src={src}
-      alt="preview"
-      className="h-8 w-8 rounded object-cover border border-gray-200"
-      onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-    />
+    <>
+      {isImage ? (
+        <img
+          src={src}
+          alt="preview"
+          className="h-8 w-8 rounded object-cover border border-gray-200 cursor-pointer hover:opacity-80"
+          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+          onClick={(e) => { e.stopPropagation(); setShowPreview(true); }}
+        />
+      ) : canPreview ? (
+        <button
+          onClick={(e) => { e.stopPropagation(); setShowPreview(true); }}
+          className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-primary-600 hover:bg-gray-200"
+        >
+          Preview
+        </button>
+      ) : null}
+
+      {showPreview && canPreview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setShowPreview(false)}>
+          <div className="relative max-h-[90vh] max-w-[90vw] overflow-auto rounded-xl bg-white p-2" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-2 flex items-center justify-between px-2">
+              <span className="text-sm font-medium text-gray-700">{filename || 'Attachment'}</span>
+              <div className="flex gap-2">
+                <a href={src} download={filename} className="text-xs text-primary-600 hover:text-primary-800">Download</a>
+                <button onClick={() => setShowPreview(false)} className="text-gray-400 hover:text-gray-600 text-lg leading-none">&times;</button>
+              </div>
+            </div>
+            {isImage ? (
+              <img src={src} alt={filename || 'preview'} className="max-h-[80vh] max-w-full rounded" />
+            ) : isPdf ? (
+              <iframe src={src} className="h-[80vh] w-[70vw] rounded border" title={filename || 'PDF preview'} />
+            ) : null}
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -504,13 +539,12 @@ export default function CampaignCreate() {
         {existingAttachments.map((att, i) => (
           <div key={`existing-${i}`} className="flex items-center justify-between rounded-lg bg-blue-50 border border-blue-100 px-3 py-2 text-sm">
             <div className="flex items-center gap-2">
-              {draftId && att.contentType?.startsWith('image/') ? (
-                <AttachmentThumbnail campaignId={draftId} index={i} contentType={att.contentType} />
-              ) : (
-                <FileIcon filename={att.filename} contentType={att.contentType} />
-              )}
+              <FileIcon filename={att.filename} contentType={att.contentType} />
               <span className="truncate">{att.filename}</span>
               <span className="text-xs text-gray-400">({formatFileSize(att.size)})</span>
+              {draftId && (att.contentType?.startsWith('image/') || att.contentType === 'application/pdf') && (
+                <AttachmentThumbnail campaignId={draftId} index={i} contentType={att.contentType} filename={att.filename} />
+              )}
               <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-600">Uploaded</span>
             </div>
             <button
@@ -560,13 +594,12 @@ export default function CampaignCreate() {
         <ul className="mt-1 space-y-0.5">
           {existingAttachments.map((att, i) => (
             <li key={`existing-${i}`} className="flex items-center gap-1">
-              {draftId && att.contentType?.startsWith('image/') ? (
-                <AttachmentThumbnail campaignId={draftId} index={i} contentType={att.contentType} />
-              ) : (
-                <FileIcon filename={att.filename} contentType={att.contentType} />
-              )}
+              <FileIcon filename={att.filename} contentType={att.contentType} />
               <span className="font-medium">{att.filename}</span>
               <span className="text-gray-400">({formatFileSize(att.size)})</span>
+              {draftId && (att.contentType?.startsWith('image/') || att.contentType === 'application/pdf') && (
+                <AttachmentThumbnail campaignId={draftId} index={i} contentType={att.contentType} filename={att.filename} />
+              )}
               <span className="rounded bg-blue-100 px-1 py-0.5 text-[10px] text-blue-600">Uploaded</span>
             </li>
           ))}

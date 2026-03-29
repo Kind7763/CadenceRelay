@@ -42,6 +42,7 @@ function DashboardContent() {
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [campaignFilter, setCampaignFilter] = useState<string[]>([]);
+  const [campaignFilterMode, setCampaignFilterMode] = useState<'include' | 'exclude'>('include');
   const [statusFilter, setStatusFilter] = useState('');
   const [providerFilter, setProviderFilter] = useState('');
   const [campaigns, setCampaigns] = useState<{ id: string; name: string }[]>([]);
@@ -64,11 +65,17 @@ function DashboardContent() {
     }
     if (fromDate) f.from = fromDate;
     if (toDate) f.to = toDate;
-    if (campaignFilter.length > 0) f.campaignIds = campaignFilter.join(',');
+    if (campaignFilter.length > 0) {
+      if (campaignFilterMode === 'exclude') {
+        f.excludeCampaignIds = campaignFilter.join(',');
+      } else {
+        f.campaignIds = campaignFilter.join(',');
+      }
+    }
     if (statusFilter) f.status = statusFilter;
     if (providerFilter) f.provider = providerFilter;
     return f;
-  }, [datePreset, fromDate, toDate, campaignFilter, statusFilter, providerFilter]);
+  }, [datePreset, fromDate, toDate, campaignFilter, campaignFilterMode, statusFilter, providerFilter]);
 
   const { data, isLoading, isError, error } = useDashboard(filters);
 
@@ -267,7 +274,21 @@ function DashboardContent() {
             </div>
             <div className="col-span-2">
               <div className="flex items-center justify-between mb-1">
-                <label className="block text-xs font-medium text-gray-500">Campaigns</label>
+                <div className="flex items-center gap-2">
+                  <label className="block text-xs font-medium text-gray-500">Campaigns</label>
+                  {campaignFilter.length > 0 && (
+                    <div className="flex rounded border border-gray-300 text-[10px]">
+                      <button
+                        onClick={() => setCampaignFilterMode('include')}
+                        className={`px-2 py-0.5 ${campaignFilterMode === 'include' ? 'bg-primary-600 text-white' : 'text-gray-500 hover:bg-gray-50'}`}
+                      >Include</button>
+                      <button
+                        onClick={() => setCampaignFilterMode('exclude')}
+                        className={`px-2 py-0.5 ${campaignFilterMode === 'exclude' ? 'bg-red-600 text-white' : 'text-gray-500 hover:bg-gray-50'}`}
+                      >Exclude</button>
+                    </div>
+                  )}
+                </div>
                 {campaignFilter.length > 0 && (
                   <button onClick={() => setCampaignFilter([])} className="text-[10px] text-primary-600 hover:text-primary-800">
                     Clear all ({campaignFilter.length})
