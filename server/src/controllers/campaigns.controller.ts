@@ -24,11 +24,28 @@ if (!fs.existsSync(UPLOAD_DIR)) {
 export async function listCampaigns(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { page, limit, offset } = parsePagination(req.query as { page?: string; limit?: string });
-    const { status, search } = req.query;
+    const { status, search, archived, starred, label_name: labelName } = req.query;
 
     let whereClause = 'WHERE 1=1';
     const params: unknown[] = [];
     let idx = 1;
+
+    // Default: exclude archived unless archived=true is passed
+    if (archived === 'true') {
+      whereClause += ` AND c.is_archived = true`;
+    } else {
+      whereClause += ` AND (c.is_archived = false OR c.is_archived IS NULL)`;
+    }
+
+    if (starred === 'true') {
+      whereClause += ` AND c.is_starred = true`;
+    }
+
+    if (labelName) {
+      whereClause += ` AND c.label_name = $${idx}`;
+      params.push(labelName);
+      idx++;
+    }
 
     if (status) {
       whereClause += ` AND c.status = $${idx}`;
@@ -122,7 +139,7 @@ export async function updateCampaign(req: Request, res: Response, next: NextFunc
   try {
     const { id } = req.params;
     validateUUID(id, 'campaign ID');
-    const { name, templateId, listId, provider, throttlePerSecond, throttlePerHour } = req.body;
+    const { name, templateId, listId, provider, throttlePerSecond, throttlePerHour, description } = req.body;
 
     const existing = await pool.query('SELECT status FROM campaigns WHERE id = $1', [id]);
     if (existing.rows.length === 0) throw new AppError('Campaign not found', 404);
@@ -139,9 +156,10 @@ export async function updateCampaign(req: Request, res: Response, next: NextFunc
         provider = COALESCE($4, provider),
         throttle_per_second = COALESCE($5, throttle_per_second),
         throttle_per_hour = COALESCE($6, throttle_per_hour),
+        description = COALESCE($7, description),
         updated_at = NOW()
-       WHERE id = $7 RETURNING *`,
-      [name, templateId, listId, provider, throttlePerSecond, throttlePerHour, id]
+       WHERE id = $8 RETURNING *`,
+      [name, templateId, listId, provider, throttlePerSecond, throttlePerHour, description, id]
     );
 
     res.json({ campaign: result.rows[0] });
@@ -480,6 +498,156 @@ export async function downloadAttachment(req: Request, res: Response, next: Next
 
     const fileStream = fs.createReadStream(filePath);
     fileStream.pipe(res);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function duplicateCampaign(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { id } = req.params;
+    validateUUID(id, 'campaign ID');
+
+    const existing = await pool.query('SELECT * FROM campaigns WHERE id = $1', [id]);
+    if (existing.rows.length === 0) throw new AppError('Campaign not found', 404);
+
+    const source = existing.rows[0];
+
+    // Copy attachment files on disk
+    const sourceAttachments: Array<{ filename: string; storagePath: string; size: number; contentType: string }> = source.attachments || [];
+    const newAttachments = sourceAttachments.map((att) => {
+      if (att.storagePath && fs.existsSync(att.storagePath)) {
+        const ext = path.extname(att.storagePath);
+        const newName = `${Date.now()}-${Math.random().toString(36).substring(2)}${ext}`;
+        const newPath = path.join(UPLOAD_DIR, newName);
+        fs.copyFileSync(att.storagePath, newPath);
+        return { ...att, storagePath: newPath };
+      }
+      return att;
+    });
+
+    const result = await pool.query(
+      `INSERT INTO campaigns (
+        name, template_id, list_id, provider, status,
+        throttle_per_second, throttle_per_hour, description,
+        label_name, label_color, attachments
+      ) VALUES ($1, $2, $3, $4, 'draft', $5, $6, $7, $8, $9, $10)
+      RETURNING *`,
+      [
+        `Copy of ${source.name}`,
+        source.template_id,
+        source.list_id,
+        source.provider,
+        source.throttle_per_second,
+        source.throttle_per_hour,
+        source.description,
+        source.label_name,
+        source.label_color,
+        JSON.stringify(newAttachments),
+      ]
+    );
+
+    res.status(201).json({ campaign: result.rows[0] });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function toggleStar(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { id } = req.params;
+    validateUUID(id, 'campaign ID');
+
+    const result = await pool.query(
+      `UPDATE campaigns SET is_starred = NOT COALESCE(is_starred, false), updated_at = NOW()
+       WHERE id = $1 RETURNING *`,
+      [id]
+    );
+    if (result.rows.length === 0) throw new AppError('Campaign not found', 404);
+
+    res.json({ campaign: result.rows[0] });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function toggleArchive(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { id } = req.params;
+    validateUUID(id, 'campaign ID');
+
+    const result = await pool.query(
+      `UPDATE campaigns SET is_archived = NOT COALESCE(is_archived, false), updated_at = NOW()
+       WHERE id = $1 RETURNING *`,
+      [id]
+    );
+    if (result.rows.length === 0) throw new AppError('Campaign not found', 404);
+
+    res.json({ campaign: result.rows[0] });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function updateLabel(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { id } = req.params;
+    validateUUID(id, 'campaign ID');
+    const { name, color } = req.body as { name?: string; color?: string };
+
+    // If both are empty/null, remove the label
+    const labelName = name || null;
+    const labelColor = color || null;
+
+    const result = await pool.query(
+      `UPDATE campaigns SET label_name = $1, label_color = $2, updated_at = NOW()
+       WHERE id = $3 RETURNING *`,
+      [labelName, labelColor, id]
+    );
+    if (result.rows.length === 0) throw new AppError('Campaign not found', 404);
+
+    res.json({ campaign: result.rows[0] });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ── Campaign Labels CRUD ──
+
+export async function listLabels(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const result = await pool.query('SELECT * FROM campaign_labels ORDER BY created_at ASC');
+    res.json({ labels: result.rows });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function createLabel(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { name, color } = req.body as { name: string; color?: string };
+    if (!name) throw new AppError('Label name is required', 400);
+
+    const result = await pool.query(
+      'INSERT INTO campaign_labels (name, color) VALUES ($1, $2) RETURNING *',
+      [name, color || '#6B7280']
+    );
+
+    res.status(201).json({ label: result.rows[0] });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function deleteLabel(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { id } = req.params;
+    validateUUID(id, 'label ID');
+
+    const result = await pool.query('DELETE FROM campaign_labels WHERE id = $1 RETURNING id', [id]);
+    if (result.rows.length === 0) throw new AppError('Label not found', 404);
+
+    res.json({ message: 'Label deleted' });
   } catch (err) {
     next(err);
   }

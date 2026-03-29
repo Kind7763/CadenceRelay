@@ -6,6 +6,7 @@ import contactsRoutes from './contacts.routes';
 import listsRoutes from './lists.routes';
 import templatesRoutes from './templates.routes';
 import campaignsRoutes from './campaigns.routes';
+import campaignLabelsRoutes from './campaignLabels.routes';
 import { downloadAttachment } from '../controllers/campaigns.controller';
 import analyticsRoutes from './analytics.routes';
 import adminRoutes from './admin.routes';
@@ -41,6 +42,7 @@ router.use('/contacts', authenticate, contactsRoutes);
 router.use('/lists', authenticate, listsRoutes);
 router.use('/templates', authenticate, templatesRoutes);
 router.use('/campaigns', authenticate, campaignsRoutes);
+router.use('/campaign-labels', authenticate, campaignLabelsRoutes);
 router.use('/admin', authenticate, adminRoutes);
 router.use('/custom-variables', authenticate, customVariablesRoutes);
 

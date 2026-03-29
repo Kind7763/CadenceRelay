@@ -10,6 +10,11 @@ import {
   pauseCampaign,
   resumeCampaign,
   scheduleCampaign,
+  duplicateCampaign,
+  toggleStar,
+  toggleArchive,
+  updateCampaignLabel,
+  listCampaignLabels,
 } from '../api/campaigns.api';
 
 export function useCampaignsList(params: { page: number; limit?: number; status?: string; search?: string }) {
@@ -132,5 +137,67 @@ export function useScheduleCampaign() {
     onError: () => {
       toast.error('Failed to schedule campaign');
     },
+  });
+}
+
+export function useDuplicateCampaign() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => duplicateCampaign(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['campaigns'] });
+      toast.success('Campaign duplicated');
+    },
+    onError: () => {
+      toast.error('Failed to duplicate campaign');
+    },
+  });
+}
+
+export function useToggleStar() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => toggleStar(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['campaigns'] });
+    },
+    onError: () => {
+      toast.error('Failed to update star');
+    },
+  });
+}
+
+export function useToggleArchive() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => toggleArchive(id),
+    onSuccess: (_data, _id) => {
+      queryClient.invalidateQueries({ queryKey: ['campaigns'] });
+      toast.success('Campaign updated');
+    },
+    onError: () => {
+      toast.error('Failed to update archive status');
+    },
+  });
+}
+
+export function useUpdateCampaignLabel() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, label }: { id: string; label: { name?: string; color?: string } }) =>
+      updateCampaignLabel(id, label),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['campaigns'] });
+    },
+    onError: () => {
+      toast.error('Failed to update label');
+    },
+  });
+}
+
+export function useCampaignLabels() {
+  return useQuery({
+    queryKey: ['campaign-labels'],
+    queryFn: () => listCampaignLabels(),
   });
 }

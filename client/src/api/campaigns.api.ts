@@ -11,6 +11,7 @@ export interface CampaignAttachment {
 export interface Campaign {
   id: string;
   name: string;
+  description?: string;
   status: string;
   provider: string;
   template_id: string;
@@ -32,6 +33,10 @@ export interface Campaign {
   click_count: number;
   complaint_count: number;
   attachments?: CampaignAttachment[];
+  is_starred?: boolean;
+  is_archived?: boolean;
+  label_name?: string;
+  label_color?: string;
   created_at: string;
 }
 
@@ -154,4 +159,44 @@ export async function addAttachments(id: string, files: File[]) {
 export async function removeAttachment(id: string, index: number) {
   const res = await apiClient.delete(`/campaigns/${id}/attachments/${index}`);
   return res.data;
+}
+
+export async function duplicateCampaign(id: string) {
+  const res = await apiClient.post(`/campaigns/${id}/duplicate`);
+  return res.data.campaign;
+}
+
+export async function toggleStar(id: string) {
+  const res = await apiClient.put(`/campaigns/${id}/star`);
+  return res.data.campaign;
+}
+
+export async function toggleArchive(id: string) {
+  const res = await apiClient.put(`/campaigns/${id}/archive`);
+  return res.data.campaign;
+}
+
+export async function updateCampaignLabel(id: string, label: { name?: string; color?: string }) {
+  const res = await apiClient.put(`/campaigns/${id}/label`, label);
+  return res.data.campaign;
+}
+
+export interface CampaignLabel {
+  id: string;
+  name: string;
+  color: string;
+}
+
+export async function listCampaignLabels() {
+  const res = await apiClient.get('/campaign-labels');
+  return res.data.labels as CampaignLabel[];
+}
+
+export async function createCampaignLabel(data: { name: string; color: string }) {
+  const res = await apiClient.post('/campaign-labels', data);
+  return res.data.label as CampaignLabel;
+}
+
+export async function deleteCampaignLabel(id: string) {
+  return apiClient.delete(`/campaign-labels/${id}`);
 }

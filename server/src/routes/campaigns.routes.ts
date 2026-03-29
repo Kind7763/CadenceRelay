@@ -4,6 +4,7 @@ import {
   listCampaigns, getCampaign, createCampaign, updateCampaign, deleteCampaign,
   bulkDeleteCampaigns, scheduleCampaign, sendCampaign, pauseCampaign, resumeCampaign,
   getCampaignRecipients, addAttachments, removeAttachment, downloadAttachment,
+  duplicateCampaign, toggleStar, toggleArchive, updateLabel,
 } from '../controllers/campaigns.controller';
 import { validateBody } from '../middleware/validateRequest';
 import { z } from 'zod';
@@ -31,6 +32,7 @@ const updateSchema = z.object({
   provider: z.enum(['gmail', 'ses']).optional(),
   throttlePerSecond: z.number().min(1).max(100).optional(),
   throttlePerHour: z.number().min(1).max(100000).optional(),
+  description: z.string().optional(),
 });
 
 const scheduleSchema = z.object({
@@ -54,6 +56,11 @@ router.post('/:id/send', sendCampaign);
 router.post('/:id/pause', pauseCampaign);
 router.post('/:id/resume', resumeCampaign);
 router.get('/:id/recipients', getCampaignRecipients);
+// Campaign management actions
+router.post('/:id/duplicate', duplicateCampaign);
+router.put('/:id/star', toggleStar);
+router.put('/:id/archive', toggleArchive);
+router.put('/:id/label', updateLabel);
 // Attachment management
 router.post('/:id/attachments', upload.array('attachments', 10), addAttachments);
 router.delete('/:id/attachments/:index', removeAttachment);

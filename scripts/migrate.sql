@@ -209,6 +209,24 @@ ALTER TABLE campaign_recipients ADD COLUMN IF NOT EXISTS click_count integer DEF
 ALTER TABLE campaign_recipients ADD COLUMN IF NOT EXISTS last_opened_at timestamptz;
 ALTER TABLE campaign_recipients ADD COLUMN IF NOT EXISTS last_clicked_at timestamptz;
 
+-- Campaign management columns
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS description text;
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS is_starred boolean DEFAULT false;
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS is_archived boolean DEFAULT false;
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS label_name varchar(50);
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS label_color varchar(20);
+
+CREATE INDEX IF NOT EXISTS campaigns_starred_idx ON campaigns(is_starred) WHERE is_starred = true;
+CREATE INDEX IF NOT EXISTS campaigns_archived_idx ON campaigns(is_archived);
+
+-- Predefined campaign labels
+CREATE TABLE IF NOT EXISTS campaign_labels (
+    id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name varchar(50) NOT NULL,
+    color varchar(20) NOT NULL DEFAULT '#6B7280',
+    created_at timestamptz DEFAULT NOW()
+);
+
 -- Custom variable definitions
 CREATE TABLE IF NOT EXISTS custom_variables (
     id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),

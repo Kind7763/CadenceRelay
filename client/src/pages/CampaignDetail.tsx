@@ -1,8 +1,21 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { getCampaign, pauseCampaign, resumeCampaign, getCampaignRecipients, scheduleCampaign, Campaign } from '../api/campaigns.api';
+import {
+  getCampaign,
+  pauseCampaign,
+  resumeCampaign,
+  getCampaignRecipients,
+  scheduleCampaign,
+  updateCampaign,
+  duplicateCampaign,
+  toggleStar,
+  toggleArchive,
+  updateCampaignLabel,
+  Campaign,
+} from '../api/campaigns.api';
 import { getRecipientEvents } from '../api/analytics.api';
+import LabelPicker from '../components/ui/LabelPicker';
 
 const statusColors: Record<string, string> = {
   draft: 'bg-gray-100 text-gray-700',
@@ -55,6 +68,14 @@ export default function CampaignDetail() {
   const [previewAttachment, setPreviewAttachment] = useState<{ url: string; filename: string } | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+
+  // Inline edit states
+  const [editingName, setEditingName] = useState(false);
+  const [nameValue, setNameValue] = useState('');
+  const [editingDescription, setEditingDescription] = useState(false);
+  const [descriptionValue, setDescriptionValue] = useState('');
+  const [showLabelPicker, setShowLabelPicker] = useState(false);
+  const [duplicating, setDuplicating] = useState(false);
 
   async function handleReschedule() {
     if (!id || !newScheduledAt) return;
@@ -115,7 +136,7 @@ export default function CampaignDetail() {
   useEffect(() => { fetchCampaign(); }, [fetchCampaign]);
   useEffect(() => { fetchRecipients(); }, [fetchRecipients]);
 
-  // Auto-refresh while sending - fixed interval cleanup
+  // Auto-refresh while sending
   useEffect(() => {
     if (campaign?.status === 'sending') {
       intervalRef.current = setInterval(() => { fetchCampaign(); fetchRecipients(); }, 5000);
@@ -156,6 +177,76 @@ export default function CampaignDetail() {
     toast.success('Recipients exported');
   }
 
+  async function handleStarToggle() {
+    if (!id) return;
+    try {
+      const updated = await toggleStar(id);
+      setCampaign(updated);
+    } catch {
+      toast.error('Failed to toggle star');
+    }
+  }
+
+  async function handleArchiveToggle() {
+    if (!id) return;
+    try {
+      const updated = await toggleArchive(id);
+      setCampaign(updated);
+      toast.success(updated.is_archived ? 'Campaign archived' : 'Campaign unarchived');
+    } catch {
+      toast.error('Failed to update archive status');
+    }
+  }
+
+  async function handleDuplicate() {
+    if (!id) return;
+    setDuplicating(true);
+    try {
+      const newCampaign = await duplicateCampaign(id);
+      toast.success('Campaign duplicated');
+      if (newCampaign?.id) navigate(`/campaigns/${newCampaign.id}`);
+    } catch {
+      toast.error('Failed to duplicate campaign');
+    } finally {
+      setDuplicating(false);
+    }
+  }
+
+  async function handleNameSave() {
+    if (!id || !nameValue.trim()) return;
+    try {
+      const updated = await updateCampaign(id, { name: nameValue.trim() });
+      setCampaign(updated);
+      setEditingName(false);
+      toast.success('Name updated');
+    } catch {
+      toast.error('Failed to update name');
+    }
+  }
+
+  async function handleDescriptionSave() {
+    if (!id) return;
+    try {
+      const updated = await updateCampaign(id, { description: descriptionValue.trim() });
+      setCampaign(updated);
+      setEditingDescription(false);
+      toast.success('Description updated');
+    } catch {
+      toast.error('Failed to update description');
+    }
+  }
+
+  async function handleLabelSelect(label: { name: string; color: string } | null) {
+    if (!id) return;
+    try {
+      const updated = await updateCampaignLabel(id, label || { name: '', color: '' });
+      setCampaign(updated);
+    } catch {
+      toast.error('Failed to update label');
+    }
+    setShowLabelPicker(false);
+  }
+
   if (loading) return <div className="flex h-64 items-center justify-center text-gray-500">Loading...</div>;
   if (!campaign) return <div className="p-6">Campaign not found</div>;
 
@@ -186,12 +277,126 @@ export default function CampaignDetail() {
       <button onClick={() => navigate('/campaigns')} className="mb-4 text-sm text-primary-600">&larr; Back</button>
 
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">{campaign.name}</h1>
-          <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-medium ${statusColors[campaign.status] || ''}`}>{campaign.status}</span>
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex-1 min-w-0">
+          {/* Campaign name - inline editable */}
+          <div className="flex items-center gap-2">
+            {editingName ? (
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={nameValue}
+                  onChange={(e) => setNameValue(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleNameSave(); if (e.key === 'Escape') setEditingName(false); }}
+                  className="rounded border border-gray-300 px-2 py-1 text-2xl font-bold focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                  autoFocus
+                />
+                <button onClick={handleNameSave} className="rounded bg-primary-600 px-2 py-1 text-xs text-white hover:bg-primary-700">Save</button>
+                <button onClick={() => setEditingName(false)} className="text-xs text-gray-400 hover:text-gray-600">Cancel</button>
+              </div>
+            ) : (
+              <h1
+                className="group flex cursor-pointer items-center gap-2 text-2xl font-bold"
+                onClick={() => { setNameValue(campaign.name); setEditingName(true); }}
+              >
+                {campaign.name}
+                <svg className="h-4 w-4 text-gray-300 opacity-0 transition-opacity group-hover:opacity-100" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                </svg>
+              </h1>
+            )}
+
+            {/* Star button */}
+            <button
+              onClick={handleStarToggle}
+              className="text-xl leading-none transition-colors"
+              title={campaign.is_starred ? 'Unstar' : 'Star'}
+            >
+              {campaign.is_starred
+                ? <span className="text-yellow-400">{'\u2605'}</span>
+                : <span className="text-gray-300 hover:text-yellow-400">{'\u2606'}</span>
+              }
+            </button>
+          </div>
+
+          {/* Label */}
+          <div className="mt-1 flex items-center gap-2">
+            <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${statusColors[campaign.status] || ''}`}>{campaign.status}</span>
+            <div className="relative">
+              <button
+                onClick={() => setShowLabelPicker(!showLabelPicker)}
+                className="inline-flex items-center gap-1 rounded-full border border-gray-200 px-2 py-0.5 text-xs text-gray-500 hover:bg-gray-50"
+              >
+                {campaign.label_color ? (
+                  <>
+                    <span className="h-3 w-3 rounded-full" style={{ backgroundColor: campaign.label_color }} />
+                    <span>{campaign.label_name || 'Label'}</span>
+                  </>
+                ) : (
+                  <span>+ Label</span>
+                )}
+              </button>
+              {showLabelPicker && (
+                <div className="absolute left-0 top-full mt-1">
+                  <LabelPicker
+                    currentColor={campaign.label_color}
+                    currentName={campaign.label_name}
+                    onSelect={handleLabelSelect}
+                    onClose={() => setShowLabelPicker(false)}
+                  />
+                </div>
+              )}
+            </div>
+            {campaign.is_archived && (
+              <span className="rounded-full bg-gray-200 px-2 py-0.5 text-xs text-gray-600">Archived</span>
+            )}
+          </div>
+
+          {/* Description - editable */}
+          <div className="mt-2">
+            {editingDescription ? (
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={descriptionValue}
+                  onChange={(e) => setDescriptionValue(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleDescriptionSave(); if (e.key === 'Escape') setEditingDescription(false); }}
+                  placeholder="Add a description..."
+                  className="w-full max-w-md rounded border border-gray-300 px-2 py-1 text-sm text-gray-600 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                  autoFocus
+                />
+                <button onClick={handleDescriptionSave} className="rounded bg-primary-600 px-2 py-1 text-xs text-white hover:bg-primary-700">Save</button>
+                <button onClick={() => setEditingDescription(false)} className="text-xs text-gray-400 hover:text-gray-600">Cancel</button>
+              </div>
+            ) : (
+              <p
+                className="group cursor-pointer text-sm text-gray-500 hover:text-gray-700"
+                onClick={() => { setDescriptionValue(campaign.description || ''); setEditingDescription(true); }}
+              >
+                {campaign.description || 'Click to add description...'}
+                <svg className="ml-1 inline h-3 w-3 text-gray-300 opacity-0 transition-opacity group-hover:opacity-100" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                </svg>
+              </p>
+            )}
+          </div>
         </div>
-        <div className="flex gap-2">
+
+        {/* Action buttons */}
+        <div className="flex flex-shrink-0 gap-2">
+          <button
+            onClick={handleDuplicate}
+            disabled={duplicating}
+            className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            {duplicating ? 'Duplicating...' : 'Duplicate'}
+          </button>
+          <button
+            onClick={handleArchiveToggle}
+            className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+          >
+            {campaign.is_archived ? 'Unarchive' : 'Archive'}
+          </button>
           {campaign.status === 'sending' && <button onClick={handlePause} className="rounded-lg border border-orange-300 px-4 py-2 text-sm text-orange-600">Pause</button>}
           {campaign.status === 'paused' && <button onClick={handleResume} className="rounded-lg bg-primary-600 px-4 py-2 text-sm text-white">Resume</button>}
           {(campaign.status === 'draft' || campaign.status === 'scheduled') && (
@@ -503,7 +708,7 @@ export default function CampaignDetail() {
                     onClick={() => toggleRecipientEvents(r.id)}
                   >
                     <td className="px-3 py-2">
-                      <span className="mr-1 text-gray-400">{expandedRecipient === r.id ? '▼' : '▶'}</span>
+                      <span className="mr-1 text-gray-400">{expandedRecipient === r.id ? '\u25BC' : '\u25B6'}</span>
                       {r.email}
                     </td>
                     <td className="px-3 py-2"><span className={`rounded-full px-2 py-0.5 text-xs ${statusColors[r.status] || 'bg-gray-100'}`}>{r.status}</span></td>
