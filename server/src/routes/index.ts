@@ -28,6 +28,13 @@ router.get('/health', (_req, res) => {
 // Auth (public)
 router.use('/auth', authRoutes);
 
+// Public routes (MUST be before authenticated routes to avoid auth middleware intercepting)
+router.use('/t', trackingRoutes);
+router.use('/webhooks', webhookRoutes);
+// Public attachment download/preview (no auth — these are files being sent to recipients)
+router.get('/campaigns/:id/attachments/:index/preview', downloadAttachment);
+router.get('/campaigns/:id/attachments/:index', downloadAttachment);
+
 // Protected routes
 router.use('/settings', authenticate, settingsRoutes);
 router.use('/contacts', authenticate, contactsRoutes);
@@ -36,14 +43,6 @@ router.use('/templates', authenticate, templatesRoutes);
 router.use('/campaigns', authenticate, campaignsRoutes);
 router.use('/admin', authenticate, adminRoutes);
 router.use('/custom-variables', authenticate, customVariablesRoutes);
-
-// Public routes
-router.use('/t', trackingRoutes);
-router.use('/webhooks', webhookRoutes);
-
-// Public attachment download/preview (no auth — these are files being sent to recipients anyway)
-router.get('/campaigns/:id/attachments/:index', downloadAttachment);
-router.get('/campaigns/:id/attachments/:index/preview', downloadAttachment);
 
 router.use('/analytics', authenticate, analyticsRoutes);
 
