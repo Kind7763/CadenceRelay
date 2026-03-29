@@ -1,0 +1,45 @@
+CadenceRelay Source Available License v1.0
+
+Copyright (c) 2026 Pulkit Pareek. All rights reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to use,
+copy, modify, and run the Software for PERSONAL, NON-COMMERCIAL purposes,
+subject to the following conditions:
+
+1. PERSONAL USE ALLOWED
+   You may use, copy, modify, and self-host the Software for personal,
+   educational, non-profit, or internal business use at no cost.
+
+2. NO COMMERCIAL REDISTRIBUTION
+   You may NOT sell, sublicense, offer as a managed/hosted service (SaaS),
+   or otherwise commercially distribute the Software or any derivative work
+   without explicit written permission from the copyright holder.
+
+3. ATTRIBUTION REQUIRED
+   All copies or substantial portions of the Software must include this
+   license notice, the above copyright notice, and visible attribution to
+   "CadenceRelay by Pulkit Pareek" in any user-facing interface.
+
+4. COMMERCIAL LICENSING
+   For commercial use, SaaS deployment, resale, or enterprise licensing,
+   contact: pulkitpareek18@gmail.com
+
+5. OWNERSHIP
+   The copyright holder retains all rights, title, and interest in the
+   Software, including the right to sell, license, or transfer the Software
+   to any third party, company, or organization at any time.
+
+6. CONTRIBUTIONS
+   By submitting contributions (pull requests, patches, issues) to this
+   project, you grant the copyright holder a perpetual, worldwide,
+   non-exclusive, royalty-free license to use, reproduce, modify, and
+   distribute your contributions as part of the Software under any license.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF
+OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
