@@ -32,9 +32,11 @@ router.use('/auth', authRoutes);
 // Public routes (MUST be before authenticated routes to avoid auth middleware intercepting)
 router.use('/t', trackingRoutes);
 router.use('/webhooks', webhookRoutes);
-// Public attachment download/preview (no auth — these are files being sent to recipients)
-router.get('/campaigns/:id/attachments/:index/preview', downloadAttachment);
-router.get('/campaigns/:id/attachments/:index', downloadAttachment);
+// Public attachment download/preview — registered as a sub-router to ensure it takes full priority
+const publicAttachmentRouter = Router();
+publicAttachmentRouter.get('/:id/attachments/:index/preview', downloadAttachment);
+publicAttachmentRouter.get('/:id/attachments/:index', downloadAttachment);
+router.use('/campaigns', publicAttachmentRouter);
 
 // Protected routes
 router.use('/settings', authenticate, settingsRoutes);

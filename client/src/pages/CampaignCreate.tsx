@@ -209,7 +209,8 @@ export default function CampaignCreate() {
       try {
         const data = await listContacts({ listId, limit: '10' });
         if (!cancelled) {
-          const contacts = data.contacts || data || [];
+          // API returns { data: [...], pagination: {...} }
+          const contacts = Array.isArray(data) ? data : (Array.isArray(data.data) ? data.data : []);
           setPreviewContacts(contacts);
           setTestContacts(contacts);
         }
