@@ -8,8 +8,39 @@ import {
 } from '../api/campaigns.api';
 import { listTemplates, Template } from '../api/templates.api';
 import { listLists, ContactList } from '../api/lists.api';
+import { listContacts, Contact } from '../api/contacts.api';
+import { sendTestEmail } from '../api/settings.api';
 import UploadProgress, { FileUploadProgress } from '../components/ui/UploadProgress';
 import { UploadState, INITIAL_UPLOAD_STATE, formatFileSize, validateFileSize, getFileTypeIcon } from '../lib/uploadHelper';
+
+/** Replace all {{key}} placeholders in html/text with values from a contact */
+function replaceVariables(html: string, contact: Contact): string {
+  let result = html;
+  const fields: Record<string, string | null> = {
+    name: contact.name,
+    email: contact.email,
+    state: contact.state,
+    district: contact.district,
+    block: contact.block,
+    classes: contact.classes,
+    category: contact.category,
+    management: contact.management,
+    address: contact.address,
+    school_name: contact.name, // alias
+  };
+  for (const [key, value] of Object.entries(fields)) {
+    const regex = new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`, 'gi');
+    result = result.replace(regex, value ?? '');
+  }
+  // Also replace any metadata keys
+  if (contact.metadata && typeof contact.metadata === 'object') {
+    for (const [key, value] of Object.entries(contact.metadata)) {
+      const regex = new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`, 'gi');
+      result = result.replace(regex, String(value ?? ''));
+    }
+  }
+  return result;
+}
 
 /** File type icon SVG component */
 function FileIcon({ filename, contentType }: { filename: string; contentType?: string }) {
@@ -116,6 +147,22 @@ export default function CampaignCreate() {
   const previewRef = useRef<HTMLIFrameElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Feature 1: Contact-based template preview
+  const [previewContacts, setPreviewContacts] = useState<Contact[]>([]);
+  const [selectedPreviewContactId, setSelectedPreviewContactId] = useState('');
+  const [previewContactsLoading, setPreviewContactsLoading] = useState(false);
+
+  // Feature 2: Send test email
+  const [testEmailExpanded, setTestEmailExpanded] = useState(false);
+  const [testEmailAddress, setTestEmailAddress] = useState('');
+  const [testEmailSending, setTestEmailSending] = useState(false);
+  const [testContactId, setTestContactId] = useState('');
+  const [testContacts, setTestContacts] = useState<Contact[]>([]);
+  const [testContactsLoading, setTestContactsLoading] = useState(false);
+  const [bulkTestSelected, setBulkTestSelected] = useState<Set<string>>(new Set());
+  const [bulkTestSending, setBulkTestSending] = useState(false);
+  const [bulkTestProgress, setBulkTestProgress] = useState({ sent: 0, total: 0 });
+
   // Combined count for the 10-file limit
   const totalAttachmentCount = existingAttachments.length + attachments.length;
   const totalAttachmentSize =
@@ -148,17 +195,52 @@ export default function CampaignCreate() {
   const selectedTemplate = templates.find((t) => t.id === templateId);
   const selectedList = lists.find((l) => l.id === listId);
 
-  // Update preview iframe when template changes
+  // Fetch contacts for preview/test when listId changes
+  useEffect(() => {
+    if (!listId) {
+      setPreviewContacts([]);
+      setTestContacts([]);
+      return;
+    }
+    let cancelled = false;
+    async function fetchContacts() {
+      setPreviewContactsLoading(true);
+      setTestContactsLoading(true);
+      try {
+        const data = await listContacts({ listId, limit: '10' });
+        if (!cancelled) {
+          const contacts = data.contacts || data || [];
+          setPreviewContacts(contacts);
+          setTestContacts(contacts);
+        }
+      } catch {
+        // silently fail
+      } finally {
+        if (!cancelled) {
+          setPreviewContactsLoading(false);
+          setTestContactsLoading(false);
+        }
+      }
+    }
+    fetchContacts();
+    return () => { cancelled = true; };
+  }, [listId]);
+
+  // Update preview iframe when template or selected preview contact changes
+  const selectedPreviewContact = previewContacts.find((c) => c.id === selectedPreviewContactId);
   useEffect(() => {
     if (previewRef.current && selectedTemplate && selectedTemplate.html_body) {
       const doc = previewRef.current.contentDocument;
       if (doc) {
         doc.open();
-        doc.write(selectedTemplate.html_body);
+        const html = selectedPreviewContact
+          ? replaceVariables(selectedTemplate.html_body, selectedPreviewContact)
+          : selectedTemplate.html_body;
+        doc.write(html);
         doc.close();
       }
     }
-  }, [selectedTemplate]);
+  }, [selectedTemplate, selectedPreviewContact]);
 
   const handleAddFiles = useCallback((files: File[]) => {
     const errors: string[] = [];
@@ -598,7 +680,10 @@ export default function CampaignCreate() {
               <h4 className="text-sm font-medium text-gray-700 mb-2">Template Preview</h4>
               <div className="rounded-lg border bg-gray-50 p-2">
                 <div className="mb-2 text-xs text-gray-500">
-                  <span className="font-medium">Subject:</span> {selectedTemplate.subject}
+                  <span className="font-medium">Subject:</span>{' '}
+                  {selectedPreviewContact
+                    ? replaceVariables(selectedTemplate.subject, selectedPreviewContact)
+                    : selectedTemplate.subject}
                 </div>
                 <iframe
                   ref={previewRef}
@@ -606,6 +691,46 @@ export default function CampaignCreate() {
                   title="Template Preview"
                   sandbox="allow-same-origin"
                 />
+              </div>
+
+              {/* Preview with Contact */}
+              <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-3">
+                <h5 className="text-sm font-medium text-blue-800 mb-1">Preview with Contact</h5>
+                <p className="text-xs text-blue-600 mb-2">Select a contact to see how the email will look for them</p>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={selectedPreviewContactId}
+                    onChange={(e) => setSelectedPreviewContactId(e.target.value)}
+                    className="flex-1 rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-sm"
+                    disabled={previewContactsLoading || previewContacts.length === 0}
+                  >
+                    <option value="">
+                      {previewContactsLoading
+                        ? 'Loading contacts...'
+                        : previewContacts.length === 0
+                          ? listId ? 'No contacts in this list' : 'Select a list first (Step 1)'
+                          : 'Preview with real contact data...'}
+                    </option>
+                    {previewContacts.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name || 'Unnamed'} ({c.email})
+                      </option>
+                    ))}
+                  </select>
+                  {selectedPreviewContactId && (
+                    <button
+                      onClick={() => setSelectedPreviewContactId('')}
+                      className="rounded-lg border border-blue-300 bg-white px-3 py-1.5 text-xs text-blue-700 hover:bg-blue-100"
+                    >
+                      Reset Preview
+                    </button>
+                  )}
+                </div>
+                {selectedPreviewContact && (
+                  <p className="mt-1.5 text-xs text-blue-600">
+                    Previewing as: <strong>{selectedPreviewContact.name || selectedPreviewContact.email}</strong>
+                  </p>
+                )}
               </div>
             </div>
           )}
@@ -688,6 +813,155 @@ export default function CampaignCreate() {
 
           {/* Attachments in review */}
           {renderReviewAttachments()}
+
+          {/* Send Test Email Section */}
+          <div className="rounded-lg border border-gray-200">
+            <button
+              onClick={() => setTestEmailExpanded(!testEmailExpanded)}
+              className="flex w-full items-center justify-between p-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            >
+              <span>Send Test Before Sending</span>
+              <svg className={`h-4 w-4 transition-transform ${testEmailExpanded ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            {testEmailExpanded && (
+              <div className="border-t p-4 space-y-4">
+                {/* Option 1: Manual email or contact dropdown */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Send a single test email</label>
+                  <div className="flex flex-col gap-2">
+                    <input
+                      type="email"
+                      placeholder="Enter test recipient email..."
+                      value={testEmailAddress}
+                      onChange={(e) => setTestEmailAddress(e.target.value)}
+                      className="w-full rounded-lg border px-3 py-2 text-sm"
+                    />
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-gray-400">OR pick a contact:</span>
+                      <select
+                        value={testContactId}
+                        onChange={(e) => {
+                          setTestContactId(e.target.value);
+                          const contact = testContacts.find((c) => c.id === e.target.value);
+                          if (contact) setTestEmailAddress(contact.email);
+                        }}
+                        className="flex-1 rounded-lg border px-3 py-1.5 text-sm"
+                        disabled={testContactsLoading || testContacts.length === 0}
+                      >
+                        <option value="">
+                          {testContactsLoading
+                            ? 'Loading...'
+                            : testContacts.length === 0
+                              ? 'No contacts available'
+                              : 'Select a contact...'}
+                        </option>
+                        {testContacts.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name || 'Unnamed'} ({c.email})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <button
+                    disabled={!testEmailAddress || testEmailSending || !selectedTemplate}
+                    onClick={async () => {
+                      if (!selectedTemplate || !testEmailAddress) return;
+                      setTestEmailSending(true);
+                      try {
+                        const contact = testContacts.find((c) => c.id === testContactId);
+                        const sampleContact: Contact = contact || {
+                          id: '', email: testEmailAddress, name: 'Test User', metadata: {},
+                          status: 'active', bounce_count: 0, send_count: 0, last_sent_at: null,
+                          created_at: '', state: null, district: null, block: null,
+                          classes: null, category: null, management: null, address: null,
+                        };
+                        const renderedSubject = replaceVariables(selectedTemplate.subject, sampleContact);
+                        const renderedHtml = replaceVariables(selectedTemplate.html_body, sampleContact);
+                        await sendTestEmail(testEmailAddress, { subject: renderedSubject, html: renderedHtml });
+                        toast.success(`Test email sent to ${testEmailAddress}`);
+                      } catch {
+                        toast.error('Failed to send test email');
+                      } finally {
+                        setTestEmailSending(false);
+                      }
+                    }}
+                    className="mt-2 rounded-lg bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {testEmailSending ? 'Sending...' : 'Send Test'}
+                  </button>
+                </div>
+
+                {/* Option 2: Bulk test to contacts from list */}
+                {testContacts.length > 0 && (
+                  <div className="border-t pt-3">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Or send test to contacts from list</label>
+                    <div className="max-h-48 overflow-y-auto space-y-1 rounded-lg border bg-gray-50 p-2">
+                      {testContacts.map((c) => (
+                        <label key={c.id} className="flex items-center gap-2 rounded px-2 py-1 text-sm hover:bg-white cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={bulkTestSelected.has(c.id)}
+                            onChange={(e) => {
+                              setBulkTestSelected((prev) => {
+                                const next = new Set(prev);
+                                if (e.target.checked) next.add(c.id);
+                                else next.delete(c.id);
+                                return next;
+                              });
+                            }}
+                            className="rounded border-gray-300"
+                          />
+                          <span className="font-medium">{c.name || 'Unnamed'}</span>
+                          <span className="text-gray-500">({c.email})</span>
+                        </label>
+                      ))}
+                    </div>
+                    {bulkTestSending && bulkTestProgress.total > 0 && (
+                      <p className="mt-1 text-xs text-blue-600">
+                        Sent {bulkTestProgress.sent}/{bulkTestProgress.total} test emails...
+                      </p>
+                    )}
+                    <button
+                      disabled={bulkTestSelected.size === 0 || bulkTestSending || !selectedTemplate}
+                      onClick={async () => {
+                        if (!selectedTemplate) return;
+                        setBulkTestSending(true);
+                        const selectedContacts = testContacts.filter((c) => bulkTestSelected.has(c.id));
+                        setBulkTestProgress({ sent: 0, total: selectedContacts.length });
+                        let successCount = 0;
+                        let failCount = 0;
+                        for (const contact of selectedContacts) {
+                          try {
+                            const renderedSubject = replaceVariables(selectedTemplate.subject, contact);
+                            const renderedHtml = replaceVariables(selectedTemplate.html_body, contact);
+                            await sendTestEmail(contact.email, { subject: renderedSubject, html: renderedHtml });
+                            successCount++;
+                          } catch {
+                            failCount++;
+                          }
+                          setBulkTestProgress((prev) => ({ ...prev, sent: prev.sent + 1 }));
+                        }
+                        if (failCount === 0) {
+                          toast.success(`All ${successCount} test emails sent successfully`);
+                        } else {
+                          toast.error(`${successCount} sent, ${failCount} failed`);
+                        }
+                        setBulkTestSending(false);
+                      }}
+                      className="mt-2 rounded-lg bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      {bulkTestSending
+                        ? `Sending ${bulkTestProgress.sent}/${bulkTestProgress.total}...`
+                        : `Send Test to Selected (${bulkTestSelected.size})`}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
 
           {/* Upload progress during campaign creation */}
           {showUploadProgress && uploadProgressFiles.length > 0 && (
