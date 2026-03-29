@@ -466,7 +466,6 @@ If CadenceRelay helps you save time or money:
 
 - **Star this repo** — it helps others discover the project
 - **[Sponsor on GitHub](https://github.com/sponsors/pulkitpareek18)** — fund ongoing development
-- **[Buy me a coffee](https://buymeacoffee.com/pulkitpareek)** — small token of appreciation
 - **Share it** — tweet, blog, or tell a friend
 
 ---
