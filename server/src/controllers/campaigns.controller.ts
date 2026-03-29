@@ -143,11 +143,15 @@ export async function updateCampaign(req: Request, res: Response, next: NextFunc
 
     const existing = await pool.query('SELECT status FROM campaigns WHERE id = $1', [id]);
     if (existing.rows.length === 0) throw new AppError('Campaign not found', 404);
-    // FIX: Already correct - only allow editing draft/scheduled campaigns
-    if (!['draft', 'scheduled'].includes(existing.rows[0].status)) {
-      throw new AppError('Can only edit draft or scheduled campaigns', 400);
+
+    const isDraftOrScheduled = ['draft', 'scheduled'].includes(existing.rows[0].status);
+
+    // Campaign settings (template, list, provider, throttle) can only be changed on draft/scheduled
+    if (!isDraftOrScheduled && (templateId || listId || provider || throttlePerSecond || throttlePerHour)) {
+      throw new AppError('Can only change template, list, provider, and throttle settings on draft or scheduled campaigns', 400);
     }
 
+    // Name and description can always be updated (for organization purposes)
     const result = await pool.query(
       `UPDATE campaigns SET
         name = COALESCE($1, name),
@@ -159,7 +163,9 @@ export async function updateCampaign(req: Request, res: Response, next: NextFunc
         description = COALESCE($7, description),
         updated_at = NOW()
        WHERE id = $8 RETURNING *`,
-      [name, templateId, listId, provider, throttlePerSecond, throttlePerHour, description, id]
+      [name, isDraftOrScheduled ? templateId : null, isDraftOrScheduled ? listId : null,
+       isDraftOrScheduled ? provider : null, isDraftOrScheduled ? throttlePerSecond : null,
+       isDraftOrScheduled ? throttlePerHour : null, description, id]
     );
 
     res.json({ campaign: result.rows[0] });

@@ -15,6 +15,7 @@ import {
   Campaign,
 } from '../api/campaigns.api';
 import { getRecipientEvents } from '../api/analytics.api';
+import { listContacts, Contact } from '../api/contacts.api';
 import LabelPicker from '../components/ui/LabelPicker';
 
 const statusColors: Record<string, string> = {
@@ -66,8 +67,44 @@ export default function CampaignDetail() {
   const [newScheduledAt, setNewScheduledAt] = useState('');
   const [rescheduling, setRescheduling] = useState(false);
   const [previewAttachment, setPreviewAttachment] = useState<{ url: string; filename: string } | null>(null);
+  const [previewContacts, setPreviewContacts] = useState<Contact[]>([]);
+  const [selectedPreviewContact, setSelectedPreviewContact] = useState<Contact | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+
+  // Load preview contacts from campaign's list
+  useEffect(() => {
+    if (campaign?.list_id) {
+      listContacts({ listId: campaign.list_id, limit: '10' })
+        .then((res) => setPreviewContacts(res.data || []))
+        .catch(() => {});
+    }
+  }, [campaign?.list_id]);
+
+  function replaceVars(html: string, contact: Contact): string {
+    const vars: Record<string, string> = {
+      name: contact.name || '',
+      school_name: contact.name || '',
+      email: contact.email || '',
+      state: contact.state || '',
+      district: contact.district || '',
+      block: contact.block || '',
+      classes: contact.classes || '',
+      category: contact.category || '',
+      management: contact.management || '',
+      address: contact.address || '',
+    };
+    if (contact.metadata && typeof contact.metadata === 'object') {
+      for (const [k, v] of Object.entries(contact.metadata)) {
+        if (typeof v === 'string' || typeof v === 'number') vars[k] = String(v);
+      }
+    }
+    let result = html;
+    for (const [key, val] of Object.entries(vars)) {
+      result = result.replace(new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`, 'gi'), val);
+    }
+    return result;
+  }
 
   // Inline edit states
   const [editingName, setEditingName] = useState(false);
@@ -530,15 +567,40 @@ export default function CampaignDetail() {
       {/* Email Preview */}
       {(campaign.template_subject || campaign.template_html_body || (campaign.attachments && campaign.attachments.length > 0)) && (
         <div className="mt-6 rounded-xl bg-white shadow-sm overflow-hidden">
-          <div className="border-b border-gray-200 px-6 py-4">
+          <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
             <h2 className="text-lg font-semibold">Email Preview</h2>
+            {previewContacts.length > 0 && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-500">Preview as:</span>
+                <select
+                  value={selectedPreviewContact?.email || ''}
+                  onChange={(e) => {
+                    const contact = previewContacts.find(c => c.email === e.target.value);
+                    setSelectedPreviewContact(contact || null);
+                  }}
+                  className="rounded-lg border border-gray-300 px-2 py-1 text-xs focus:border-primary-500 focus:outline-none"
+                >
+                  <option value="">Raw template (no variables)</option>
+                  {previewContacts.map((c) => (
+                    <option key={c.id} value={c.email}>
+                      {c.name ? `${c.name} (${c.email})` : c.email}
+                    </option>
+                  ))}
+                </select>
+                {selectedPreviewContact && (
+                  <button onClick={() => setSelectedPreviewContact(null)} className="text-xs text-gray-400 hover:text-gray-600">Reset</button>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Subject line */}
           {campaign.template_subject && (
             <div className="border-b border-gray-100 px-6 py-3">
               <span className="text-xs font-medium uppercase tracking-wide text-gray-400">Subject</span>
-              <p className="mt-1 text-sm font-semibold text-gray-800">{campaign.template_subject}</p>
+              <p className="mt-1 text-sm font-semibold text-gray-800">
+                {selectedPreviewContact ? replaceVars(campaign.template_subject, selectedPreviewContact) : campaign.template_subject}
+              </p>
             </div>
           )}
 
@@ -550,7 +612,7 @@ export default function CampaignDetail() {
                   ref={iframeRef}
                   sandbox="allow-same-origin"
                   title="Email body preview"
-                  srcDoc={campaign.template_html_body}
+                  srcDoc={selectedPreviewContact ? replaceVars(campaign.template_html_body, selectedPreviewContact) : campaign.template_html_body}
                   className="w-full border-0"
                   style={{ minHeight: '400px' }}
                   onLoad={() => {
