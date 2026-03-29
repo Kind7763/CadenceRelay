@@ -6,6 +6,7 @@ import contactsRoutes from './contacts.routes';
 import listsRoutes from './lists.routes';
 import templatesRoutes from './templates.routes';
 import campaignsRoutes from './campaigns.routes';
+import { downloadAttachment } from '../controllers/campaigns.controller';
 import analyticsRoutes from './analytics.routes';
 import adminRoutes from './admin.routes';
 import customVariablesRoutes from './customVariables.routes';
@@ -39,6 +40,10 @@ router.use('/custom-variables', authenticate, customVariablesRoutes);
 // Public routes
 router.use('/t', trackingRoutes);
 router.use('/webhooks', webhookRoutes);
+
+// Public attachment download/preview (no auth — these are files being sent to recipients anyway)
+router.get('/campaigns/:id/attachments/:index', downloadAttachment);
+router.get('/campaigns/:id/attachments/:index/preview', downloadAttachment);
 
 router.use('/analytics', authenticate, analyticsRoutes);
 
