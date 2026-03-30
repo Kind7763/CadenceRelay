@@ -227,8 +227,8 @@ export default function CampaignCreate() {
     }
   }, [editId]);
 
-  const selectedTemplate = templates.find((t) => t.id === templateId);
-  const selectedList = lists.find((l) => l.id === listId);
+  const selectedTemplate = (templates || []).find((t) => t.id === templateId);
+  const selectedList = (lists || []).find((l) => l.id === listId);
 
   // Fetch contacts for preview/test when listId changes
   useEffect(() => {
@@ -244,8 +244,14 @@ export default function CampaignCreate() {
       try {
         const data = await listContacts({ listId, limit: '10' });
         if (!cancelled) {
-          // API returns { data: [...], pagination: {...} }
-          const contacts = Array.isArray(data) ? data : (Array.isArray(data.data) ? data.data : []);
+          // API returns { data: [...], pagination: {...} } — safely extract array
+          let contacts: Contact[] = [];
+          if (Array.isArray(data)) {
+            contacts = data;
+          } else if (data && typeof data === 'object') {
+            if (Array.isArray(data.data)) contacts = data.data;
+            else if (Array.isArray(data.contacts)) contacts = data.contacts;
+          }
           setPreviewContacts(contacts);
           setTestContacts(contacts);
         }

@@ -703,3 +703,104 @@ export async function getCampaignRecipients(req: Request, res: Response, next: N
     next(err);
   }
 }
+
+// ── Dynamic Variables ──
+
+export async function updateDynamicVariables(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { id } = req.params;
+    validateUUID(id, 'campaign ID');
+    const { dynamicVariables } = req.body;
+
+    if (!Array.isArray(dynamicVariables)) {
+      throw new AppError('dynamicVariables must be an array', 400);
+    }
+
+    const validTypes = ['counter', 'date', 'pattern', 'random', 'text'];
+    for (const v of dynamicVariables) {
+      if (!v.key || typeof v.key !== 'string') throw new AppError('Each dynamic variable must have a "key"', 400);
+      if (!validTypes.includes(v.type)) throw new AppError(`Invalid type "${v.type}". Must be: ${validTypes.join(', ')}`, 400);
+    }
+
+    const result = await pool.query(
+      'UPDATE campaigns SET dynamic_variables = $1, updated_at = NOW() WHERE id = $2 RETURNING *',
+      [JSON.stringify(dynamicVariables), id]
+    );
+    if (result.rows.length === 0) throw new AppError('Campaign not found', 404);
+
+    res.json({ campaign: result.rows[0] });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function previewDynamicVariables(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { id } = req.params;
+    validateUUID(id, 'campaign ID');
+
+    const campResult = await pool.query('SELECT dynamic_variables FROM campaigns WHERE id = $1', [id]);
+    if (campResult.rows.length === 0) throw new AppError('Campaign not found', 404);
+
+    const dynamicVarDefs = campResult.rows[0].dynamic_variables || [];
+    if (!Array.isArray(dynamicVarDefs) || dynamicVarDefs.length === 0) {
+      res.json({ previews: [] });
+      return;
+    }
+
+    const previews: Array<{ position: number; variables: Record<string, string> }> = [];
+    const now = new Date();
+    const pad2 = (n: number) => String(n).padStart(2, '0');
+
+    for (const pos of [0, 1, 2, 9, 49, 99]) {
+      const vars: Record<string, string> = {};
+      for (const def of dynamicVarDefs) {
+        switch (def.type) {
+          case 'counter': {
+            const start = def.startValue ?? 1;
+            const increment = def.increment ?? 1;
+            let val = start + (pos * increment);
+            let formatted = String(val);
+            if (def.padding > 0) formatted = formatted.padStart(def.padding, '0');
+            if (def.prefix) formatted = def.prefix + formatted;
+            if (def.suffix) formatted = formatted + def.suffix;
+            vars[def.key] = formatted;
+            break;
+          }
+          case 'date': {
+            const fmt = def.format || 'YYYY-MM-DD';
+            const dateStr = fmt
+              .replace('YYYY', String(now.getFullYear()))
+              .replace('MM', pad2(now.getMonth() + 1))
+              .replace('DD', pad2(now.getDate()))
+              .replace('HH', pad2(now.getHours()))
+              .replace('mm', pad2(now.getMinutes()))
+              .replace('Month', now.toLocaleString('en', { month: 'long' }))
+              .replace('Day', now.toLocaleString('en', { weekday: 'long' }));
+            vars[def.key] = (def.prefix || '') + dateStr + (def.suffix || '');
+            break;
+          }
+          case 'pattern': {
+            const values = def.values || [];
+            if (values.length > 0) vars[def.key] = values[pos % values.length];
+            break;
+          }
+          case 'random': {
+            const values = def.values || [];
+            if (values.length > 0) vars[def.key] = values[Math.floor(Math.random() * values.length)];
+            break;
+          }
+          case 'text': {
+            vars[def.key] = (def.prefix || '') + (def.value || '') + (def.suffix || '');
+            break;
+          }
+        }
+      }
+      previews.push({ position: pos, variables: vars });
+    }
+
+    res.json({ previews });
+  } catch (err) {
+    next(err);
+  }
+}

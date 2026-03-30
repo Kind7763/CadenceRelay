@@ -5,6 +5,7 @@ import {
   bulkDeleteCampaigns, scheduleCampaign, sendCampaign, pauseCampaign, resumeCampaign,
   getCampaignRecipients, addAttachments, removeAttachment, downloadAttachment,
   duplicateCampaign, toggleStar, toggleArchive, updateLabel,
+  updateDynamicVariables, previewDynamicVariables,
 } from '../controllers/campaigns.controller';
 import { validateBody } from '../middleware/validateRequest';
 import { z } from 'zod';
@@ -61,6 +62,9 @@ router.post('/:id/duplicate', duplicateCampaign);
 router.put('/:id/star', toggleStar);
 router.put('/:id/archive', toggleArchive);
 router.put('/:id/label', updateLabel);
+// Dynamic variables
+router.put('/:id/dynamic-variables', updateDynamicVariables);
+router.post('/:id/dynamic-variables/preview', previewDynamicVariables);
 // Attachment management
 router.post('/:id/attachments', upload.array('attachments', 10), addAttachments);
 router.delete('/:id/attachments/:index', removeAttachment);

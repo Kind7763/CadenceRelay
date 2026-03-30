@@ -200,3 +200,28 @@ export async function createCampaignLabel(data: { name: string; color: string })
 export async function deleteCampaignLabel(id: string) {
   return apiClient.delete(`/campaign-labels/${id}`);
 }
+
+// ── Dynamic Variables ──
+
+export interface DynamicVariable {
+  key: string;
+  type: 'counter' | 'date' | 'pattern' | 'random' | 'text';
+  startValue?: number;
+  increment?: number;
+  padding?: number;
+  prefix?: string;
+  suffix?: string;
+  format?: string;
+  values?: string[];
+  value?: string;
+}
+
+export async function updateDynamicVariables(campaignId: string, dynamicVariables: DynamicVariable[]) {
+  const res = await apiClient.put(`/campaigns/${campaignId}/dynamic-variables`, { dynamicVariables });
+  return res.data;
+}
+
+export async function previewDynamicVariables(campaignId: string) {
+  const res = await apiClient.post(`/campaigns/${campaignId}/dynamic-variables/preview`);
+  return res.data.previews as Array<{ position: number; variables: Record<string, string> }>;
+}

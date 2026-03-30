@@ -227,6 +227,9 @@ CREATE TABLE IF NOT EXISTS campaign_labels (
     created_at timestamptz DEFAULT NOW()
 );
 
+-- Dynamic variables per campaign (counter, date, pattern, etc.)
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS dynamic_variables jsonb DEFAULT '[]'::jsonb;
+
 -- Custom variable definitions
 CREATE TABLE IF NOT EXISTS custom_variables (
     id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),

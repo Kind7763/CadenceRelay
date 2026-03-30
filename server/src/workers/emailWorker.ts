@@ -176,8 +176,99 @@ export function startCampaignDispatchWorker(): Worker {
         [contacts.length, campaignId]
       );
 
+      // --- Dynamic variable system ---
+      // Parse dynamic variable definitions from campaign config
+      interface DynVarDef {
+        key: string;
+        type: 'counter' | 'date' | 'pattern' | 'random' | 'text';
+        // Counter options
+        startValue?: number;
+        increment?: number;
+        padding?: number; // zero-pad to N digits
+        prefix?: string;
+        suffix?: string;
+        // Date options
+        format?: string;
+        // Pattern/random options
+        values?: string[];
+        // Text (static value for all)
+        value?: string;
+      }
+
+      const dynamicVarDefs: DynVarDef[] = Array.isArray(campaign.dynamic_variables)
+        ? campaign.dynamic_variables
+        : [];
+
+      // Initialize counter state
+      const counterState: Record<string, number> = {};
+      for (const def of dynamicVarDefs) {
+        if (def.type === 'counter') {
+          counterState[def.key] = def.startValue ?? 1;
+        }
+      }
+
+      // Helper: resolve dynamic variables for a given recipient index
+      function resolveDynamicVars(index: number): Record<string, string> {
+        const vars: Record<string, string> = {};
+        const now = new Date();
+        for (const def of dynamicVarDefs) {
+          switch (def.type) {
+            case 'counter': {
+              let val = counterState[def.key] ?? (def.startValue ?? 1);
+              let formatted = String(val);
+              if (def.padding && def.padding > 0) {
+                formatted = formatted.padStart(def.padding, '0');
+              }
+              if (def.prefix) formatted = def.prefix + formatted;
+              if (def.suffix) formatted = formatted + def.suffix;
+              vars[def.key] = formatted;
+              counterState[def.key] = val + (def.increment ?? 1);
+              break;
+            }
+            case 'date': {
+              const fmt = def.format || 'YYYY-MM-DD';
+              const pad = (n: number) => String(n).padStart(2, '0');
+              const dateStr = fmt
+                .replace('YYYY', String(now.getFullYear()))
+                .replace('YY', String(now.getFullYear()).slice(-2))
+                .replace('MM', pad(now.getMonth() + 1))
+                .replace('DD', pad(now.getDate()))
+                .replace('HH', pad(now.getHours()))
+                .replace('mm', pad(now.getMinutes()))
+                .replace('ss', pad(now.getSeconds()))
+                .replace('Month', now.toLocaleString('en', { month: 'long' }))
+                .replace('Mon', now.toLocaleString('en', { month: 'short' }))
+                .replace('Day', now.toLocaleString('en', { weekday: 'long' }))
+                .replace('Dy', now.toLocaleString('en', { weekday: 'short' }));
+              vars[def.key] = (def.prefix || '') + dateStr + (def.suffix || '');
+              break;
+            }
+            case 'pattern': {
+              const values = def.values || [];
+              if (values.length > 0) {
+                vars[def.key] = values[index % values.length];
+              }
+              break;
+            }
+            case 'random': {
+              const values = def.values || [];
+              if (values.length > 0) {
+                vars[def.key] = values[Math.floor(Math.random() * values.length)];
+              }
+              break;
+            }
+            case 'text': {
+              vars[def.key] = (def.prefix || '') + (def.value || '') + (def.suffix || '');
+              break;
+            }
+          }
+        }
+        return vars;
+      }
+
       // Create campaign_recipients and enqueue send jobs
-      for (const contact of contacts) {
+      for (let recipientIndex = 0; recipientIndex < contacts.length; recipientIndex++) {
+        const contact = contacts[recipientIndex];
         const trackingToken = generateTrackingToken();
 
         // Render template for this contact — all standard fields + custom metadata
@@ -201,6 +292,10 @@ export function startCampaignDispatchWorker(): Worker {
             }
           }
         }
+        // Resolve dynamic variables (counter, date, pattern, random)
+        const dynVars = resolveDynamicVars(recipientIndex);
+        Object.assign(variables, dynVars);
+
         const renderedHtml = renderTemplate(template.html_body, variables);
         const renderedSubject = renderTemplate(template.subject, variables);
         const renderedText = template.text_body ? renderTemplate(template.text_body, variables) : null;
