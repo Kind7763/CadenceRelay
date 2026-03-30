@@ -4,7 +4,7 @@ import toast from 'react-hot-toast';
 import {
   createCampaign, getCampaign, updateCampaign, scheduleCampaign, sendCampaign,
   addAttachments as apiAddAttachments, addAttachmentsTracked, removeAttachment as apiRemoveAttachment,
-  CampaignAttachment,
+  CampaignAttachment, updateDynamicVariables as updateDynamicVariablesApi,
 } from '../api/campaigns.api';
 import { listTemplates, Template } from '../api/templates.api';
 import { listLists, ContactList } from '../api/lists.api';
@@ -198,6 +198,23 @@ export default function CampaignCreate() {
   const [bulkTestSending, setBulkTestSending] = useState(false);
   const [bulkTestProgress, setBulkTestProgress] = useState({ sent: 0, total: 0 });
 
+  // Feature 3: Dynamic variables
+  interface DynVar {
+    key: string;
+    type: 'counter' | 'date' | 'pattern' | 'random' | 'text';
+    startValue?: number;
+    increment?: number;
+    padding?: number;
+    prefix?: string;
+    suffix?: string;
+    format?: string;
+    values?: string[];
+    value?: string;
+  }
+  const [dynamicVars, setDynamicVars] = useState<DynVar[]>([]);
+  const [showAddDynVar, setShowAddDynVar] = useState(false);
+  const [newDynVar, setNewDynVar] = useState<DynVar>({ key: '', type: 'counter' });
+
   // Combined count for the 10-file limit
   const totalAttachmentCount = existingAttachments.length + attachments.length;
   const totalAttachmentSize =
@@ -221,6 +238,10 @@ export default function CampaignCreate() {
         // Load existing attachments from the campaign
         if (c.attachments && c.attachments.length > 0) {
           setExistingAttachments(c.attachments);
+        }
+        // Load existing dynamic variables
+        if (c.dynamic_variables && Array.isArray(c.dynamic_variables) && c.dynamic_variables.length > 0) {
+          setDynamicVars(c.dynamic_variables);
         }
         setEditLoaded(true);
       }).catch(() => toast.error('Failed to load campaign'));
@@ -351,7 +372,7 @@ export default function CampaignCreate() {
 
   function handleGoToReview() {
     if (!validateScheduleDate()) return;
-    setStep(4);
+    setStep(5);
   }
 
   async function handleCreate() {
@@ -404,6 +425,15 @@ export default function CampaignCreate() {
 
       if (hasNewAttachments) {
         setCampaignUploadState((prev) => ({ ...prev, status: 'complete', progress: 100 }));
+      }
+
+      // Save dynamic variables if any were configured
+      if (dynamicVars.length > 0 && campaignId) {
+        try {
+          await updateDynamicVariablesApi(campaignId, dynamicVars);
+        } catch {
+          toast.error('Warning: Failed to save dynamic variables');
+        }
       }
 
       if (scheduleType === 'later' && scheduledAt) {
@@ -643,7 +673,7 @@ export default function CampaignCreate() {
 
       {/* Step indicators */}
       <div className="mt-6 flex gap-2">
-        {['Details', 'Template', 'Schedule', 'Review'].map((label, i) => (
+        {['Details', 'Template', 'Variables', 'Schedule', 'Review'].map((label, i) => (
           <div key={label} className={`flex-1 rounded-lg py-2 text-center text-sm font-medium ${step === i + 1 ? 'bg-primary-600 text-white' : step > i + 1 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
             {label}
           </div>
@@ -781,8 +811,219 @@ export default function CampaignCreate() {
         </div>
       )}
 
-      {/* Step 3: Schedule */}
+      {/* Step 3: Dynamic Variables (optional) */}
       {step === 3 && (
+        <div className="mt-6 rounded-xl bg-white p-6 shadow-sm space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="font-semibold">Dynamic Variables</h3>
+              <p className="text-sm text-gray-500">Add auto-generated values like counters, dates, or rotating text. These work alongside contact variables.</p>
+            </div>
+          </div>
+
+          {/* Current dynamic variables */}
+          {dynamicVars.length > 0 && (
+            <div className="space-y-2">
+              {dynamicVars.map((v, idx) => (
+                <div key={idx} className="flex items-center justify-between rounded-lg border border-gray-200 p-3">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <code className="rounded bg-blue-50 px-2 py-0.5 text-sm font-mono text-blue-700">{`{{${v.key}}}`}</code>
+                      <span className="rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-600">{v.type}</span>
+                    </div>
+                    <p className="mt-1 text-xs text-gray-500">
+                      {v.type === 'counter' && `Starts at ${v.startValue ?? 1}, increments by ${v.increment ?? 1}${v.padding ? `, padded to ${v.padding} digits` : ''}${v.prefix ? `, prefix: "${v.prefix}"` : ''}${v.suffix ? `, suffix: "${v.suffix}"` : ''}`}
+                      {v.type === 'date' && `Format: ${v.format || 'YYYY-MM-DD'}${v.prefix ? ` prefix: "${v.prefix}"` : ''}`}
+                      {v.type === 'pattern' && `Cycles: ${(v.values || []).join(' → ')}`}
+                      {v.type === 'random' && `Random from: ${(v.values || []).join(', ')}`}
+                      {v.type === 'text' && `Static: ${v.prefix || ''}${v.value || ''}${v.suffix || ''}`}
+                    </p>
+                  </div>
+                  <button onClick={() => setDynamicVars(dynamicVars.filter((_, i) => i !== idx))} className="ml-2 text-xs text-red-500 hover:text-red-700">Remove</button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Preview table */}
+          {dynamicVars.length > 0 && (
+            <div className="rounded-lg border border-gray-200 overflow-hidden">
+              <div className="bg-gray-50 px-3 py-2 text-xs font-medium text-gray-600">Preview — how variables resolve per recipient</div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b">
+                      <th className="px-3 py-1.5 text-left font-medium text-gray-500">Recipient #</th>
+                      {dynamicVars.map((v) => (
+                        <th key={v.key} className="px-3 py-1.5 text-left font-medium text-gray-500">{`{{${v.key}}}`}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[0, 1, 2, 9, 49, 99].map((pos) => (
+                      <tr key={pos} className="border-b last:border-0">
+                        <td className="px-3 py-1.5 font-medium">#{pos + 1}</td>
+                        {dynamicVars.map((v) => {
+                          let resolved = '';
+                          const now = new Date();
+                          const pad2 = (n: number) => String(n).padStart(2, '0');
+                          if (v.type === 'counter') {
+                            const val = (v.startValue ?? 1) + pos * (v.increment ?? 1);
+                            let f = String(val);
+                            if (v.padding && v.padding > 0) f = f.padStart(v.padding, '0');
+                            resolved = (v.prefix || '') + f + (v.suffix || '');
+                          } else if (v.type === 'date') {
+                            const fmt = v.format || 'YYYY-MM-DD';
+                            resolved = (v.prefix || '') + fmt
+                              .replace('YYYY', String(now.getFullYear()))
+                              .replace('MM', pad2(now.getMonth() + 1))
+                              .replace('DD', pad2(now.getDate()))
+                              .replace('Month', now.toLocaleString('en', { month: 'long' }))
+                              .replace('Day', now.toLocaleString('en', { weekday: 'long' })) + (v.suffix || '');
+                          } else if (v.type === 'pattern') {
+                            const vals = v.values || [];
+                            resolved = vals.length > 0 ? vals[pos % vals.length] : '';
+                          } else if (v.type === 'random') {
+                            resolved = '(random)';
+                          } else if (v.type === 'text') {
+                            resolved = (v.prefix || '') + (v.value || '') + (v.suffix || '');
+                          }
+                          return <td key={v.key} className="px-3 py-1.5 font-mono text-blue-700">{resolved}</td>;
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Add new dynamic variable */}
+          {showAddDynVar ? (
+            <div className="rounded-lg border border-primary-200 bg-primary-50 p-4 space-y-3">
+              <h4 className="text-sm font-medium">Add Dynamic Variable</h4>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700">Variable Key</label>
+                  <input type="text" value={newDynVar.key} onChange={(e) => setNewDynVar({ ...newDynVar, key: e.target.value.replace(/[^a-zA-Z0-9_]/g, '') })} placeholder="e.g. file_number" className="mt-1 w-full rounded border px-2 py-1.5 text-sm font-mono" />
+                  <p className="mt-0.5 text-[10px] text-gray-400">Use as {`{{${newDynVar.key || 'key'}}}`} in template</p>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700">Type</label>
+                  <select value={newDynVar.type} onChange={(e) => setNewDynVar({ ...newDynVar, type: e.target.value as DynVar['type'] })} className="mt-1 w-full rounded border px-2 py-1.5 text-sm">
+                    <option value="counter">Counter (auto-increment)</option>
+                    <option value="date">Date / Time</option>
+                    <option value="pattern">Pattern (cycle through values)</option>
+                    <option value="random">Random (pick from values)</option>
+                    <option value="text">Static Text</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Type-specific options */}
+              {newDynVar.type === 'counter' && (
+                <div className="grid grid-cols-4 gap-2">
+                  <div>
+                    <label className="block text-xs text-gray-600">Start</label>
+                    <input type="number" value={newDynVar.startValue ?? 1} onChange={(e) => setNewDynVar({ ...newDynVar, startValue: parseInt(e.target.value) || 1 })} className="w-full rounded border px-2 py-1 text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-600">Increment</label>
+                    <input type="number" value={newDynVar.increment ?? 1} onChange={(e) => setNewDynVar({ ...newDynVar, increment: parseInt(e.target.value) || 1 })} className="w-full rounded border px-2 py-1 text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-600">Zero-pad digits</label>
+                    <input type="number" value={newDynVar.padding ?? 0} onChange={(e) => setNewDynVar({ ...newDynVar, padding: parseInt(e.target.value) || 0 })} className="w-full rounded border px-2 py-1 text-sm" placeholder="0" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-600">Prefix</label>
+                    <input type="text" value={newDynVar.prefix ?? ''} onChange={(e) => setNewDynVar({ ...newDynVar, prefix: e.target.value })} className="w-full rounded border px-2 py-1 text-sm" placeholder="YEB/" />
+                  </div>
+                </div>
+              )}
+
+              {newDynVar.type === 'date' && (
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs text-gray-600">Format</label>
+                    <select value={newDynVar.format || 'YYYY-MM-DD'} onChange={(e) => setNewDynVar({ ...newDynVar, format: e.target.value })} className="w-full rounded border px-2 py-1 text-sm">
+                      <option value="YYYY-MM-DD">2026-03-30</option>
+                      <option value="DD/MM/YYYY">30/03/2026</option>
+                      <option value="MM/DD/YYYY">03/30/2026</option>
+                      <option value="DD Month YYYY">30 March 2026</option>
+                      <option value="Month DD, YYYY">March 30, 2026</option>
+                      <option value="Day, DD Month YYYY">Monday, 30 March 2026</option>
+                      <option value="DD-Mon-YYYY">30-Mar-2026</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-600">Prefix</label>
+                    <input type="text" value={newDynVar.prefix ?? ''} onChange={(e) => setNewDynVar({ ...newDynVar, prefix: e.target.value })} className="w-full rounded border px-2 py-1 text-sm" placeholder="Date: " />
+                  </div>
+                </div>
+              )}
+
+              {(newDynVar.type === 'pattern' || newDynVar.type === 'random') && (
+                <div>
+                  <label className="block text-xs text-gray-600">Values (one per line)</label>
+                  <textarea
+                    value={(newDynVar.values || []).join('\n')}
+                    onChange={(e) => setNewDynVar({ ...newDynVar, values: e.target.value.split('\n').filter(Boolean) })}
+                    placeholder={newDynVar.type === 'pattern' ? "Hello\nHi\nHey\nGreetings" : "Value 1\nValue 2\nValue 3"}
+                    rows={4}
+                    className="mt-1 w-full rounded border px-2 py-1.5 text-sm font-mono"
+                  />
+                </div>
+              )}
+
+              {newDynVar.type === 'text' && (
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs text-gray-600">Value</label>
+                    <input type="text" value={newDynVar.value ?? ''} onChange={(e) => setNewDynVar({ ...newDynVar, value: e.target.value })} className="w-full rounded border px-2 py-1 text-sm" placeholder="BITS Pilani, Goa Campus" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-600">Prefix</label>
+                    <input type="text" value={newDynVar.prefix ?? ''} onChange={(e) => setNewDynVar({ ...newDynVar, prefix: e.target.value })} className="w-full rounded border px-2 py-1 text-sm" />
+                  </div>
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <button onClick={() => setShowAddDynVar(false)} className="rounded border px-3 py-1.5 text-sm">Cancel</button>
+                <button
+                  onClick={() => {
+                    if (!newDynVar.key.trim()) { toast.error('Variable key is required'); return; }
+                    if (dynamicVars.some(v => v.key === newDynVar.key)) { toast.error('Key already exists'); return; }
+                    setDynamicVars([...dynamicVars, { ...newDynVar }]);
+                    setNewDynVar({ key: '', type: 'counter' });
+                    setShowAddDynVar(false);
+                    toast.success(`Added {{${newDynVar.key}}}`);
+                  }}
+                  disabled={!newDynVar.key.trim()}
+                  className="rounded bg-primary-600 px-3 py-1.5 text-sm text-white disabled:opacity-50"
+                >
+                  Add Variable
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button onClick={() => setShowAddDynVar(true)} className="rounded-lg border border-dashed border-gray-300 px-4 py-2 text-sm text-gray-500 hover:border-primary-300 hover:text-primary-600 w-full">
+              + Add Dynamic Variable
+            </button>
+          )}
+
+          <div className="flex gap-2 pt-2">
+            <button onClick={() => setStep(2)} className="rounded-lg border px-6 py-2 text-sm">Back</button>
+            <button onClick={() => setStep(4)} className="rounded-lg bg-primary-600 px-6 py-2 text-sm text-white">
+              {dynamicVars.length === 0 ? 'Skip & Next' : 'Next'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Step 4: Schedule */}
+      {step === 4 && (
         <div className="mt-6 rounded-xl bg-white p-6 shadow-sm space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700">When to send?</label>
@@ -832,14 +1073,14 @@ export default function CampaignCreate() {
           </div>
 
           <div className="flex gap-2">
-            <button onClick={() => setStep(2)} className="rounded-lg border px-6 py-2 text-sm">Back</button>
+            <button onClick={() => setStep(3)} className="rounded-lg border px-6 py-2 text-sm">Back</button>
             <button onClick={handleGoToReview} className="rounded-lg bg-primary-600 px-6 py-2 text-sm text-white">Review</button>
           </div>
         </div>
       )}
 
-      {/* Step 4: Review */}
-      {step === 4 && (
+      {/* Step 5: Review */}
+      {step === 5 && (
         <div className="mt-6 rounded-xl bg-white p-6 shadow-sm space-y-4">
           <h3 className="font-semibold">Campaign Summary</h3>
           <div className="grid grid-cols-2 gap-4 text-sm">
@@ -849,6 +1090,9 @@ export default function CampaignCreate() {
             <div><span className="text-gray-500">List:</span> <span className="font-medium">{selectedList?.name} ({selectedList?.contact_count} contacts)</span></div>
             <div><span className="text-gray-500">Schedule:</span> <span className="font-medium">{scheduleType === 'now' ? 'Send immediately' : new Date(scheduledAt).toLocaleString()}</span></div>
             <div><span className="text-gray-500">Throttle:</span> <span className="font-medium">{throttlePerSecond}/sec, {throttlePerHour}/hr</span></div>
+            {dynamicVars.length > 0 && (
+              <div className="col-span-2"><span className="text-gray-500">Dynamic Variables:</span> <span className="font-medium">{dynamicVars.map(v => `{{${v.key}}} (${v.type})`).join(', ')}</span></div>
+            )}
           </div>
 
           {/* Attachments in review */}
@@ -1025,7 +1269,7 @@ export default function CampaignCreate() {
           </div>
 
           <div className="flex items-center gap-2">
-            <button onClick={() => setStep(3)} className="rounded-lg border px-6 py-2 text-sm">Back</button>
+            <button onClick={() => setStep(4)} className="rounded-lg border px-6 py-2 text-sm">Back</button>
             <button
               onClick={handleSaveDraft}
               disabled={savingDraft || creating || !name.trim()}

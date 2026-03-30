@@ -37,6 +37,7 @@ export interface Campaign {
   is_archived?: boolean;
   label_name?: string;
   label_color?: string;
+  dynamic_variables?: DynamicVariable[];
   created_at: string;
 }
 
