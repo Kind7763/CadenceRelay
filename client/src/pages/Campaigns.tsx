@@ -266,6 +266,7 @@ function CampaignsContent() {
         <input
           type="text"
           placeholder="Search campaigns..."
+          autoComplete="off" autoCorrect="off" data-1p-ignore="true" data-lpignore="true" data-form-type="other"
           value={search}
           onChange={(e) => { setSearch(e.target.value); setPage(1); }}
           className="rounded-lg border px-3 py-2 text-sm w-64"

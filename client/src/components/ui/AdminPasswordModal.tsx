@@ -49,6 +49,10 @@ export default function AdminPasswordModal({
           <label className="block text-sm font-medium text-gray-700">Admin Password</label>
           <input
             type="password"
+            autoComplete="new-password"
+            data-1p-ignore="true"
+            data-lpignore="true"
+            data-form-type="other"
             value={password}
             onChange={(e) => {
               setPassword(e.target.value);

@@ -147,6 +147,7 @@ export default function ListDetail() {
         <input
           type="text"
           placeholder="Search contacts in this list..."
+          autoComplete="off" autoCorrect="off" data-1p-ignore="true" data-lpignore="true" data-form-type="other"
           value={search}
           onChange={(e) => { setSearch(e.target.value); setPage(1); }}
           className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none"
@@ -249,6 +250,7 @@ export default function ListDetail() {
               <input
                 type="text"
                 placeholder="Search by email or name..."
+                autoComplete="off" autoCorrect="off" data-1p-ignore="true" data-lpignore="true" data-form-type="other"
                 value={addSearch}
                 onChange={(e) => setAddSearch(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleAddSearch()}
