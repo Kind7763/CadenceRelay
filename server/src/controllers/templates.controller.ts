@@ -10,11 +10,21 @@ function validateUUID(id: string, label = 'ID'): void {
   }
 }
 
-export async function listTemplates(_req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function listTemplates(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const result = await pool.query(
-      'SELECT id, name, subject, html_body, variables, version, is_active, created_at, updated_at FROM templates WHERE is_active = true ORDER BY updated_at DESC'
-    );
+    const { project_id: projectId } = req.query;
+    let query = 'SELECT id, name, subject, html_body, variables, version, is_active, project_id, created_at, updated_at FROM templates WHERE is_active = true';
+    const params: unknown[] = [];
+
+    if (projectId === 'none') {
+      query += ' AND project_id IS NULL';
+    } else if (projectId && typeof projectId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(projectId)) {
+      query += ' AND project_id = $1';
+      params.push(projectId);
+    }
+
+    query += ' ORDER BY updated_at DESC';
+    const result = await pool.query(query, params);
     res.json({ templates: result.rows });
   } catch (err) {
     next(err);

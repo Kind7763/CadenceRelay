@@ -242,3 +242,23 @@ CREATE TABLE IF NOT EXISTS custom_variables (
     sort_order integer DEFAULT 0,
     created_at timestamptz DEFAULT NOW()
 );
+
+-- Projects system
+CREATE TABLE IF NOT EXISTS projects (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  name varchar(255) NOT NULL,
+  description text,
+  color varchar(20) DEFAULT '#6366f1',
+  icon varchar(10),
+  is_archived boolean DEFAULT false,
+  created_at timestamptz DEFAULT NOW(),
+  updated_at timestamptz DEFAULT NOW()
+);
+
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS project_id uuid REFERENCES projects(id) ON DELETE SET NULL;
+ALTER TABLE templates ADD COLUMN IF NOT EXISTS project_id uuid REFERENCES projects(id) ON DELETE SET NULL;
+ALTER TABLE contact_lists ADD COLUMN IF NOT EXISTS project_id uuid REFERENCES projects(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS campaigns_project_id_idx ON campaigns(project_id);
+CREATE INDEX IF NOT EXISTS templates_project_id_idx ON templates(project_id);
+CREATE INDEX IF NOT EXISTS contact_lists_project_id_idx ON contact_lists(project_id);

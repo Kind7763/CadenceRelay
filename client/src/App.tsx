@@ -19,6 +19,8 @@ const CampaignCreate = lazy(() => import('./pages/CampaignCreate'));
 const CampaignDetail = lazy(() => import('./pages/CampaignDetail'));
 const Analytics = lazy(() => import('./pages/Analytics'));
 const Import = lazy(() => import('./pages/Import'));
+const Projects = lazy(() => import('./pages/Projects'));
+const ProjectDetail = lazy(() => import('./pages/ProjectDetail'));
 
 function PageLoader() {
   return (
@@ -48,6 +50,8 @@ export default function App() {
                   <Suspense fallback={<PageLoader />}>
                     <Routes>
                       <Route path="/" element={<Dashboard />} />
+                      <Route path="/projects" element={<Projects />} />
+                      <Route path="/projects/:id" element={<ProjectDetail />} />
                       <Route path="/campaigns" element={<Campaigns />} />
                       <Route path="/campaigns/new" element={<CampaignCreate />} />
                       <Route path="/campaigns/:id/edit" element={<CampaignCreate />} />

@@ -54,6 +54,7 @@ export async function getCampaign(id: string) {
 export async function createCampaign(data: {
   name: string; templateId: string; listId: string; provider?: string;
   throttlePerSecond?: number; throttlePerHour?: number;
+  projectId?: string;
   attachments?: File[];
   onProgress?: (state: UploadState) => void;
   signal?: AbortSignal;
@@ -65,6 +66,7 @@ export async function createCampaign(data: {
   if (data.provider) formData.append('provider', data.provider);
   if (data.throttlePerSecond) formData.append('throttlePerSecond', String(data.throttlePerSecond));
   if (data.throttlePerHour) formData.append('throttlePerHour', String(data.throttlePerHour));
+  if (data.projectId) formData.append('projectId', data.projectId);
   if (data.attachments) {
     data.attachments.forEach((file) => formData.append('attachments', file));
   }

@@ -17,7 +17,7 @@ import {
   listCampaignLabels,
 } from '../api/campaigns.api';
 
-export function useCampaignsList(params: { page: number; limit?: number; status?: string; search?: string; archived?: string; starred?: string }) {
+export function useCampaignsList(params: { page: number; limit?: number; status?: string; search?: string; archived?: string; starred?: string; project_id?: string }) {
   const queryParams: Record<string, string> = {
     page: String(params.page),
     limit: String(params.limit || 20),
@@ -26,6 +26,7 @@ export function useCampaignsList(params: { page: number; limit?: number; status?
   if (params.search) queryParams.search = params.search;
   if (params.archived) queryParams.archived = params.archived;
   if (params.starred) queryParams.starred = params.starred;
+  if (params.project_id) queryParams.project_id = params.project_id;
 
   return useQuery({
     queryKey: ['campaigns', queryParams],

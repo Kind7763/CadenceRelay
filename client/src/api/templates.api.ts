@@ -13,8 +13,8 @@ export interface Template {
   updated_at: string;
 }
 
-export async function listTemplates() {
-  const res = await apiClient.get('/templates');
+export async function listTemplates(params: Record<string, string> = {}) {
+  const res = await apiClient.get('/templates', { params });
   return res.data.templates as Template[];
 }
 

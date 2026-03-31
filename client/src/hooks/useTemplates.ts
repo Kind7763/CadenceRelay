@@ -8,10 +8,10 @@ import {
   deleteTemplate,
 } from '../api/templates.api';
 
-export function useTemplatesList() {
+export function useTemplatesList(params?: Record<string, string>) {
   return useQuery({
-    queryKey: ['templates'],
-    queryFn: listTemplates,
+    queryKey: ['templates', params || {}],
+    queryFn: () => listTemplates(params),
   });
 }
 

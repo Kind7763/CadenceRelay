@@ -11,7 +11,7 @@ import {
 export function useListsList() {
   return useQuery({
     queryKey: ['lists'],
-    queryFn: listLists,
+    queryFn: () => listLists(),
   });
 }
 

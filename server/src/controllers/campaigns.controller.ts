@@ -24,7 +24,7 @@ if (!fs.existsSync(UPLOAD_DIR)) {
 export async function listCampaigns(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { page, limit, offset } = parsePagination(req.query as { page?: string; limit?: string });
-    const { status, search, archived, starred, label_name: labelName } = req.query;
+    const { status, search, archived, starred, label_name: labelName, project_id: projectId } = req.query;
 
     let whereClause = 'WHERE 1=1';
     const params: unknown[] = [];
@@ -56,6 +56,14 @@ export async function listCampaigns(req: Request, res: Response, next: NextFunct
     if (search) {
       whereClause += ` AND c.name ILIKE $${idx}`;
       params.push(`%${search}%`);
+      idx++;
+    }
+
+    if (projectId === 'none') {
+      whereClause += ` AND c.project_id IS NULL`;
+    } else if (projectId && typeof projectId === 'string' && UUID_RE.test(projectId)) {
+      whereClause += ` AND c.project_id = $${idx}`;
+      params.push(projectId);
       idx++;
     }
 
@@ -100,7 +108,7 @@ export async function getCampaign(req: Request, res: Response, next: NextFunctio
 
 export async function createCampaign(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { name, templateId, listId, provider, throttlePerSecond, throttlePerHour } = req.body;
+    const { name, templateId, listId, provider, throttlePerSecond, throttlePerHour, projectId: rawProjectId } = req.body;
 
     // Handle file attachments from multer
     const files = (req.files as Express.Multer.File[]) || [];
@@ -122,11 +130,12 @@ export async function createCampaign(req: Request, res: Response, next: NextFunc
     // Allow empty templateId/listId for draft campaigns
     const finalTemplateId = templateId && UUID_RE.test(templateId) ? templateId : null;
     const finalListId = listId && UUID_RE.test(listId) ? listId : null;
+    const finalProjectId = rawProjectId && UUID_RE.test(rawProjectId) ? rawProjectId : null;
 
     const result = await pool.query(
-      `INSERT INTO campaigns (name, template_id, list_id, provider, throttle_per_second, throttle_per_hour, attachments)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [name, finalTemplateId, finalListId, provider || 'ses', throttlePerSecond || 5, throttlePerHour || 5000, JSON.stringify(attachments)]
+      `INSERT INTO campaigns (name, template_id, list_id, provider, throttle_per_second, throttle_per_hour, attachments, project_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      [name, finalTemplateId, finalListId, provider || 'ses', throttlePerSecond || 5, throttlePerHour || 5000, JSON.stringify(attachments), finalProjectId]
     );
 
     res.status(201).json({ campaign: result.rows[0] });

@@ -1,12 +1,18 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Template } from '../api/templates.api';
 import { useTemplatesList, useDeleteTemplate } from '../hooks/useTemplates';
+import { useProjectsList } from '../hooks/useProjects';
 import { GridCardSkeleton } from '../components/ui/Skeleton';
 import ErrorBoundary from '../components/ErrorBoundary';
 
 function TemplatesContent() {
   const navigate = useNavigate();
-  const { data: templates = [], isLoading, isError } = useTemplatesList();
+  const [projectFilter, setProjectFilter] = useState('');
+  const { data: projectsData = [] } = useProjectsList();
+  const { data: templates = [], isLoading, isError } = useTemplatesList(
+    projectFilter ? { project_id: projectFilter } : undefined
+  );
   const deleteTemplateMutation = useDeleteTemplate();
 
   async function handleDelete(id: string) {
@@ -23,7 +29,21 @@ function TemplatesContent() {
         </button>
       </div>
 
-      <div className="mt-6">
+      <div className="mt-4 flex items-center gap-3">
+        <select
+          value={projectFilter}
+          onChange={(e) => setProjectFilter(e.target.value)}
+          className="rounded-lg border px-3 py-2 text-sm"
+        >
+          <option value="">All Projects</option>
+          <option value="none">No Project</option>
+          {projectsData.map((p) => (
+            <option key={p.id} value={p.id}>{p.icon ? `${p.icon} ` : ''}{p.name}</option>
+          ))}
+        </select>
+      </div>
+
+      <div className="mt-4">
         {isLoading ? (
           <GridCardSkeleton count={6} />
         ) : isError ? (

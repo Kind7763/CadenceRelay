@@ -4,7 +4,7 @@ import toast from 'react-hot-toast';
 import {
   createCampaign, getCampaign, updateCampaign, scheduleCampaign, sendCampaign,
   addAttachments as apiAddAttachments, addAttachmentsTracked, removeAttachment as apiRemoveAttachment,
-  CampaignAttachment, updateDynamicVariables as updateDynamicVariablesApi,
+  CampaignAttachment, Campaign, updateDynamicVariables as updateDynamicVariablesApi,
 } from '../api/campaigns.api';
 import { listTemplates, Template } from '../api/templates.api';
 import { listLists, ContactList } from '../api/lists.api';
@@ -12,6 +12,7 @@ import { listContacts, Contact } from '../api/contacts.api';
 import { sendTestEmail } from '../api/settings.api';
 import UploadProgress, { FileUploadProgress } from '../components/ui/UploadProgress';
 import { UploadState, INITIAL_UPLOAD_STATE, formatFileSize, validateFileSize, getFileTypeIcon } from '../lib/uploadHelper';
+import { useProjectsList } from '../hooks/useProjects';
 
 /** Replace all {{key}} placeholders in html/text with values from a contact */
 function replaceVariables(html: string, contact: Contact): string {
@@ -179,6 +180,9 @@ export default function CampaignCreate() {
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const [projectId, setProjectId] = useState('');
+  const { data: projects = [] } = useProjectsList();
+
   const previewRef = useRef<HTMLIFrameElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -234,6 +238,9 @@ export default function CampaignCreate() {
         setProvider((c.provider as 'gmail' | 'ses') || 'ses');
         setThrottlePerSecond(c.throttle_per_second || 5);
         setThrottlePerHour(c.throttle_per_hour || 5000);
+        if ((c as Campaign & { project_id?: string }).project_id) {
+          setProjectId((c as Campaign & { project_id?: string }).project_id || '');
+        }
         setDraftId(c.id);
         // Load existing attachments from the campaign
         if (c.attachments && c.attachments.length > 0) {
@@ -416,6 +423,7 @@ export default function CampaignCreate() {
         // Creating new campaign (includes attachments in the create call)
         const campaign = await createCampaign({
           name, templateId, listId, provider, throttlePerSecond, throttlePerHour,
+          projectId: projectId || undefined,
           attachments: hasNewAttachments ? attachments : undefined,
           onProgress: hasNewAttachments ? (state) => setCampaignUploadState(state) : undefined,
           signal: controller.signal,
@@ -508,6 +516,7 @@ export default function CampaignCreate() {
           provider,
           throttlePerSecond,
           throttlePerHour,
+          projectId: projectId || undefined,
           attachments: attachments.length > 0 ? attachments : undefined,
         });
         setDraftId(campaign.id);
@@ -687,6 +696,19 @@ export default function CampaignCreate() {
             <label className="block text-sm font-medium text-gray-700">Campaign Name</label>
             <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g., Goa Schools March Invite" className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" />
           </div>
+          {projects.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Project <span className="text-gray-400 font-normal">(optional)</span></label>
+              <select value={projectId} onChange={(e) => setProjectId(e.target.value)} className="mt-1 w-full rounded-lg border px-3 py-2 text-sm">
+                <option value="">No project</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.icon ? `${p.icon} ` : ''}{p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <div>
             <label className="block text-sm font-medium text-gray-700">Contact List</label>
             <select value={listId} onChange={(e) => setListId(e.target.value)} className="mt-1 w-full rounded-lg border px-3 py-2 text-sm">

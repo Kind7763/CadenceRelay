@@ -20,8 +20,8 @@ export interface ContactList {
   created_at: string;
 }
 
-export async function listLists() {
-  const res = await apiClient.get('/lists');
+export async function listLists(params: Record<string, string> = {}) {
+  const res = await apiClient.get('/lists', { params });
   return res.data.lists as ContactList[];
 }
 

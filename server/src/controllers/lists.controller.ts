@@ -64,11 +64,21 @@ function buildSmartFilterWhere(
   return { where, paramIndex };
 }
 
-export async function listLists(_req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function listLists(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const result = await pool.query(
-      'SELECT * FROM contact_lists ORDER BY created_at DESC'
-    );
+    const { project_id: projectId } = req.query;
+    let query = 'SELECT * FROM contact_lists';
+    const params: unknown[] = [];
+
+    if (projectId === 'none') {
+      query += ' WHERE project_id IS NULL';
+    } else if (projectId && typeof projectId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(projectId)) {
+      query += ' WHERE project_id = $1';
+      params.push(projectId);
+    }
+
+    query += ' ORDER BY created_at DESC';
+    const result = await pool.query(query, params);
 
     // Batch compute smart list counts in a single query instead of N+1
     const smartLists = result.rows.filter((l) => l.is_smart && l.filter_criteria);

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { SmartFilterCriteria, ContactList } from '../api/lists.api';
 import { useListsList, useCreateList, useCreateSmartList, useDeleteList } from '../hooks/useLists';
 import { useContactFilters } from '../hooks/useFilters';
+import { useProjectsList } from '../hooks/useProjects';
 import { GridCardSkeleton } from '../components/ui/Skeleton';
 import ErrorBoundary from '../components/ErrorBoundary';
 
@@ -11,9 +12,18 @@ function ListsContent() {
   const [showCreateSmart, setShowCreateSmart] = useState(false);
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
+  const [projectFilter, setProjectFilter] = useState('');
   const navigate = useNavigate();
 
-  const { data: lists = [], isLoading, isError } = useListsList();
+  const { data: allLists = [], isLoading, isError } = useListsList();
+  const { data: projects = [] } = useProjectsList();
+
+  // Client-side project filter
+  const lists = projectFilter
+    ? allLists.filter((l: ContactList & { project_id?: string }) =>
+        projectFilter === 'none' ? !l.project_id : l.project_id === projectFilter
+      )
+    : allLists;
   const createListMutation = useCreateList();
   const deleteListMutation = useDeleteList();
 
@@ -37,7 +47,14 @@ function ListsContent() {
     <div className="p-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">Lists</h1>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
+          {projects.length > 0 && (
+            <select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)} className="rounded-lg border px-3 py-2 text-sm">
+              <option value="">All Projects</option>
+              <option value="none">No Project</option>
+              {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          )}
           <button onClick={() => setShowCreateSmart(true)} className="rounded-lg border border-primary-300 px-4 py-2 text-sm text-primary-700 hover:bg-primary-50">
             Create Smart List
           </button>

@@ -11,6 +11,7 @@ import {
   useUpdateCampaignLabel,
   useCampaignLabels,
 } from '../hooks/useCampaigns';
+import { useProjectsList } from '../hooks/useProjects';
 import { TableSkeleton } from '../components/ui/Skeleton';
 import ErrorBoundary from '../components/ErrorBoundary';
 import AdminPasswordModal from '../components/ui/AdminPasswordModal';
@@ -121,7 +122,10 @@ function CampaignsContent() {
   const [viewTab, setViewTab] = useState<ViewTab>('active');
   const [labelPickerCampaignId, setLabelPickerCampaignId] = useState<string | null>(null);
   const [labelFilter, setLabelFilter] = useState<string | null>(null);
+  const [projectFilter, setProjectFilter] = useState('');
   const navigate = useNavigate();
+
+  const { data: projectsData = [] } = useProjectsList();
 
   const { data, isLoading, isError } = useCampaignsList({
     page,
@@ -129,6 +133,7 @@ function CampaignsContent() {
     search: search || undefined,
     archived: viewTab === 'archived' ? 'true' : undefined,
     starred: viewTab === 'starred' ? 'true' : undefined,
+    project_id: projectFilter || undefined,
   });
 
   const deleteMutation = useDeleteCampaign();
@@ -278,6 +283,13 @@ function CampaignsContent() {
           <option value="sending">Sending</option>
           <option value="completed">Completed</option>
           <option value="failed">Failed</option>
+        </select>
+        <select value={projectFilter} onChange={(e) => { setProjectFilter(e.target.value); setPage(1); }} className="rounded-lg border px-3 py-2 text-sm">
+          <option value="">All Projects</option>
+          <option value="none">No Project</option>
+          {projectsData.map((p) => (
+            <option key={p.id} value={p.id}>{p.icon ? `${p.icon} ` : ''}{p.name}</option>
+          ))}
         </select>
 
         {/* Label filter chips */}
