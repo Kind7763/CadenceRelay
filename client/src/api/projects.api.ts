@@ -49,3 +49,8 @@ export async function moveItemsToProject(id: string, items: { campaignIds?: stri
   const res = await apiClient.post(`/projects/${id}/move`, items);
   return res.data;
 }
+
+export async function unlinkItemsFromProject(id: string, items: { campaignIds?: string[]; templateIds?: string[]; listIds?: string[] }) {
+  const res = await apiClient.post(`/projects/${id}/unlink`, items);
+  return res.data;
+}

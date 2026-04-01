@@ -8,6 +8,7 @@ import {
   deleteProject,
   toggleArchiveProject,
   moveItemsToProject,
+  unlinkItemsFromProject,
 } from '../api/projects.api';
 
 export function useProjectsList(params: { archived?: string } = {}) {
@@ -99,6 +100,24 @@ export function useMoveItems() {
     },
     onError: () => {
       toast.error('Failed to move items');
+    },
+  });
+}
+
+export function useUnlinkItems() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ projectId, items }: { projectId: string; items: { campaignIds?: string[]; templateIds?: string[]; listIds?: string[] } }) =>
+      unlinkItemsFromProject(projectId, items),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
+      queryClient.invalidateQueries({ queryKey: ['campaigns'] });
+      queryClient.invalidateQueries({ queryKey: ['templates'] });
+      queryClient.invalidateQueries({ queryKey: ['lists'] });
+      toast.success('Items unlinked from project');
+    },
+    onError: () => {
+      toast.error('Failed to unlink items');
     },
   });
 }

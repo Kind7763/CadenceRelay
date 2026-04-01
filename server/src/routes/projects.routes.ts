@@ -7,6 +7,7 @@ import {
   deleteProject,
   toggleArchive,
   moveItems,
+  unlinkItems,
 } from '../controllers/projects.controller';
 import { validateBody } from '../middleware/validateRequest';
 import { z } from 'zod';
@@ -40,5 +41,6 @@ router.put('/:id', validateBody(updateSchema), updateProject);
 router.delete('/:id', deleteProject);
 router.put('/:id/archive', toggleArchive);
 router.post('/:id/move', validateBody(moveSchema), moveItems);
+router.post('/:id/unlink', validateBody(moveSchema), unlinkItems);
 
 export default router;

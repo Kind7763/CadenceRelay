@@ -10,6 +10,7 @@ import {
 } from '../hooks/useProjects';
 import { GridCardSkeleton } from '../components/ui/Skeleton';
 import ErrorBoundary from '../components/ErrorBoundary';
+import ItemCardMenu from '../components/ui/ItemCardMenu';
 
 const COLOR_PALETTE = [
   '#6366f1', '#ec4899', '#f59e0b', '#10b981',
@@ -221,28 +222,32 @@ function ProjectsContent() {
                           <h3 className="font-semibold text-gray-900">{p.name}</h3>
                         )}
                       </div>
-                      <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                        <button
-                          onClick={() => startEdit(p)}
-                          className="rounded p-1 text-xs text-gray-400 hover:bg-gray-100 hover:text-gray-600"
-                          title="Edit"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => archiveMutation.mutate(p.id)}
-                          className="rounded p-1 text-xs text-gray-400 hover:bg-gray-100 hover:text-gray-600"
-                          title={p.is_archived ? 'Unarchive' : 'Archive'}
-                        >
-                          {p.is_archived ? 'Unarchive' : 'Archive'}
-                        </button>
-                        <button
-                          onClick={() => handleDelete(p.id)}
-                          className="rounded p-1 text-xs text-red-400 hover:bg-red-50 hover:text-red-600"
-                          title="Delete"
-                        >
-                          Delete
-                        </button>
+                      <div onClick={(e) => e.stopPropagation()}>
+                        <ItemCardMenu
+                          sections={[
+                            {
+                              items: [
+                                {
+                                  label: 'Edit',
+                                  onClick: () => startEdit(p),
+                                },
+                                {
+                                  label: p.is_archived ? 'Unarchive' : 'Archive',
+                                  onClick: () => archiveMutation.mutate(p.id),
+                                },
+                              ],
+                            },
+                            {
+                              items: [
+                                {
+                                  label: 'Delete',
+                                  variant: 'danger',
+                                  onClick: () => handleDelete(p.id),
+                                },
+                              ],
+                            },
+                          ]}
+                        />
                       </div>
                     </div>
                     {p.description && (

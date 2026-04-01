@@ -218,3 +218,52 @@ export async function moveItems(req: Request, res: Response, next: NextFunction)
     next(err);
   }
 }
+
+export async function unlinkItems(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { id } = req.params;
+    validateUUID(id, 'project ID');
+    const { campaignIds, templateIds, listIds } = req.body;
+
+    // Verify project exists
+    const project = await pool.query('SELECT id FROM projects WHERE id = $1', [id]);
+    if (project.rows.length === 0) throw new AppError('Project not found', 404);
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      if (campaignIds && campaignIds.length > 0) {
+        await client.query(
+          'UPDATE campaigns SET project_id = NULL WHERE id = ANY($1::uuid[]) AND project_id = $2',
+          [campaignIds, id]
+        );
+      }
+
+      if (templateIds && templateIds.length > 0) {
+        await client.query(
+          'UPDATE templates SET project_id = NULL WHERE id = ANY($1::uuid[]) AND project_id = $2',
+          [templateIds, id]
+        );
+      }
+
+      if (listIds && listIds.length > 0) {
+        await client.query(
+          'UPDATE contact_lists SET project_id = NULL WHERE id = ANY($1::uuid[]) AND project_id = $2',
+          [listIds, id]
+        );
+      }
+
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+
+    res.json({ message: 'Items unlinked from project' });
+  } catch (err) {
+    next(err);
+  }
+}
