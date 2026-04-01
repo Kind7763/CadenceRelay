@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import {
   createCampaign, getCampaign, updateCampaign, scheduleCampaign, sendCampaign,
@@ -148,6 +148,7 @@ function AttachmentThumbnail({ campaignId, index, contentType, filename }: { cam
 export default function CampaignCreate() {
   const navigate = useNavigate();
   const { id: editId } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams();
   const isEditing = !!editId;
   const [step, setStep] = useState(1);
   const [templates, setTemplates] = useState<Template[]>([]);
@@ -228,6 +229,12 @@ export default function CampaignCreate() {
   useEffect(() => {
     listTemplates().then(setTemplates).catch(() => {});
     listLists().then(setLists).catch(() => {});
+
+    // Auto-set project from URL query param (e.g. /campaigns/new?project=uuid)
+    const projectFromUrl = searchParams.get('project');
+    if (projectFromUrl && !projectId) {
+      setProjectId(projectFromUrl);
+    }
 
     // Load existing campaign data when editing a draft
     if (editId && !editLoaded) {

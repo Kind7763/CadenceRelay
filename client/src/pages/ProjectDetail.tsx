@@ -221,20 +221,39 @@ function ProjectDetailContent() {
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="mt-6 flex items-center gap-1">
-        <button className={tabClasses('campaigns')} onClick={() => setTab('campaigns')}>
-          Campaigns
-        </button>
-        <button className={tabClasses('templates')} onClick={() => setTab('templates')}>
-          Templates
-        </button>
-        <button className={tabClasses('lists')} onClick={() => setTab('lists')}>
-          Lists
-        </button>
-        <button className={tabClasses('analytics')} onClick={() => setTab('analytics')}>
-          Analytics
-        </button>
+      {/* Tabs + Create buttons */}
+      <div className="mt-6 flex items-center justify-between">
+        <div className="flex items-center gap-1">
+          <button className={tabClasses('campaigns')} onClick={() => setTab('campaigns')}>
+            Campaigns ({campaigns.length})
+          </button>
+          <button className={tabClasses('templates')} onClick={() => setTab('templates')}>
+            Templates ({templates.length})
+          </button>
+          <button className={tabClasses('lists')} onClick={() => setTab('lists')}>
+            Lists ({lists.length})
+          </button>
+          <button className={tabClasses('analytics')} onClick={() => setTab('analytics')}>
+            Analytics
+          </button>
+        </div>
+        <div>
+          {tab === 'campaigns' && (
+            <button onClick={() => navigate(`/campaigns/new?project=${id}`)} className="rounded-lg bg-primary-600 px-3 py-1.5 text-sm text-white hover:bg-primary-700">
+              New Campaign
+            </button>
+          )}
+          {tab === 'templates' && (
+            <button onClick={() => navigate('/templates/new/edit')} className="rounded-lg bg-primary-600 px-3 py-1.5 text-sm text-white hover:bg-primary-700">
+              New Template
+            </button>
+          )}
+          {tab === 'lists' && (
+            <button onClick={() => navigate('/lists')} className="rounded-lg bg-primary-600 px-3 py-1.5 text-sm text-white hover:bg-primary-700">
+              Manage Lists
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Tab content */}
@@ -260,8 +279,11 @@ function ProjectDetailContent() {
                   <tbody className="divide-y divide-gray-100">
                     {campaigns.length === 0 ? (
                       <tr>
-                        <td colSpan={5} className="px-4 py-8 text-center text-gray-400">
-                          No campaigns in this project
+                        <td colSpan={5} className="px-4 py-8 text-center">
+                          <p className="text-gray-400">No campaigns in this project</p>
+                          <button onClick={() => navigate(`/campaigns/new?project=${id}`)} className="mt-2 text-sm text-primary-600 hover:text-primary-800">
+                            Create your first campaign
+                          </button>
                         </td>
                       </tr>
                     ) : (
