@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { pool } from '../config/database';
 import { AppError } from '../middleware/errorHandler';
-import { detectVariables, renderTemplate } from '../utils/templateRenderer';
+import { detectVariables, renderTemplate, htmlToPlainText } from '../utils/templateRenderer';
 import { checkSpamScore } from '../utils/spamChecker';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -49,10 +49,11 @@ export async function createTemplate(req: Request, res: Response, next: NextFunc
     const { name, subject, htmlBody, textBody, projectId } = req.body;
     const variables = detectVariables(htmlBody);
     const finalProjectId = projectId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(projectId) ? projectId : null;
+    const finalTextBody = textBody || htmlToPlainText(htmlBody);
 
     const result = await pool.query(
       'INSERT INTO templates (name, subject, html_body, text_body, variables, project_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
-      [name, subject, htmlBody, textBody || null, JSON.stringify(variables), finalProjectId]
+      [name, subject, htmlBody, finalTextBody, JSON.stringify(variables), finalProjectId]
     );
 
     const template = result.rows[0];
@@ -60,7 +61,7 @@ export async function createTemplate(req: Request, res: Response, next: NextFunc
     // Create first version entry
     await pool.query(
       'INSERT INTO template_versions (template_id, version, subject, html_body, text_body, variables) VALUES ($1, 1, $2, $3, $4, $5)',
-      [template.id, subject, htmlBody, textBody || null, JSON.stringify(variables)]
+      [template.id, subject, htmlBody, finalTextBody, JSON.stringify(variables)]
     );
 
     res.status(201).json({ template });
@@ -84,18 +85,19 @@ export async function updateTemplate(req: Request, res: Response, next: NextFunc
     // Determine the effective html_body that will be stored after COALESCE.
     const effectiveHtmlBody = htmlBody || existing.rows[0].html_body;
     const variables = detectVariables(effectiveHtmlBody);
+    const finalTextBody = textBody || htmlToPlainText(effectiveHtmlBody);
 
     const result = await pool.query(
       `UPDATE templates SET
         name = COALESCE($1, name),
         subject = COALESCE($2, subject),
         html_body = COALESCE($3, html_body),
-        text_body = COALESCE($4, text_body),
+        text_body = $4,
         variables = $5,
         version = $6,
         updated_at = NOW()
        WHERE id = $7 RETURNING *`,
-      [name, subject, htmlBody, textBody, JSON.stringify(variables), newVersion, id]
+      [name, subject, htmlBody, finalTextBody, JSON.stringify(variables), newVersion, id]
     );
 
     // Save version
@@ -237,23 +239,27 @@ export async function spamCheck(req: Request, res: Response, next: NextFunction)
     let subject: string;
     let html: string;
 
+    let hasPlainText = false;
+
     if (id) {
       // Check a saved template by ID
       validateUUID(id, 'template ID');
-      const result = await pool.query('SELECT subject, html_body FROM templates WHERE id = $1', [id]);
+      const result = await pool.query('SELECT subject, html_body, text_body FROM templates WHERE id = $1', [id]);
       if (result.rows.length === 0) throw new AppError('Template not found', 404);
       subject = result.rows[0].subject;
       html = result.rows[0].html_body;
+      hasPlainText = !!result.rows[0].text_body;
     } else {
       // Ad-hoc check from body
       subject = req.body.subject || '';
       html = req.body.html || '';
+      hasPlainText = !!req.body.hasPlainText;
       if (!subject && !html) {
         throw new AppError('Either subject or html is required', 400);
       }
     }
 
-    const result = checkSpamScore(subject, html);
+    const result = checkSpamScore(subject, html, hasPlainText);
     res.json(result);
   } catch (err) {
     next(err);

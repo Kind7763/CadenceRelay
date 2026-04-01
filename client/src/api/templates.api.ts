@@ -77,7 +77,7 @@ export interface SpamCheckResult {
   issues: SpamIssue[];
 }
 
-export async function checkSpamScore(data: { subject: string; html: string }): Promise<SpamCheckResult> {
+export async function checkSpamScore(data: { subject: string; html: string; hasPlainText?: boolean }): Promise<SpamCheckResult> {
   const res = await apiClient.post('/templates/spam-check', data);
   return res.data;
 }

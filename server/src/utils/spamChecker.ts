@@ -65,7 +65,7 @@ function assignGrade(score: number): 'A' | 'B' | 'C' | 'D' | 'F' {
   return 'F';
 }
 
-export function checkSpamScore(subject: string, html: string): SpamCheckResult {
+export function checkSpamScore(subject: string, html: string, hasPlainText?: boolean): SpamCheckResult {
   const issues: SpamIssue[] = [];
 
   // ────── Subject Line Rules ──────
@@ -143,12 +143,14 @@ export function checkSpamScore(subject: string, html: string): SpamCheckResult {
     const words = wordCount(textContent);
 
     // Informational: no plain text alternative
-    issues.push({
-      severity: 'info',
-      rule: 'body-no-text-alternative',
-      message: 'Consider adding a plain text alternative for maximum deliverability',
-      points: 0,
-    });
+    if (!hasPlainText) {
+      issues.push({
+        severity: 'info',
+        rule: 'body-no-text-alternative',
+        message: 'Consider adding a plain text alternative for maximum deliverability',
+        points: 0,
+      });
+    }
 
     // Image-heavy
     const imgCount = (html.match(/<img[\s>]/gi) || []).length;

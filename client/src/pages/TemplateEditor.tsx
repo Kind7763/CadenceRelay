@@ -36,6 +36,15 @@ const DEFAULT_HTML = `<!DOCTYPE html>
 </body>
 </html>`;
 
+/** Client-side HTML to plain text conversion */
+function htmlToText(html: string): string {
+  const temp = document.createElement('div');
+  temp.innerHTML = html;
+  // Remove style/script elements
+  temp.querySelectorAll('style, script').forEach((el) => el.remove());
+  return temp.textContent || temp.innerText || '';
+}
+
 export default function TemplateEditor() {
   const { id } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
@@ -45,6 +54,7 @@ export default function TemplateEditor() {
   const [name, setName] = useState('');
   const [subject, setSubject] = useState('');
   const [htmlBody, setHtmlBody] = useState(DEFAULT_HTML);
+  const [textBody, setTextBody] = useState(() => htmlToText(DEFAULT_HTML));
   const [versions, setVersions] = useState<{ version: number; subject: string; label?: string; created_at: string }[]>([]);
   const [saving, setSaving] = useState(false);
   const [variables, setVariables] = useState<string[]>([]);
@@ -61,7 +71,7 @@ export default function TemplateEditor() {
   const [showSpamModal, setShowSpamModal] = useState(false);
   const [spamResult, setSpamResult] = useState<SpamCheckResult | null>(null);
   const [spamChecking, setSpamChecking] = useState(false);
-  const [editorMode, setEditorMode] = useState<'code' | 'visual'>('code');
+  const [editorMode, setEditorMode] = useState<'code' | 'visual' | 'plaintext'>('code');
   const [visualBlocks, setVisualBlocks] = useState<EmailBlock[]>([]);
 
   const { data: customVariables = [] } = useCustomVariables();
@@ -80,7 +90,7 @@ export default function TemplateEditor() {
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const htmlFileInputRef = useRef<HTMLInputElement>(null);
-  const savedStateRef = useRef({ name: '', subject: '', htmlBody: DEFAULT_HTML });
+  const savedStateRef = useRef({ name: '', subject: '', htmlBody: DEFAULT_HTML, textBody: htmlToText(DEFAULT_HTML) });
 
   useEffect(() => {
     if (!isNew && id) {
@@ -88,8 +98,9 @@ export default function TemplateEditor() {
         setName(t.name);
         setSubject(t.subject);
         setHtmlBody(t.html_body);
+        setTextBody(t.text_body || htmlToText(t.html_body));
         setVariables(t.variables || []);
-        savedStateRef.current = { name: t.name, subject: t.subject, htmlBody: t.html_body };
+        savedStateRef.current = { name: t.name, subject: t.subject, htmlBody: t.html_body, textBody: t.text_body || htmlToText(t.html_body) };
       }).catch(() => toast.error('Failed to load template'));
       getTemplateVersions(id).then(setVersions).catch(() => {});
     }
@@ -98,9 +109,9 @@ export default function TemplateEditor() {
   // Track unsaved changes
   useEffect(() => {
     const saved = savedStateRef.current;
-    const changed = name !== saved.name || subject !== saved.subject || htmlBody !== saved.htmlBody;
+    const changed = name !== saved.name || subject !== saved.subject || htmlBody !== saved.htmlBody || textBody !== saved.textBody;
     setHasUnsavedChanges(changed);
-  }, [name, subject, htmlBody]);
+  }, [name, subject, htmlBody, textBody]);
 
   // Warn before navigating away with unsaved changes
   useEffect(() => {
@@ -151,15 +162,15 @@ export default function TemplateEditor() {
     try {
       if (isNew) {
         const projectFromUrl = searchParams.get('project') || undefined;
-        const t = await createTemplate({ name, subject, htmlBody, projectId: projectFromUrl });
+        const t = await createTemplate({ name, subject, htmlBody, textBody, projectId: projectFromUrl });
         toast.success('Template created');
-        savedStateRef.current = { name, subject, htmlBody };
+        savedStateRef.current = { name, subject, htmlBody, textBody };
         setHasUnsavedChanges(false);
         navigate(`/templates/${t.id}/edit`, { replace: true });
       } else {
-        await updateTemplate(id!, { name, subject, htmlBody });
+        await updateTemplate(id!, { name, subject, htmlBody, textBody });
         toast.success('Template saved');
-        savedStateRef.current = { name, subject, htmlBody };
+        savedStateRef.current = { name, subject, htmlBody, textBody };
         setHasUnsavedChanges(false);
         getTemplateVersions(id!).then(setVersions).catch(() => {});
       }
@@ -215,8 +226,9 @@ export default function TemplateEditor() {
       setName(t.name);
       setSubject(t.subject);
       setHtmlBody(t.html_body);
+      setTextBody(t.text_body || htmlToText(t.html_body));
       setVariables(t.variables || []);
-      savedStateRef.current = { name: t.name, subject: t.subject, htmlBody: t.html_body };
+      savedStateRef.current = { name: t.name, subject: t.subject, htmlBody: t.html_body, textBody: t.text_body || htmlToText(t.html_body) };
       setHasUnsavedChanges(false);
       getTemplateVersions(id).then(setVersions).catch(() => {});
       setPreviewingVersion(null);
@@ -241,7 +253,7 @@ export default function TemplateEditor() {
   async function handleSpamCheck() {
     setSpamChecking(true);
     try {
-      const result = await checkSpamScore({ subject, html: htmlBody });
+      const result = await checkSpamScore({ subject, html: htmlBody, hasPlainText: !!textBody.trim() });
       setSpamResult(result);
       setShowSpamModal(true);
     } catch {
@@ -284,28 +296,37 @@ export default function TemplateEditor() {
     e.target.value = '';
   }
 
-  function handleSwitchMode(mode: 'code' | 'visual') {
+  function handleSwitchMode(mode: 'code' | 'visual' | 'plaintext') {
     if (mode === editorMode) return;
+
+    // Switching away from visual -> code: generate HTML from blocks
+    if (editorMode === 'visual' && mode !== 'visual') {
+      const generatedHtml = blocksToHtml(visualBlocks);
+      setHtmlBody(generatedHtml);
+    }
+
+    // Switching to visual from code/plaintext: parse HTML into blocks
     if (mode === 'visual') {
-      // Code -> Visual: try parsing current HTML into blocks
       const parsed = htmlToBlocks(htmlBody);
       if (parsed) {
         setVisualBlocks(parsed);
       } else {
-        // Can't parse — start with a single text block containing the body content
         setVisualBlocks([{
           id: crypto.randomUUID(),
           type: 'text',
           props: { content: 'Start adding blocks to build your email visually.', fontSize: '16', color: '#333333' },
         }]);
-        toast('Existing HTML could not be parsed into blocks.\nStarting with a fresh canvas — your code is preserved if you switch back.', { icon: '\u2139\uFE0F', duration: 5000 });
+        toast('Existing HTML could not be parsed into blocks.\nStarting with a fresh canvas -- your code is preserved if you switch back.', { icon: '\u2139\uFE0F', duration: 5000 });
       }
-    } else {
-      // Visual -> Code: generate HTML from blocks
-      const generatedHtml = blocksToHtml(visualBlocks);
-      setHtmlBody(generatedHtml);
     }
+
     setEditorMode(mode);
+  }
+
+  function handleAutoGenerateText() {
+    const generated = htmlToText(htmlBody);
+    setTextBody(generated);
+    toast.success('Plain text auto-generated from HTML');
   }
 
   const handleVisualBlocksChange = useCallback((newBlocks: EmailBlock[]) => {
@@ -365,6 +386,16 @@ export default function TemplateEditor() {
             }`}
           >
             Visual
+          </button>
+          <button
+            onClick={() => handleSwitchMode('plaintext')}
+            className={`px-3 py-1.5 text-sm font-medium transition-colors border-l border-gray-300 ${
+              editorMode === 'plaintext'
+                ? 'bg-primary-600 text-white'
+                : 'bg-white text-gray-600 hover:bg-gray-50'
+            }`}
+          >
+            Plain Text
           </button>
         </div>
         <button
@@ -544,13 +575,39 @@ export default function TemplateEditor() {
         )}
 
         {editorMode === 'visual' ? (
-          /* Visual Builder — takes the full remaining width */
+          /* Visual Builder -- takes the full remaining width */
           <div className="flex flex-1 overflow-hidden">
             <EmailVisualBuilder
               blocks={visualBlocks}
               onChange={handleVisualBlocksChange}
               onHtmlChange={handleVisualHtmlChange}
             />
+          </div>
+        ) : editorMode === 'plaintext' ? (
+          /* Plain Text Editor */
+          <div className="flex flex-1 overflow-hidden">
+            <div className="flex flex-1 flex-col">
+              <div className="flex items-center justify-between border-b border-gray-200 bg-gray-50 px-4 py-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-gray-500">Plain Text Version</span>
+                  <span className="text-xs text-gray-400">
+                    This is sent as the text/plain alternative for email clients that don't render HTML.
+                  </span>
+                </div>
+                <button
+                  onClick={handleAutoGenerateText}
+                  className="rounded-lg border border-gray-300 bg-white px-3 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50"
+                >
+                  Auto-generate from HTML
+                </button>
+              </div>
+              <textarea
+                value={textBody}
+                onChange={(e) => setTextBody(e.target.value)}
+                className="flex-1 resize-none bg-white p-4 font-mono text-sm text-gray-800 focus:outline-none"
+                placeholder="Plain text version of your email..."
+              />
+            </div>
           </div>
         ) : (
           /* Code Editor + Preview (original layout) */
@@ -574,7 +631,7 @@ export default function TemplateEditor() {
             <div className="w-1/2 bg-gray-100 p-4">
               <div className="mb-2 flex items-center justify-between">
                 <span className="text-xs font-medium text-gray-500">
-                  {previewingVersion ? `Preview — v${previewingVersion}` : 'Preview'}
+                  {previewingVersion ? `Preview -- v${previewingVersion}` : 'Preview'}
                 </span>
                 {previewingVersion && (
                   <button onClick={() => { setPreviewingVersion(null); setPreviewVersionHtml(''); }} className="text-xs text-primary-600">
