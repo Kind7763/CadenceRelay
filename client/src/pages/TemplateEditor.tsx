@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
 import toast from 'react-hot-toast';
 import { getTemplate, createTemplate, updateTemplate, getTemplateVersions, getTemplateVersion, restoreTemplateVersion, updateVersionLabel } from '../api/templates.api';
@@ -37,6 +37,7 @@ const DEFAULT_HTML = `<!DOCTYPE html>
 
 export default function TemplateEditor() {
   const { id } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams();
   const isNew = !id || id === 'new';
   const navigate = useNavigate();
 
@@ -143,7 +144,8 @@ export default function TemplateEditor() {
     setSaving(true);
     try {
       if (isNew) {
-        const t = await createTemplate({ name, subject, htmlBody });
+        const projectFromUrl = searchParams.get('project') || undefined;
+        const t = await createTemplate({ name, subject, htmlBody, projectId: projectFromUrl });
         toast.success('Template created');
         savedStateRef.current = { name, subject, htmlBody };
         setHasUnsavedChanges(false);

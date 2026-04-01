@@ -368,7 +368,7 @@ function ProjectDetailContent() {
             )}
             {tab === 'templates' && (
               <button
-                onClick={() => navigate('/templates/new/edit')}
+                onClick={() => navigate(`/templates/new/edit?project=${id}`)}
                 className="rounded-lg bg-primary-600 px-3 py-1.5 text-sm text-white hover:bg-primary-700"
               >
                 New Template
@@ -497,7 +497,7 @@ function ProjectDetailContent() {
                     <p className="text-gray-400">No templates in this project yet</p>
                     <div className="mt-4 flex items-center justify-center gap-3">
                       <button
-                        onClick={() => navigate('/templates/new/edit')}
+                        onClick={() => navigate(`/templates/new/edit?project=${id}`)}
                         className="rounded-lg bg-primary-600 px-4 py-2 text-sm text-white hover:bg-primary-700"
                       >
                         Create New Template

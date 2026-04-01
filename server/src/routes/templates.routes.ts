@@ -21,6 +21,7 @@ const createSchema = z.object({
   subject: z.string().min(1).max(998),
   htmlBody: z.string().min(1),
   textBody: z.string().optional(),
+  projectId: z.string().uuid().optional(),
 });
 
 const updateSchema = z.object({

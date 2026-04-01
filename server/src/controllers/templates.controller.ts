@@ -45,12 +45,13 @@ export async function getTemplate(req: Request, res: Response, next: NextFunctio
 
 export async function createTemplate(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { name, subject, htmlBody, textBody } = req.body;
+    const { name, subject, htmlBody, textBody, projectId } = req.body;
     const variables = detectVariables(htmlBody);
+    const finalProjectId = projectId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(projectId) ? projectId : null;
 
     const result = await pool.query(
-      'INSERT INTO templates (name, subject, html_body, text_body, variables) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-      [name, subject, htmlBody, textBody || null, JSON.stringify(variables)]
+      'INSERT INTO templates (name, subject, html_body, text_body, variables, project_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+      [name, subject, htmlBody, textBody || null, JSON.stringify(variables), finalProjectId]
     );
 
     const template = result.rows[0];

@@ -545,8 +545,8 @@ export async function duplicateCampaign(req: Request, res: Response, next: NextF
       `INSERT INTO campaigns (
         name, template_id, list_id, provider, status,
         throttle_per_second, throttle_per_hour, description,
-        label_name, label_color, attachments
-      ) VALUES ($1, $2, $3, $4, 'draft', $5, $6, $7, $8, $9, $10)
+        label_name, label_color, attachments, project_id, dynamic_variables
+      ) VALUES ($1, $2, $3, $4, 'draft', $5, $6, $7, $8, $9, $10, $11, $12)
       RETURNING *`,
       [
         `Copy of ${source.name}`,
@@ -559,6 +559,8 @@ export async function duplicateCampaign(req: Request, res: Response, next: NextF
         source.label_name,
         source.label_color,
         JSON.stringify(newAttachments),
+        source.project_id || null,
+        source.dynamic_variables ? JSON.stringify(source.dynamic_variables) : '[]',
       ]
     );
 

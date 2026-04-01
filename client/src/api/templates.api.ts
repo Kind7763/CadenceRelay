@@ -23,7 +23,7 @@ export async function getTemplate(id: string) {
   return res.data.template as Template;
 }
 
-export async function createTemplate(data: { name: string; subject: string; htmlBody: string; textBody?: string }) {
+export async function createTemplate(data: { name: string; subject: string; htmlBody: string; textBody?: string; projectId?: string }) {
   const res = await apiClient.post('/templates', data);
   return res.data.template as Template;
 }
