@@ -11,7 +11,7 @@ import {
   useUpdateCampaignLabel,
   useCampaignLabels,
 } from '../hooks/useCampaigns';
-import { useProjectsList } from '../hooks/useProjects';
+import { useProjectsList, useMoveItems } from '../hooks/useProjects';
 import { TableSkeleton } from '../components/ui/Skeleton';
 import ErrorBoundary from '../components/ErrorBoundary';
 import AdminPasswordModal from '../components/ui/AdminPasswordModal';
@@ -40,6 +40,8 @@ function ActionsDropdown({
   onToggleArchive,
   onDelete,
   onLabelOpen,
+  onMoveToProject,
+  projects,
 }: {
   campaign: Campaign;
   onDuplicate: () => void;
@@ -47,6 +49,8 @@ function ActionsDropdown({
   onToggleArchive: () => void;
   onDelete: () => void;
   onLabelOpen: () => void;
+  onMoveToProject: (projectId: string) => void;
+  projects: Array<{ id: string; name: string; icon?: string | null }>;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -100,6 +104,21 @@ function ActionsDropdown({
             <span className="w-4 text-center text-xs">{campaign.label_color ? '\u25CF' : '\u25CB'}</span>
             {campaign.label_name ? 'Change Label' : 'Add Label'}
           </button>
+          {projects.length > 0 && (
+            <>
+              <hr className="my-1 border-gray-100" />
+              <div className="px-3 py-1 text-[10px] font-medium text-gray-400 uppercase">Move to Project</div>
+              {projects.map((p) => (
+                <button
+                  key={p.id}
+                  onClick={(e) => { e.stopPropagation(); onMoveToProject(p.id); setOpen(false); }}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50"
+                >
+                  {p.icon ? `${p.icon} ` : ''}{p.name}
+                </button>
+              ))}
+            </>
+          )}
           <hr className="my-1 border-gray-100" />
           <button
             onClick={(e) => { e.stopPropagation(); onDelete(); setOpen(false); }}
@@ -125,7 +144,7 @@ function CampaignsContent() {
   const [projectFilter, setProjectFilter] = useState('');
   const navigate = useNavigate();
 
-  const { data: projectsData = [] } = useProjectsList();
+  const { data: projects = [] } = useProjectsList();
 
   const { data, isLoading, isError } = useCampaignsList({
     page,
@@ -142,6 +161,7 @@ function CampaignsContent() {
   const archiveMutation = useToggleArchive();
   const duplicateMutation = useDuplicateCampaign();
   const labelMutation = useUpdateCampaignLabel();
+  const moveMutation = useMoveItems();
   const { data: labelsData } = useCampaignLabels();
 
   const allCampaigns: Campaign[] = data?.data || [];
@@ -240,12 +260,30 @@ function CampaignsContent() {
         <h1 className="text-2xl font-bold text-gray-900">Campaigns</h1>
         <div className="flex gap-2">
           {selectedIds.size > 0 && (
-            <button
-              onClick={() => setDeleteModal({ type: 'bulk' })}
-              className="rounded-lg bg-red-600 px-4 py-2 text-sm text-white hover:bg-red-700"
-            >
-              Delete Selected ({selectedIds.size})
-            </button>
+            <>
+              {projects.length > 0 && (
+                <select
+                  defaultValue=""
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      moveMutation.mutate({ projectId: e.target.value, items: { campaignIds: Array.from(selectedIds) } });
+                      setSelectedIds(new Set());
+                      e.target.value = '';
+                    }
+                  }}
+                  className="rounded-lg border px-3 py-2 text-sm"
+                >
+                  <option value="" disabled>Move to Project ({selectedIds.size})</option>
+                  {projects.map((p) => <option key={p.id} value={p.id}>{p.icon ? `${p.icon} ` : ''}{p.name}</option>)}
+                </select>
+              )}
+              <button
+                onClick={() => setDeleteModal({ type: 'bulk' })}
+                className="rounded-lg bg-red-600 px-4 py-2 text-sm text-white hover:bg-red-700"
+              >
+                Delete Selected ({selectedIds.size})
+              </button>
+            </>
           )}
           <button onClick={() => navigate('/campaigns/new')} className="rounded-lg bg-primary-600 px-4 py-2 text-sm text-white hover:bg-primary-700">
             New Campaign
@@ -287,7 +325,7 @@ function CampaignsContent() {
         <select value={projectFilter} onChange={(e) => { setProjectFilter(e.target.value); setPage(1); }} className="rounded-lg border px-3 py-2 text-sm">
           <option value="">All Projects</option>
           <option value="none">No Project</option>
-          {projectsData.map((p) => (
+          {projects.map((p) => (
             <option key={p.id} value={p.id}>{p.icon ? `${p.icon} ` : ''}{p.name}</option>
           ))}
         </select>
@@ -427,6 +465,8 @@ function CampaignsContent() {
                             onToggleArchive={() => archiveMutation.mutate(c.id)}
                             onDelete={() => setDeleteModal({ type: 'single', id: c.id })}
                             onLabelOpen={() => setLabelPickerCampaignId(c.id)}
+                            onMoveToProject={(projectId) => moveMutation.mutate({ projectId, items: { campaignIds: [c.id] } })}
+                            projects={projects}
                           />
                           {labelPickerCampaignId === c.id && (
                             <LabelPicker

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Template } from '../api/templates.api';
 import { useTemplatesList, useDeleteTemplate } from '../hooks/useTemplates';
-import { useProjectsList } from '../hooks/useProjects';
+import { useProjectsList, useMoveItems } from '../hooks/useProjects';
 import { GridCardSkeleton } from '../components/ui/Skeleton';
 import ErrorBoundary from '../components/ErrorBoundary';
 
@@ -14,6 +14,7 @@ function TemplatesContent() {
     projectFilter ? { project_id: projectFilter } : undefined
   );
   const deleteTemplateMutation = useDeleteTemplate();
+  const moveMutation = useMoveItems();
 
   async function handleDelete(id: string) {
     if (!confirm('Delete this template?')) return;
@@ -58,8 +59,27 @@ function TemplatesContent() {
             ) : templates.map((t: Template) => (
               <div key={t.id} className="cursor-pointer rounded-xl bg-white p-5 shadow-sm hover:shadow-md transition-shadow" onClick={() => navigate(`/templates/${t.id}/edit`)}>
                 <div className="flex items-center justify-between">
-                  <h3 className="font-semibold text-gray-900">{t.name}</h3>
-                  <button onClick={(e) => { e.stopPropagation(); handleDelete(t.id); }} className="text-xs text-red-500 hover:text-red-700">Delete</button>
+                  <h3 className="font-semibold text-gray-900 truncate flex-1">{t.name}</h3>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {projectsData.length > 0 && (
+                      <select
+                        defaultValue=""
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => {
+                          e.stopPropagation();
+                          if (e.target.value) {
+                            moveMutation.mutate({ projectId: e.target.value, items: { templateIds: [t.id] } });
+                            e.target.value = '';
+                          }
+                        }}
+                        className="rounded border px-1.5 py-0.5 text-xs text-gray-500"
+                      >
+                        <option value="" disabled>Move to...</option>
+                        {projectsData.map((p) => <option key={p.id} value={p.id}>{p.icon ? `${p.icon} ` : ''}{p.name}</option>)}
+                      </select>
+                    )}
+                    <button onClick={(e) => { e.stopPropagation(); handleDelete(t.id); }} className="text-xs text-red-500 hover:text-red-700">Delete</button>
+                  </div>
                 </div>
                 <p className="mt-1 text-sm text-gray-500 truncate">{t.subject}</p>
                 <div className="mt-3 flex items-center justify-between text-xs text-gray-400">
