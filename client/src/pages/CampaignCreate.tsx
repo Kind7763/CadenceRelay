@@ -6,13 +6,14 @@ import {
   addAttachments as apiAddAttachments, addAttachmentsTracked, removeAttachment as apiRemoveAttachment,
   CampaignAttachment, Campaign, updateDynamicVariables as updateDynamicVariablesApi,
 } from '../api/campaigns.api';
-import { listTemplates, Template } from '../api/templates.api';
+import { listTemplates, Template, checkSpamScore, SpamCheckResult } from '../api/templates.api';
 import { listLists, ContactList } from '../api/lists.api';
 import { listContacts, Contact } from '../api/contacts.api';
 import { sendTestEmail } from '../api/settings.api';
 import UploadProgress, { FileUploadProgress } from '../components/ui/UploadProgress';
 import { UploadState, INITIAL_UPLOAD_STATE, formatFileSize, validateFileSize, getFileTypeIcon } from '../lib/uploadHelper';
 import { useProjectsList } from '../hooks/useProjects';
+import { SpamScoreModal } from './TemplateEditor';
 
 /** Replace all {{key}} placeholders in html/text with values from a contact */
 function replaceVariables(html: string, contact: Contact): string {
@@ -203,6 +204,11 @@ export default function CampaignCreate() {
   const [bulkTestSending, setBulkTestSending] = useState(false);
   const [bulkTestProgress, setBulkTestProgress] = useState({ sent: 0, total: 0 });
 
+  // Spam score check
+  const [spamResult, setSpamResult] = useState<SpamCheckResult | null>(null);
+  const [spamChecking, setSpamChecking] = useState(false);
+  const [showSpamModal, setShowSpamModal] = useState(false);
+
   // Feature 3: Dynamic variables
   interface DynVar {
     key: string;
@@ -219,6 +225,13 @@ export default function CampaignCreate() {
   const [dynamicVars, setDynamicVars] = useState<DynVar[]>([]);
   const [showAddDynVar, setShowAddDynVar] = useState(false);
   const [newDynVar, setNewDynVar] = useState<DynVar>({ key: '', type: 'counter' });
+
+  // A/B Testing state
+  const [abTestEnabled, setAbTestEnabled] = useState(false);
+  const [abVariantBSubject, setAbVariantBSubject] = useState('');
+  const [abSplitPercentage, setAbSplitPercentage] = useState(20);
+  const [abTestDuration, setAbTestDuration] = useState(4);
+  const [abWinnerMetric, setAbWinnerMetric] = useState<'open_rate' | 'click_rate'>('open_rate');
 
   // Combined count for the 10-file limit
   const totalAttachmentCount = existingAttachments.length + attachments.length;
@@ -318,6 +331,17 @@ export default function CampaignCreate() {
       }
     }
   }, [selectedTemplate, selectedPreviewContact]);
+
+  // Auto-run spam check when entering the Review step
+  useEffect(() => {
+    if (step === 5 && selectedTemplate) {
+      setSpamChecking(true);
+      checkSpamScore({ subject: selectedTemplate.subject, html: selectedTemplate.html_body })
+        .then(setSpamResult)
+        .catch(() => {})
+        .finally(() => setSpamChecking(false));
+    }
+  }, [step, selectedTemplate]);
 
   const handleAddFiles = useCallback((files: File[]) => {
     const errors: string[] = [];
@@ -448,6 +472,27 @@ export default function CampaignCreate() {
           await updateDynamicVariablesApi(campaignId, dynamicVars);
         } catch {
           toast.error('Warning: Failed to save dynamic variables');
+        }
+      }
+
+      // Save A/B test configuration if enabled
+      if (abTestEnabled && campaignId) {
+        try {
+          await updateCampaign(campaignId, {
+            abTest: {
+              enabled: true,
+              variantB: { subject: abVariantBSubject || selectedTemplate?.subject || '' },
+              splitPercentage: abSplitPercentage,
+              testDurationHours: abTestDuration,
+              winnerMetric: abWinnerMetric,
+              status: 'pending',
+              winnerVariant: null,
+              variantAStats: { sent: 0, opens: 0, clicks: 0 },
+              variantBStats: { sent: 0, opens: 0, clicks: 0 },
+            },
+          });
+        } catch {
+          toast.error('Warning: Failed to save A/B test config');
         }
       }
 
@@ -1124,8 +1169,139 @@ export default function CampaignCreate() {
             )}
           </div>
 
+          {/* Spam Score Inline */}
+          <div className="rounded-lg border border-gray-200 p-3 flex items-center justify-between">
+            {spamChecking ? (
+              <span className="text-sm text-gray-500">Checking spam score...</span>
+            ) : spamResult ? (
+              <>
+                <div className="flex items-center gap-2">
+                  {(spamResult.grade === 'A' || spamResult.grade === 'B') ? (
+                    <span className="text-sm text-green-700 font-medium">Spam Score: {spamResult.grade} ({spamResult.grade === 'A' ? 'Excellent' : 'Good'})</span>
+                  ) : spamResult.grade === 'C' ? (
+                    <span className="text-sm text-yellow-700 font-medium">Spam Score: {spamResult.grade} (Fair) -- {spamResult.issues.filter(i => i.severity !== 'info').length} issue(s) found</span>
+                  ) : (
+                    <span className="text-sm text-red-700 font-medium">Spam Score: {spamResult.grade} ({spamResult.grade === 'D' ? 'Poor' : 'Very Poor'}) -- {spamResult.issues.filter(i => i.severity !== 'info').length} issue(s) found</span>
+                  )}
+                </div>
+                <button onClick={() => setShowSpamModal(true)} className="text-sm text-primary-600 hover:text-primary-800 font-medium">View Details</button>
+              </>
+            ) : (
+              <span className="text-sm text-gray-400">Spam score unavailable</span>
+            )}
+          </div>
+
           {/* Attachments in review */}
           {renderReviewAttachments()}
+
+          {/* A/B Test Configuration */}
+          <div className="rounded-lg border border-gray-200">
+            <label className="flex cursor-pointer items-center gap-3 p-4">
+              <input
+                type="checkbox"
+                checked={abTestEnabled}
+                onChange={(e) => setAbTestEnabled(e.target.checked)}
+                className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+              />
+              <div>
+                <span className="text-sm font-medium text-gray-900">Enable A/B Test</span>
+                <p className="text-xs text-gray-500">Split your audience to test different subject lines and pick a winner automatically</p>
+              </div>
+            </label>
+
+            {abTestEnabled && (
+              <div className="border-t px-4 pb-4 pt-3 space-y-3">
+                {/* Variant A (read-only) */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Variant A (Original)</label>
+                  <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
+                    {selectedTemplate?.subject || 'No template selected'}
+                  </div>
+                </div>
+
+                {/* Variant B subject */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Variant B Subject</label>
+                  <input
+                    type="text"
+                    value={abVariantBSubject}
+                    onChange={(e) => setAbVariantBSubject(e.target.value)}
+                    placeholder="Enter a different subject line to test..."
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                  />
+                </div>
+
+                {/* Split percentage */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">
+                    Test Split: {abSplitPercentage}% ({abSplitPercentage / 2}% A + {abSplitPercentage / 2}% B + {100 - abSplitPercentage}% winner)
+                  </label>
+                  <input
+                    type="range"
+                    min={10}
+                    max={50}
+                    step={2}
+                    value={abSplitPercentage}
+                    onChange={(e) => setAbSplitPercentage(Number(e.target.value))}
+                    className="w-full"
+                  />
+                  <div className="mt-1 flex justify-between text-xs text-gray-400">
+                    <span>10%</span>
+                    <span>50%</span>
+                  </div>
+                </div>
+
+                {/* Duration */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Test Duration (hours)</label>
+                  <select
+                    value={abTestDuration}
+                    onChange={(e) => setAbTestDuration(Number(e.target.value))}
+                    className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none"
+                  >
+                    {[1, 2, 4, 6, 12, 24, 48].map((h) => (
+                      <option key={h} value={h}>{h} hour{h > 1 ? 's' : ''}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Winner metric */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Winner Metric</label>
+                  <div className="flex gap-4">
+                    <label className="flex items-center gap-2 text-sm cursor-pointer">
+                      <input
+                        type="radio"
+                        name="abWinnerMetric"
+                        checked={abWinnerMetric === 'open_rate'}
+                        onChange={() => setAbWinnerMetric('open_rate')}
+                        className="text-primary-600 focus:ring-primary-500"
+                      />
+                      Open Rate
+                    </label>
+                    <label className="flex items-center gap-2 text-sm cursor-pointer">
+                      <input
+                        type="radio"
+                        name="abWinnerMetric"
+                        checked={abWinnerMetric === 'click_rate'}
+                        onChange={() => setAbWinnerMetric('click_rate')}
+                        className="text-primary-600 focus:ring-primary-500"
+                      />
+                      Click Rate
+                    </label>
+                  </div>
+                </div>
+
+                {/* Summary */}
+                <div className="rounded-lg bg-blue-50 p-3 text-xs text-blue-800">
+                  <strong>How it works:</strong> {abSplitPercentage / 2}% of contacts receive the original subject (A),
+                  another {abSplitPercentage / 2}% receive the test subject (B). After {abTestDuration} hour{abTestDuration > 1 ? 's' : ''},
+                  the variant with the higher {abWinnerMetric === 'open_rate' ? 'open rate' : 'click rate'} wins,
+                  and the remaining {100 - abSplitPercentage}% receive the winning version.
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Send Test Email Section */}
           <div className="rounded-lg border border-gray-200">
@@ -1316,6 +1492,11 @@ export default function CampaignCreate() {
             )}
           </div>
         </div>
+      )}
+
+      {/* Spam Score Modal */}
+      {showSpamModal && spamResult && (
+        <SpamScoreModal result={spamResult} onClose={() => setShowSpamModal(false)} />
       )}
 
       {/* Confirmation Dialog */}

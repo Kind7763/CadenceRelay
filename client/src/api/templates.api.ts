@@ -61,3 +61,28 @@ export async function previewTemplate(id: string, data?: Record<string, string>)
   const res = await apiClient.post(`/templates/${id}/preview`, { data });
   return res.data.html as string;
 }
+
+// ── Spam Score Checker ──
+
+export interface SpamIssue {
+  severity: 'error' | 'warning' | 'info';
+  rule: string;
+  message: string;
+  points: number;
+}
+
+export interface SpamCheckResult {
+  score: number;
+  grade: string;
+  issues: SpamIssue[];
+}
+
+export async function checkSpamScore(data: { subject: string; html: string }): Promise<SpamCheckResult> {
+  const res = await apiClient.post('/templates/spam-check', data);
+  return res.data;
+}
+
+export async function checkTemplateSpamScore(id: string): Promise<SpamCheckResult> {
+  const res = await apiClient.post(`/templates/${id}/spam-check`);
+  return res.data;
+}

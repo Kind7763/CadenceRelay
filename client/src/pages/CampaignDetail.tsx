@@ -589,6 +589,113 @@ export default function CampaignDetail() {
         ))}
       </div>
 
+      {/* A/B Test Results */}
+      {campaign.ab_test?.enabled && (() => {
+        const ab = campaign.ab_test;
+        const aStats = ab.variantAStats || { sent: 0, opens: 0, clicks: 0 };
+        const bStats = ab.variantBStats || { sent: 0, opens: 0, clicks: 0 };
+        const aOpenRate = aStats.sent > 0 ? ((aStats.opens / aStats.sent) * 100).toFixed(1) : '0.0';
+        const bOpenRate = bStats.sent > 0 ? ((bStats.opens / bStats.sent) * 100).toFixed(1) : '0.0';
+        const aClickRate = aStats.sent > 0 ? ((aStats.clicks / aStats.sent) * 100).toFixed(1) : '0.0';
+        const bClickRate = bStats.sent > 0 ? ((bStats.clicks / bStats.sent) * 100).toFixed(1) : '0.0';
+        const isWinnerA = ab.winnerVariant === 'A';
+        const isWinnerB = ab.winnerVariant === 'B';
+
+        const statusLabel: Record<string, string> = {
+          pending: 'Pending',
+          testing: 'Testing',
+          winner_picked: 'Winner Picked',
+          completed: 'Completed',
+        };
+        const statusColor: Record<string, string> = {
+          pending: 'bg-gray-100 text-gray-700',
+          testing: 'bg-yellow-100 text-yellow-700',
+          winner_picked: 'bg-blue-100 text-blue-700',
+          completed: 'bg-green-100 text-green-700',
+        };
+
+        return (
+          <div className="mt-6 rounded-xl bg-white p-5 shadow-sm">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold">A/B Test Results</h2>
+              <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${statusColor[ab.status] || ''}`}>
+                {statusLabel[ab.status] || ab.status}
+              </span>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-left text-xs font-medium text-gray-500">
+                    <th className="pb-2 pr-4">Variant</th>
+                    <th className="pb-2 pr-4">Subject</th>
+                    <th className="pb-2 pr-4 text-right">Sent</th>
+                    <th className="pb-2 pr-4 text-right">Opens</th>
+                    <th className="pb-2 pr-4 text-right">Open Rate</th>
+                    <th className="pb-2 pr-4 text-right">Clicks</th>
+                    <th className="pb-2 text-right">Click Rate</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className={`border-b ${isWinnerA ? 'bg-green-50' : ''}`}>
+                    <td className="py-2 pr-4 font-medium">
+                      A {isWinnerA && <span className="text-yellow-500" title="Winner">&#9733;</span>}
+                    </td>
+                    <td className="py-2 pr-4 max-w-[200px] truncate text-gray-600" title={campaign.template_subject || ''}>
+                      {campaign.template_subject || 'Original subject'}
+                    </td>
+                    <td className="py-2 pr-4 text-right">{aStats.sent}</td>
+                    <td className="py-2 pr-4 text-right">{aStats.opens}</td>
+                    <td className="py-2 pr-4 text-right font-medium">{aOpenRate}%</td>
+                    <td className="py-2 pr-4 text-right">{aStats.clicks}</td>
+                    <td className="py-2 text-right font-medium">{aClickRate}%</td>
+                  </tr>
+                  <tr className={isWinnerB ? 'bg-green-50' : ''}>
+                    <td className="py-2 pr-4 font-medium">
+                      B {isWinnerB && <span className="text-yellow-500" title="Winner">&#9733;</span>}
+                    </td>
+                    <td className="py-2 pr-4 max-w-[200px] truncate text-gray-600" title={ab.variantB?.subject || ''}>
+                      {ab.variantB?.subject || 'Variant B subject'}
+                    </td>
+                    <td className="py-2 pr-4 text-right">{bStats.sent}</td>
+                    <td className="py-2 pr-4 text-right">{bStats.opens}</td>
+                    <td className="py-2 pr-4 text-right font-medium">{bOpenRate}%</td>
+                    <td className="py-2 pr-4 text-right">{bStats.clicks}</td>
+                    <td className="py-2 text-right font-medium">{bClickRate}%</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            {ab.winnerVariant && (
+              <div className="mt-4 rounded-lg bg-green-50 border border-green-200 p-3 text-sm text-green-800">
+                <strong>Winner: Variant {ab.winnerVariant}</strong>
+                {ab.winnerMetric === 'open_rate'
+                  ? ` (Open Rate: ${isWinnerA ? aOpenRate : bOpenRate}% vs ${isWinnerA ? bOpenRate : aOpenRate}%)`
+                  : ` (Click Rate: ${isWinnerA ? aClickRate : bClickRate}% vs ${isWinnerA ? bClickRate : aClickRate}%)`}
+                {ab.status === 'completed' && (
+                  <span className="ml-2 text-green-600">
+                    — Holdout group sent with winning variant
+                  </span>
+                )}
+              </div>
+            )}
+
+            {ab.status === 'testing' && (
+              <div className="mt-4 rounded-lg bg-yellow-50 border border-yellow-200 p-3 text-sm text-yellow-800">
+                Test in progress. Winner will be picked after {ab.testDurationHours} hour{ab.testDurationHours > 1 ? 's' : ''} based on {ab.winnerMetric === 'open_rate' ? 'open rate' : 'click rate'}.
+                Remaining {100 - (ab.splitPercentage || 20)}% of contacts ({totalRecipients - aStats.sent - bStats.sent} emails) are waiting.
+              </div>
+            )}
+
+            <div className="mt-3 text-xs text-gray-400">
+              Split: {(ab.splitPercentage || 20) / 2}% A + {(ab.splitPercentage || 20) / 2}% B + {100 - (ab.splitPercentage || 20)}% holdout
+              {' | '}Duration: {ab.testDurationHours}h{' | '}Metric: {ab.winnerMetric === 'open_rate' ? 'Open Rate' : 'Click Rate'}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Email Preview */}
       {(campaign.template_subject || campaign.template_html_body || (campaign.attachments && campaign.attachments.length > 0)) && (
         <div className="mt-6 rounded-xl bg-white shadow-sm overflow-hidden">

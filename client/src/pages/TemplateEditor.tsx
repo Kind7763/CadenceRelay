@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
 import toast from 'react-hot-toast';
-import { getTemplate, createTemplate, updateTemplate, getTemplateVersions, getTemplateVersion, restoreTemplateVersion, updateVersionLabel } from '../api/templates.api';
+import { getTemplate, createTemplate, updateTemplate, getTemplateVersions, getTemplateVersion, restoreTemplateVersion, updateVersionLabel, checkSpamScore, SpamCheckResult } from '../api/templates.api';
 import { sendTestEmail } from '../api/settings.api';
 import { useCustomVariables } from '../hooks/useCustomVariables';
 
@@ -57,6 +57,9 @@ export default function TemplateEditor() {
   const [previewVersionHtml, setPreviewVersionHtml] = useState('');
   const [editingLabel, setEditingLabel] = useState<number | null>(null);
   const [labelText, setLabelText] = useState('');
+  const [showSpamModal, setShowSpamModal] = useState(false);
+  const [spamResult, setSpamResult] = useState<SpamCheckResult | null>(null);
+  const [spamChecking, setSpamChecking] = useState(false);
 
   const { data: customVariables = [] } = useCustomVariables();
 
@@ -232,6 +235,19 @@ export default function TemplateEditor() {
     }
   }
 
+  async function handleSpamCheck() {
+    setSpamChecking(true);
+    try {
+      const result = await checkSpamScore({ subject, html: htmlBody });
+      setSpamResult(result);
+      setShowSpamModal(true);
+    } catch {
+      toast.error('Failed to check spam score');
+    } finally {
+      setSpamChecking(false);
+    }
+  }
+
   function handleBack() {
     if (hasUnsavedChanges) {
       if (!confirm('You have unsaved changes. Are you sure you want to leave?')) return;
@@ -307,6 +323,13 @@ export default function TemplateEditor() {
             History ({versions.length})
           </button>
         )}
+        <button
+          onClick={handleSpamCheck}
+          disabled={spamChecking || (!subject && !htmlBody)}
+          className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50 disabled:opacity-50"
+        >
+          {spamChecking ? 'Checking...' : 'Spam Score'}
+        </button>
         <button onClick={() => htmlFileInputRef.current?.click()} className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50">
           Import HTML
         </button>
@@ -537,6 +560,119 @@ export default function TemplateEditor() {
           </div>
         </div>
       )}
+
+      {/* Spam Score Modal */}
+      {showSpamModal && spamResult && (
+        <SpamScoreModal result={spamResult} onClose={() => setShowSpamModal(false)} />
+      )}
+    </div>
+  );
+}
+
+function gradeColor(grade: string): string {
+  if (grade === 'A' || grade === 'B') return 'text-green-600';
+  if (grade === 'C') return 'text-yellow-600';
+  return 'text-red-600';
+}
+
+function gradeBgColor(grade: string): string {
+  if (grade === 'A' || grade === 'B') return 'bg-green-50 border-green-200';
+  if (grade === 'C') return 'bg-yellow-50 border-yellow-200';
+  return 'bg-red-50 border-red-200';
+}
+
+function gradeLabel(grade: string): string {
+  switch (grade) {
+    case 'A': return 'Excellent';
+    case 'B': return 'Good';
+    case 'C': return 'Fair -- review recommended';
+    case 'D': return 'Poor -- likely spam filtered';
+    case 'F': return 'Very poor -- will be spam';
+    default: return '';
+  }
+}
+
+function severityIcon(severity: string): string {
+  switch (severity) {
+    case 'error': return '\u26D4';
+    case 'warning': return '\u26A0\uFE0F';
+    case 'info': return '\u2139\uFE0F';
+    default: return '';
+  }
+}
+
+function severityColor(severity: string): string {
+  switch (severity) {
+    case 'error': return 'text-red-700 bg-red-50';
+    case 'warning': return 'text-yellow-800 bg-yellow-50';
+    case 'info': return 'text-blue-700 bg-blue-50';
+    default: return '';
+  }
+}
+
+export function SpamScoreModal({ result, onClose }: { result: SpamCheckResult; onClose: () => void }) {
+  const errors = result.issues.filter(i => i.severity === 'error');
+  const warnings = result.issues.filter(i => i.severity === 'warning');
+  const infos = result.issues.filter(i => i.severity === 'info');
+  const sortedIssues = [...errors, ...warnings, ...infos];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+      <div className="w-full max-w-lg max-h-[80vh] overflow-y-auto rounded-xl bg-white p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold">Spam Score Analysis</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+        </div>
+
+        {/* Score header */}
+        <div className={`rounded-lg border p-4 mb-4 ${gradeBgColor(result.grade)}`}>
+          <div className="flex items-center justify-between">
+            <div>
+              <span className={`text-3xl font-bold ${gradeColor(result.grade)}`}>{result.score}/100</span>
+              <span className={`ml-3 text-lg font-semibold ${gradeColor(result.grade)}`}>Grade: {result.grade}</span>
+            </div>
+          </div>
+          <p className={`mt-1 text-sm ${gradeColor(result.grade)}`}>{gradeLabel(result.grade)}</p>
+        </div>
+
+        {/* Issues list */}
+        {sortedIssues.length > 0 ? (
+          <div className="space-y-2 mb-4">
+            {sortedIssues.map((issue, i) => (
+              <div key={i} className={`rounded-lg px-3 py-2 text-sm ${severityColor(issue.severity)}`}>
+                <span className="mr-1">{severityIcon(issue.severity)}</span>
+                <span className="font-medium uppercase text-xs mr-2">{issue.severity}:</span>
+                {issue.message}
+                {issue.points > 0 && <span className="ml-1 opacity-70">(+{issue.points})</span>}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-gray-500 mb-4">No issues found.</p>
+        )}
+
+        {/* Recommendations */}
+        {(errors.length > 0 || warnings.length > 0) && (
+          <div className="rounded-lg bg-gray-50 p-3">
+            <h4 className="text-sm font-semibold text-gray-700 mb-2">Recommendations</h4>
+            <ul className="space-y-1 text-sm text-gray-600">
+              {errors.some(i => i.rule === 'subject-all-caps') && <li>Use mixed case in your subject line</li>}
+              {errors.some(i => i.rule === 'body-hidden-text') && <li>Remove hidden text from the email body</li>}
+              {warnings.some(i => i.rule === 'subject-spammy-word') && <li>Remove or rephrase promotional words in the subject</li>}
+              {warnings.some(i => i.rule === 'subject-excessive-punctuation') && <li>Reduce excessive punctuation in the subject</li>}
+              {warnings.some(i => i.rule === 'subject-fake-reply') && <li>Remove misleading "Re:" or "Fwd:" prefix from subject</li>}
+              {warnings.some(i => i.rule === 'body-image-heavy') && <li>Add more text content to balance the image-to-text ratio</li>}
+              {warnings.some(i => i.rule === 'body-excessive-links') && <li>Reduce the number of links in the email body</li>}
+              {warnings.some(i => i.rule === 'body-no-unsubscribe') && <li>Add visible "unsubscribe" text to the email body</li>}
+              {warnings.some(i => i.rule === 'body-all-caps') && <li>Use mixed case for body text instead of all caps</li>}
+            </ul>
+          </div>
+        )}
+
+        <div className="mt-4 flex justify-end">
+          <button onClick={onClose} className="rounded-lg bg-primary-600 px-4 py-2 text-sm text-white hover:bg-primary-700">Close</button>
+        </div>
+      </div>
     </div>
   );
 }

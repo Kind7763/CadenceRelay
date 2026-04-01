@@ -282,3 +282,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS suppression_email_idx ON suppression_list(LOWE
 ALTER TABLE contacts ADD COLUMN IF NOT EXISTS engagement_score integer DEFAULT 50;
 CREATE INDEX IF NOT EXISTS contacts_engagement_idx ON contacts(engagement_score);
 INSERT INTO settings (key, value) VALUES ('engagement_scoring', '{"opened": 3, "clicked": 5, "bounced": -15, "complained": -30, "unsubscribed": -50, "decay_per_week": -5}') ON CONFLICT (key) DO NOTHING;
+
+-- A/B Testing
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS ab_test jsonb DEFAULT NULL;
+ALTER TABLE campaign_recipients ADD COLUMN IF NOT EXISTS ab_variant varchar(10);
+CREATE INDEX IF NOT EXISTS cr_ab_variant_idx ON campaign_recipients(campaign_id, ab_variant);

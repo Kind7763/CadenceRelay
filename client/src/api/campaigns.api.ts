@@ -39,7 +39,29 @@ export interface Campaign {
   label_name?: string;
   label_color?: string;
   dynamic_variables?: DynamicVariable[];
+  ab_test?: ABTest | null;
   created_at: string;
+}
+
+export interface ABTestVariantStats {
+  sent: number;
+  opens: number;
+  clicks: number;
+}
+
+export interface ABTest {
+  enabled: boolean;
+  variantB: {
+    subject: string;
+    templateId?: string | null;
+  };
+  splitPercentage: number;
+  testDurationHours: number;
+  winnerMetric: 'open_rate' | 'click_rate';
+  status: 'pending' | 'testing' | 'winner_picked' | 'completed';
+  winnerVariant?: 'A' | 'B' | null;
+  variantAStats?: ABTestVariantStats;
+  variantBStats?: ABTestVariantStats;
 }
 
 export async function listCampaigns(params: Record<string, string> = {}) {

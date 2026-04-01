@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { pool } from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { detectVariables, renderTemplate } from '../utils/templateRenderer';
+import { checkSpamScore } from '../utils/spamChecker';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function validateUUID(id: string, label = 'ID'): void {
@@ -225,6 +226,35 @@ export async function updateVersionLabel(req: Request, res: Response, next: Next
     if (result.rows.length === 0) throw new AppError('Version not found', 404);
 
     res.json({ message: 'Label updated' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function spamCheck(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { id } = req.params;
+    let subject: string;
+    let html: string;
+
+    if (id) {
+      // Check a saved template by ID
+      validateUUID(id, 'template ID');
+      const result = await pool.query('SELECT subject, html_body FROM templates WHERE id = $1', [id]);
+      if (result.rows.length === 0) throw new AppError('Template not found', 404);
+      subject = result.rows[0].subject;
+      html = result.rows[0].html_body;
+    } else {
+      // Ad-hoc check from body
+      subject = req.body.subject || '';
+      html = req.body.html || '';
+      if (!subject && !html) {
+        throw new AppError('Either subject or html is required', 400);
+      }
+    }
+
+    const result = checkSpamScore(subject, html);
+    res.json(result);
   } catch (err) {
     next(err);
   }

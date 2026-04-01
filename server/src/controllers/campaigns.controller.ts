@@ -148,7 +148,7 @@ export async function updateCampaign(req: Request, res: Response, next: NextFunc
   try {
     const { id } = req.params;
     validateUUID(id, 'campaign ID');
-    const { name, templateId, listId, provider, throttlePerSecond, throttlePerHour, description } = req.body;
+    const { name, templateId, listId, provider, throttlePerSecond, throttlePerHour, description, abTest } = req.body;
 
     const existing = await pool.query('SELECT status FROM campaigns WHERE id = $1', [id]);
     if (existing.rows.length === 0) throw new AppError('Campaign not found', 404);
@@ -158,6 +158,11 @@ export async function updateCampaign(req: Request, res: Response, next: NextFunc
     // Campaign settings (template, list, provider, throttle) can only be changed on draft/scheduled
     if (!isDraftOrScheduled && (templateId || listId || provider || throttlePerSecond || throttlePerHour)) {
       throw new AppError('Can only change template, list, provider, and throttle settings on draft or scheduled campaigns', 400);
+    }
+
+    // A/B test can only be set on draft/scheduled campaigns
+    if (abTest && !isDraftOrScheduled) {
+      throw new AppError('Can only configure A/B test on draft or scheduled campaigns', 400);
     }
 
     // Name and description can always be updated (for organization purposes)
@@ -170,11 +175,13 @@ export async function updateCampaign(req: Request, res: Response, next: NextFunc
         throttle_per_second = COALESCE($5, throttle_per_second),
         throttle_per_hour = COALESCE($6, throttle_per_hour),
         description = COALESCE($7, description),
+        ab_test = COALESCE($8, ab_test),
         updated_at = NOW()
-       WHERE id = $8 RETURNING *`,
+       WHERE id = $9 RETURNING *`,
       [name, isDraftOrScheduled ? templateId : null, isDraftOrScheduled ? listId : null,
        isDraftOrScheduled ? provider : null, isDraftOrScheduled ? throttlePerSecond : null,
-       isDraftOrScheduled ? throttlePerHour : null, description, id]
+       isDraftOrScheduled ? throttlePerHour : null, description,
+       abTest !== undefined ? JSON.stringify(abTest) : null, id]
     );
 
     res.json({ campaign: result.rows[0] });

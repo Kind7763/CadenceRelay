@@ -10,6 +10,7 @@ import {
   restoreVersion,
   updateVersionLabel,
   previewTemplate,
+  spamCheck,
 } from '../controllers/templates.controller';
 import { validateBody } from '../middleware/validateRequest';
 import { z } from 'zod';
@@ -31,6 +32,9 @@ const updateSchema = z.object({
   textBody: z.string().optional(),
 });
 
+// Spam check routes — ad-hoc must come before :id to avoid conflict
+router.post('/spam-check', spamCheck);
+
 router.get('/', listTemplates);
 router.get('/:id', getTemplate);
 router.post('/', validateBody(createSchema), createTemplate);
@@ -41,5 +45,6 @@ router.get('/:id/versions/:version', getTemplateVersion);
 router.post('/:id/versions/:version/restore', restoreVersion);
 router.put('/:id/versions/:version/label', updateVersionLabel);
 router.post('/:id/preview', previewTemplate);
+router.post('/:id/spam-check', spamCheck);
 
 export default router;
