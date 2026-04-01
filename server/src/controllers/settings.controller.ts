@@ -211,6 +211,33 @@ export async function updateReplyTo(req: Request, res: Response, next: NextFunct
   }
 }
 
+export async function updateDailyLimits(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { gmailDailyLimit, sesDailyLimit } = req.body;
+
+    // Upsert gmail_daily_limit
+    const gmailExists = await pool.query("SELECT 1 FROM settings WHERE key = 'gmail_daily_limit'");
+    if (gmailExists.rows.length > 0) {
+      await pool.query("UPDATE settings SET value = $1, updated_at = NOW() WHERE key = 'gmail_daily_limit'", [JSON.stringify(gmailDailyLimit)]);
+    } else {
+      await pool.query("INSERT INTO settings (key, value) VALUES ('gmail_daily_limit', $1)", [JSON.stringify(gmailDailyLimit)]);
+    }
+
+    // Upsert ses_daily_limit
+    const sesExists = await pool.query("SELECT 1 FROM settings WHERE key = 'ses_daily_limit'");
+    if (sesExists.rows.length > 0) {
+      await pool.query("UPDATE settings SET value = $1, updated_at = NOW() WHERE key = 'ses_daily_limit'", [JSON.stringify(sesDailyLimit)]);
+    } else {
+      await pool.query("INSERT INTO settings (key, value) VALUES ('ses_daily_limit', $1)", [JSON.stringify(sesDailyLimit)]);
+    }
+
+    await cacheDel('settings');
+    res.json({ message: 'Daily limits updated', gmailDailyLimit, sesDailyLimit });
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function testEmail(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { to, subject, html, campaignId } = req.body;

@@ -7,6 +7,7 @@ import {
   updateSesConfig,
   updateThrottleDefaults,
   updateReplyTo,
+  updateDailyLimits,
   sendTestEmail,
 } from '../api/settings.api';
 
@@ -86,6 +87,22 @@ export function useUpdateReplyTo() {
     },
     onError: () => {
       toast.error('Failed to save Reply-To address');
+    },
+  });
+}
+
+export function useUpdateDailyLimits() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (config: { gmailDailyLimit: number; sesDailyLimit: number }) =>
+      updateDailyLimits(config),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['settings'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      toast.success('Daily send limits saved');
+    },
+    onError: () => {
+      toast.error('Failed to save daily send limits');
     },
   });
 }

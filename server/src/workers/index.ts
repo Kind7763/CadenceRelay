@@ -6,6 +6,7 @@ import { startCampaignDispatchWorker, startEmailSendWorker } from './emailWorker
 import { startEventProcessingWorker } from './eventWorker';
 import { checkScheduledCampaigns } from './campaignScheduler';
 import { checkGmailBounces } from './gmailBounceChecker';
+import { runEngagementDecay } from './engagementDecay';
 
 async function startWorker(): Promise<void> {
   logger.info(`Starting worker in ${config.nodeEnv} mode`);
@@ -56,11 +57,32 @@ async function startWorker(): Promise<void> {
 
   logger.info('Gmail IMAP bounce checker started (5 min interval)');
 
+  // Start engagement decay worker (every 24 hours)
+  const engagementDecayInterval = setInterval(async () => {
+    try {
+      await runEngagementDecay();
+    } catch (err) {
+      logger.error('Engagement decay error', { error: (err as Error).message });
+    }
+  }, 24 * 60 * 60 * 1000);
+
+  // Run engagement decay once on startup with 5-minute delay
+  setTimeout(async () => {
+    try {
+      await runEngagementDecay();
+    } catch (err) {
+      logger.error('Initial engagement decay error', { error: (err as Error).message });
+    }
+  }, 5 * 60 * 1000);
+
+  logger.info('Engagement decay worker started (24h interval)');
+
   // Graceful shutdown
   const shutdown = async (signal: string) => {
     logger.info(`${signal} received. Shutting down workers...`);
     clearInterval(schedulerInterval);
     clearInterval(bounceCheckInterval);
+    clearInterval(engagementDecayInterval);
     await dispatchWorker.close();
     await sendWorker.close();
     await eventWorker.close();

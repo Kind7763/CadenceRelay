@@ -815,3 +815,105 @@ export async function previewDynamicVariables(req: Request, res: Response, next:
     next(err);
   }
 }
+
+export async function resendToNonOpeners(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { id } = req.params;
+    validateUUID(id, 'campaign ID');
+    const { subject } = req.body as { subject?: string };
+
+    // Load original campaign
+    const existing = await pool.query('SELECT * FROM campaigns WHERE id = $1', [id]);
+    if (existing.rows.length === 0) throw new AppError('Campaign not found', 404);
+    const source = existing.rows[0];
+
+    if (source.status !== 'completed') {
+      throw new AppError('Can only resend to non-openers for completed campaigns', 400);
+    }
+
+    // Count non-openers
+    const countResult = await pool.query(
+      `SELECT COUNT(*) FROM campaign_recipients
+       WHERE campaign_id = $1 AND opened_at IS NULL AND status IN ('sent', 'delivered')`,
+      [id]
+    );
+    const nonOpenerCount = parseInt(countResult.rows[0].count);
+
+    if (nonOpenerCount === 0) {
+      throw new AppError('No non-openers found for this campaign', 400);
+    }
+
+    // Copy attachment files on disk
+    const sourceAttachments: Array<{ filename: string; storagePath: string; size: number; contentType: string }> = source.attachments || [];
+    const newAttachments = sourceAttachments.map((att) => {
+      if (att.storagePath && fs.existsSync(att.storagePath)) {
+        const ext = path.extname(att.storagePath);
+        const newName = `${Date.now()}-${Math.random().toString(36).substring(2)}${ext}`;
+        const newPath = path.join(UPLOAD_DIR, newName);
+        fs.copyFileSync(att.storagePath, newPath);
+        return { ...att, storagePath: newPath };
+      }
+      return att;
+    });
+
+    // Create new campaign (copy from original)
+    const newName = subject ? `Re: ${source.name}` : `Re: ${source.name}`;
+    const campaignResult = await pool.query(
+      `INSERT INTO campaigns (
+        name, template_id, list_id, provider, status,
+        throttle_per_second, throttle_per_hour, description,
+        label_name, label_color, attachments, project_id, dynamic_variables
+      ) VALUES ($1, $2, $3, $4, 'draft', $5, $6, $7, $8, $9, $10, $11, $12)
+      RETURNING *`,
+      [
+        newName,
+        source.template_id,
+        source.list_id,
+        source.provider,
+        source.throttle_per_second,
+        source.throttle_per_hour,
+        `Resend to non-openers of "${source.name}"`,
+        source.label_name,
+        source.label_color,
+        JSON.stringify(newAttachments),
+        source.project_id || null,
+        source.dynamic_variables ? JSON.stringify(source.dynamic_variables) : '[]',
+      ]
+    );
+    const newCampaign = campaignResult.rows[0];
+
+    // Create campaign_recipients directly for the new campaign from non-openers
+    const insertResult = await pool.query(
+      `INSERT INTO campaign_recipients (campaign_id, contact_id, email, tracking_token)
+       SELECT $1, cr.contact_id, cr.email, encode(gen_random_bytes(16), 'hex')
+       FROM campaign_recipients cr
+       WHERE cr.campaign_id = $2
+         AND cr.opened_at IS NULL
+         AND cr.status IN ('sent', 'delivered')
+         AND cr.contact_id IS NOT NULL`,
+      [newCampaign.id, id]
+    );
+
+    const recipientCount = insertResult.rowCount ?? 0;
+
+    // Update total_recipients on the new campaign
+    await pool.query(
+      'UPDATE campaigns SET total_recipients = $1, updated_at = NOW() WHERE id = $2',
+      [recipientCount, newCampaign.id]
+    );
+
+    // Re-fetch the campaign with updated total_recipients
+    const finalResult = await pool.query(
+      `SELECT c.*, t.name as template_name, t.subject as template_subject, cl.name as list_name
+       FROM campaigns c
+       LEFT JOIN templates t ON t.id = c.template_id
+       LEFT JOIN contact_lists cl ON cl.id = c.list_id
+       WHERE c.id = $1`,
+      [newCampaign.id]
+    );
+
+    res.status(201).json({ campaign: finalResult.rows[0] });
+  } catch (err) {
+    next(err);
+  }
+}

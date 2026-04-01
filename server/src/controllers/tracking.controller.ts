@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { pool } from '../config/database';
 import { logger } from '../utils/logger';
+import { updateEngagementScore } from '../utils/engagementScore';
 
 // 1x1 transparent GIF pixel
 const PIXEL = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
@@ -10,7 +11,7 @@ export async function trackOpen(req: Request, res: Response, _next: NextFunction
     const { token } = req.params;
 
     const result = await pool.query(
-      'SELECT id, campaign_id, opened_at FROM campaign_recipients WHERE tracking_token = $1',
+      'SELECT id, campaign_id, email, opened_at FROM campaign_recipients WHERE tracking_token = $1',
       [token]
     );
 
@@ -53,6 +54,9 @@ export async function trackOpen(req: Request, res: Response, _next: NextFunction
       } finally {
         client.release();
       }
+
+      // Update engagement score (fire-and-forget, after transaction commit)
+      updateEngagementScore(recipient.email, 'opened');
     }
 
     // Always return pixel
@@ -83,7 +87,7 @@ export async function trackClick(req: Request, res: Response, next: NextFunction
     }
 
     const result = await pool.query(
-      'SELECT id, campaign_id, link_urls, clicked_at FROM campaign_recipients WHERE tracking_token = $1',
+      'SELECT id, campaign_id, email, link_urls, clicked_at FROM campaign_recipients WHERE tracking_token = $1',
       [token]
     );
 
@@ -144,6 +148,9 @@ export async function trackClick(req: Request, res: Response, next: NextFunction
     } finally {
       client.release();
     }
+
+    // Update engagement score (fire-and-forget, after transaction commit)
+    updateEngagementScore(recipient.email, 'clicked');
 
     res.redirect(302, originalUrl);
   } catch (err) {
@@ -217,6 +224,12 @@ export async function unsubscribePost(req: Request, res: Response): Promise<void
           [email, campaign_id]
         );
 
+        // Auto-add to suppression list
+        await client.query(
+          "INSERT INTO suppression_list (email, reason, added_by) VALUES ($1, 'unsubscribed', 'auto') ON CONFLICT DO NOTHING",
+          [email]
+        );
+
         await client.query('COMMIT');
       } catch (txErr) {
         await client.query('ROLLBACK');
@@ -224,6 +237,9 @@ export async function unsubscribePost(req: Request, res: Response): Promise<void
       } finally {
         client.release();
       }
+
+      // Update engagement score (fire-and-forget, after transaction commit)
+      updateEngagementScore(email, 'unsubscribed');
     }
 
     res.send(`

@@ -32,6 +32,7 @@ export interface Campaign {
   open_count: number;
   click_count: number;
   complaint_count: number;
+  pause_reason?: string | null;
   attachments?: CampaignAttachment[];
   is_starred?: boolean;
   is_archived?: boolean;
@@ -227,4 +228,9 @@ export async function updateDynamicVariables(campaignId: string, dynamicVariable
 export async function previewDynamicVariables(campaignId: string) {
   const res = await apiClient.post(`/campaigns/${campaignId}/dynamic-variables/preview`);
   return res.data.previews as Array<{ position: number; variables: Record<string, string> }>;
+}
+
+export async function resendToNonOpeners(id: string, data?: { subject?: string }): Promise<Campaign> {
+  const res = await apiClient.post(`/campaigns/${id}/resend-non-openers`, data || {});
+  return res.data.campaign as Campaign;
 }

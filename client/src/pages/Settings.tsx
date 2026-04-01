@@ -11,7 +11,15 @@ import {
   useUpdateSesConfig,
   useUpdateThrottleDefaults,
   useUpdateReplyTo,
+  useUpdateDailyLimits,
 } from '../hooks/useSettings';
+import {
+  useSuppressionList,
+  useSuppressionCount,
+  useAddToSuppression,
+  useBulkAddToSuppression,
+  useRemoveFromSuppression,
+} from '../hooks/useSuppression';
 import {
   useCustomVariables,
   useCreateCustomVariable,
@@ -44,6 +52,26 @@ function SettingsContent() {
   const [sesErrors, setSesErrors] = useState<Record<string, string>>({});
 
   const [clearHistoryModal, setClearHistoryModal] = useState<'campaigns' | 'contacts' | 'all' | null>(null);
+
+  // Daily send limits state
+  const [dailyLimits, setDailyLimits] = useState({ gmailDailyLimit: 500, sesDailyLimit: 50000 });
+  const updateDailyLimitsMutation = useUpdateDailyLimits();
+
+  // Suppression list state
+  const [suppressionPage, setSuppressionPage] = useState(1);
+  const [suppressionSearch, setSuppressionSearch] = useState('');
+  const [suppressionAddEmail, setSuppressionAddEmail] = useState('');
+  const [suppressionAddReason, setSuppressionAddReason] = useState('');
+  const [suppressionBulkText, setSuppressionBulkText] = useState('');
+  const { data: suppressionData } = useSuppressionList({
+    page: String(suppressionPage),
+    limit: '10',
+    ...(suppressionSearch ? { search: suppressionSearch } : {}),
+  });
+  const { data: suppressionCountData } = useSuppressionCount();
+  const addSuppressionMutation = useAddToSuppression();
+  const bulkAddSuppressionMutation = useBulkAddToSuppression();
+  const removeSuppressionMutation = useRemoveFromSuppression();
 
   // Custom Variables state
   const { data: customVariables = [], isLoading: cvLoading } = useCustomVariables();
@@ -129,6 +157,13 @@ function SettingsContent() {
       }
       if (settingsData.throttle_defaults) setThrottle(settingsData.throttle_defaults);
       if (settingsData.reply_to) setReplyTo(settingsData.reply_to);
+      // Daily limits — stored as individual settings keys
+      const gl = settingsData.gmail_daily_limit;
+      const sl = settingsData.ses_daily_limit;
+      setDailyLimits({
+        gmailDailyLimit: typeof gl === 'number' ? gl : (typeof gl === 'string' ? parseInt(gl, 10) || 500 : 500),
+        sesDailyLimit: typeof sl === 'number' ? sl : (typeof sl === 'string' ? parseInt(sl, 10) || 50000 : 50000),
+      });
     }
   }, [settingsData]);
 
@@ -271,7 +306,7 @@ function SettingsContent() {
       error ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : 'border-gray-300 focus:border-primary-500 focus:ring-primary-500'
     }`;
 
-  const saving = updateGmailMutation.isPending || updateSesMutation.isPending || updateThrottleMutation.isPending || updateReplyToMutation.isPending;
+  const saving = updateGmailMutation.isPending || updateSesMutation.isPending || updateThrottleMutation.isPending || updateReplyToMutation.isPending || updateDailyLimitsMutation.isPending;
 
   return (
     <div className="mx-auto max-w-4xl p-6">
@@ -442,6 +477,188 @@ function SettingsContent() {
           {saving ? 'Saving...' : 'Save Throttle Defaults'}
         </button>
       </form>
+
+      {/* Daily Send Limits */}
+      <form onSubmit={(e) => { e.preventDefault(); updateDailyLimitsMutation.mutate(dailyLimits); }} className="mt-6 rounded-xl bg-white p-6 shadow-sm">
+        <h2 className="text-lg font-semibold text-gray-900">Daily Send Limits</h2>
+        <p className="mt-1 text-sm text-gray-500">Maximum emails per day per provider. Campaigns auto-pause when the limit is reached and auto-resume the next day.</p>
+        <div className="mt-4 grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Gmail Daily Limit</label>
+            <input
+              type="number"
+              value={dailyLimits.gmailDailyLimit}
+              onChange={(e) => setDailyLimits({ ...dailyLimits, gmailDailyLimit: parseInt(e.target.value) || 1 })}
+              min={1}
+              className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700">SES Daily Limit</label>
+            <input
+              type="number"
+              value={dailyLimits.sesDailyLimit}
+              onChange={(e) => setDailyLimits({ ...dailyLimits, sesDailyLimit: parseInt(e.target.value) || 1 })}
+              min={1}
+              className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+            />
+          </div>
+        </div>
+        <button type="submit" disabled={saving} className="mt-4 rounded-lg bg-primary-600 px-4 py-2 text-sm text-white hover:bg-primary-700 disabled:opacity-50">
+          {saving ? 'Saving...' : 'Save Daily Limits'}
+        </button>
+      </form>
+
+      {/* Suppression List */}
+      <div className="mt-6 rounded-xl bg-white p-6 shadow-sm">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">
+              Suppression List
+              {suppressionCountData?.count != null && (
+                <span className="ml-2 inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-700">
+                  {suppressionCountData.count}
+                </span>
+              )}
+            </h2>
+            <p className="mt-1 text-sm text-gray-500">
+              Emails on this list will never be sent to. Unsubscribes and permanent bounces are auto-added.
+            </p>
+          </div>
+        </div>
+
+        {/* Add single email */}
+        <div className="mt-4 flex gap-2">
+          <input
+            type="email"
+            value={suppressionAddEmail}
+            onChange={(e) => setSuppressionAddEmail(e.target.value)}
+            placeholder="email@example.com"
+            className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+          />
+          <input
+            type="text"
+            value={suppressionAddReason}
+            onChange={(e) => setSuppressionAddReason(e.target.value)}
+            placeholder="Reason (optional)"
+            className="w-40 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+          />
+          <button
+            onClick={() => {
+              if (!suppressionAddEmail.trim()) return;
+              addSuppressionMutation.mutate({ email: suppressionAddEmail.trim(), reason: suppressionAddReason || undefined });
+              setSuppressionAddEmail('');
+              setSuppressionAddReason('');
+            }}
+            disabled={addSuppressionMutation.isPending || !suppressionAddEmail.trim()}
+            className="rounded-lg bg-primary-600 px-4 py-2 text-sm text-white hover:bg-primary-700 disabled:opacity-50"
+          >
+            Add
+          </button>
+        </div>
+
+        {/* Bulk add */}
+        <div className="mt-3">
+          <label className="block text-sm font-medium text-gray-700">Bulk Add (one email per line)</label>
+          <textarea
+            value={suppressionBulkText}
+            onChange={(e) => setSuppressionBulkText(e.target.value)}
+            placeholder={"bad@example.com\nbounced@test.com"}
+            rows={3}
+            className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+          />
+          <button
+            onClick={() => {
+              const emails = suppressionBulkText.split('\n').map(e => e.trim()).filter(e => e.includes('@'));
+              if (emails.length === 0) { toast.error('No valid emails found'); return; }
+              bulkAddSuppressionMutation.mutate({ emails });
+              setSuppressionBulkText('');
+            }}
+            disabled={bulkAddSuppressionMutation.isPending || !suppressionBulkText.trim()}
+            className="mt-2 rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            {bulkAddSuppressionMutation.isPending ? 'Adding...' : 'Bulk Add'}
+          </button>
+        </div>
+
+        {/* Search */}
+        <div className="mt-4">
+          <input
+            type="text"
+            value={suppressionSearch}
+            onChange={(e) => { setSuppressionSearch(e.target.value); setSuppressionPage(1); }}
+            placeholder="Search suppressed emails..."
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+          />
+        </div>
+
+        {/* Table */}
+        {suppressionData?.data && suppressionData.data.length > 0 ? (
+          <>
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium text-gray-600">Email</th>
+                    <th className="px-3 py-2 text-left font-medium text-gray-600">Reason</th>
+                    <th className="px-3 py-2 text-left font-medium text-gray-600">Added By</th>
+                    <th className="px-3 py-2 text-left font-medium text-gray-600">Date</th>
+                    <th className="px-3 py-2 text-right font-medium text-gray-600">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {suppressionData.data.map((entry: { id: string; email: string; reason: string; added_by: string; created_at: string }) => (
+                    <tr key={entry.id} className="hover:bg-gray-50">
+                      <td className="px-3 py-2 font-mono text-xs">{entry.email}</td>
+                      <td className="px-3 py-2 text-gray-600">{entry.reason}</td>
+                      <td className="px-3 py-2 text-gray-500">{entry.added_by}</td>
+                      <td className="px-3 py-2 text-gray-400 text-xs">{new Date(entry.created_at).toLocaleDateString()}</td>
+                      <td className="px-3 py-2 text-right">
+                        <button
+                          onClick={() => {
+                            if (confirm(`Remove ${entry.email} from suppression list?`)) {
+                              removeSuppressionMutation.mutate(entry.id);
+                            }
+                          }}
+                          className="text-red-600 hover:text-red-800 text-xs"
+                        >
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {/* Pagination */}
+            {suppressionData.pagination && suppressionData.pagination.totalPages > 1 && (
+              <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
+                <span>Page {suppressionData.pagination.page} of {suppressionData.pagination.totalPages} ({suppressionData.pagination.total} total)</span>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setSuppressionPage(Math.max(1, suppressionPage - 1))}
+                    disabled={suppressionPage <= 1}
+                    className="rounded border border-gray-300 px-2 py-1 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Previous
+                  </button>
+                  <button
+                    onClick={() => setSuppressionPage(suppressionPage + 1)}
+                    disabled={suppressionPage >= suppressionData.pagination.totalPages}
+                    className="rounded border border-gray-300 px-2 py-1 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="mt-4 rounded-lg border-2 border-dashed border-gray-200 p-6 text-center">
+            <p className="text-sm text-gray-500">{suppressionSearch ? 'No matching emails found' : 'No suppressed emails yet'}</p>
+          </div>
+        )}
+      </div>
 
       {/* Test Email */}
       <form onSubmit={handleTestEmail} className="mt-6 rounded-xl bg-white p-6 shadow-sm">

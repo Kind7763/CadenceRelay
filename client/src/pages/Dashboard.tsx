@@ -91,7 +91,7 @@ function DashboardContent() {
   if (!data) return <div className="p-6">No data available</div>;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { stats, volume, topCampaigns, providerStats, bounceDomains, contactStats, statusBreakdown } = data as any;
+  const { stats, volume, topCampaigns, providerStats, bounceDomains, contactStats, statusBreakdown, dailyUsage, engagementTiers } = data as any;
 
   const volumeData = (volume || []).map((v: Record<string, string>) => ({
     date: v.date,
@@ -385,6 +385,40 @@ function DashboardContent() {
         ))}
       </div>
 
+      {/* Daily Send Usage */}
+      {dailyUsage && (
+        <div className="mt-6 rounded-xl bg-white p-5 shadow-sm">
+          <h3 className="font-semibold text-gray-900">Daily Send Usage (UTC)</h3>
+          <p className="text-xs text-gray-500 mt-1">Emails sent today vs. configured daily limits. Campaigns auto-pause when limits are reached.</p>
+          <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            {[
+              { label: 'Gmail', current: toNum(dailyUsage.gmail?.current), limit: toNum(dailyUsage.gmail?.limit), color: 'bg-blue-500' },
+              { label: 'AWS SES', current: toNum(dailyUsage.ses?.current), limit: toNum(dailyUsage.ses?.limit), color: 'bg-orange-500' },
+            ].map((p) => {
+              const pct = p.limit > 0 ? Math.min(100, (p.current / p.limit) * 100) : 0;
+              const isNearLimit = pct >= 80;
+              return (
+                <div key={p.label} className="rounded-lg border border-gray-200 p-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-gray-700">{p.label}</span>
+                    <span className={`text-sm font-bold ${isNearLimit ? 'text-red-600' : 'text-gray-900'}`}>
+                      {p.current.toLocaleString()} / {p.limit.toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="mt-2 h-2.5 w-full rounded-full bg-gray-200">
+                    <div
+                      className={`h-2.5 rounded-full transition-all ${isNearLimit ? 'bg-red-500' : p.color}`}
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                  <span className="mt-1 block text-xs text-gray-400">{pct.toFixed(1)}% used</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Charts row 1 */}
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
         <div className="rounded-xl bg-white p-5 shadow-sm">
@@ -485,15 +519,51 @@ function DashboardContent() {
         </div>
       )}
 
-      {/* Contact Health */}
-      <div className="mt-6 rounded-xl bg-white p-5 shadow-sm">
-        <h3 className="font-semibold text-gray-900">Contact Health</h3>
-        <div className="mt-3 grid grid-cols-5 gap-3 text-center text-sm">
-          <div><p className="text-2xl font-bold text-gray-900">{num(contactStats?.total)}</p><span className="text-gray-500">Total</span></div>
-          <div><p className="text-2xl font-bold text-green-600">{num(contactStats?.active)}</p><span className="text-gray-500">Active</span></div>
-          <div><p className="text-2xl font-bold text-red-600">{num(contactStats?.bounced)}</p><span className="text-gray-500">Bounced</span></div>
-          <div><p className="text-2xl font-bold text-orange-600">{num(contactStats?.complained)}</p><span className="text-gray-500">Complained</span></div>
-          <div><p className="text-2xl font-bold text-gray-500">{num(contactStats?.unsubscribed)}</p><span className="text-gray-500">Unsubscribed</span></div>
+      {/* Contact Health + Engagement */}
+      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div className="rounded-xl bg-white p-5 shadow-sm">
+          <h3 className="font-semibold text-gray-900">Contact Health</h3>
+          <div className="mt-3 grid grid-cols-5 gap-3 text-center text-sm">
+            <div><p className="text-2xl font-bold text-gray-900">{num(contactStats?.total)}</p><span className="text-gray-500">Total</span></div>
+            <div><p className="text-2xl font-bold text-green-600">{num(contactStats?.active)}</p><span className="text-gray-500">Active</span></div>
+            <div><p className="text-2xl font-bold text-red-600">{num(contactStats?.bounced)}</p><span className="text-gray-500">Bounced</span></div>
+            <div><p className="text-2xl font-bold text-orange-600">{num(contactStats?.complained)}</p><span className="text-gray-500">Complained</span></div>
+            <div><p className="text-2xl font-bold text-gray-500">{num(contactStats?.unsubscribed)}</p><span className="text-gray-500">Unsubscribed</span></div>
+          </div>
+        </div>
+
+        {/* Contact Engagement Tiers */}
+        <div className="rounded-xl bg-white p-5 shadow-sm">
+          <h3 className="font-semibold text-gray-900">Contact Engagement</h3>
+          {engagementTiers && engagementTiers.length > 0 ? (
+            <div className="mt-3 grid grid-cols-3 gap-3 text-center text-sm">
+              {(() => {
+                const tierMap: Record<string, number> = {};
+                for (const t of engagementTiers) tierMap[t.tier] = toNum(t.count);
+                return (
+                  <>
+                    <div className="rounded-lg bg-green-50 p-4">
+                      <p className="text-2xl font-bold text-green-600">{num(tierMap.hot || 0)}</p>
+                      <span className="text-green-700 font-medium">Hot</span>
+                      <p className="text-xs text-green-500 mt-0.5">Score 70+</p>
+                    </div>
+                    <div className="rounded-lg bg-yellow-50 p-4">
+                      <p className="text-2xl font-bold text-yellow-600">{num(tierMap.warm || 0)}</p>
+                      <span className="text-yellow-700 font-medium">Warm</span>
+                      <p className="text-xs text-yellow-500 mt-0.5">Score 40-69</p>
+                    </div>
+                    <div className="rounded-lg bg-red-50 p-4">
+                      <p className="text-2xl font-bold text-red-600">{num(tierMap.cold || 0)}</p>
+                      <span className="text-red-700 font-medium">Cold</span>
+                      <p className="text-xs text-red-500 mt-0.5">Score &lt;40</p>
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+          ) : (
+            <div className="mt-3 text-center text-gray-400 text-sm">No engagement data yet</div>
+          )}
         </div>
       </div>
 

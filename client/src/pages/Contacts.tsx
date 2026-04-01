@@ -522,6 +522,10 @@ function ContactsContent() {
   const [categoryFilter, setCategoryFilter] = useState('');
   const [managementFilter, setManagementFilter] = useState('');
 
+  // Engagement filters
+  const [engagementMin, setEngagementMin] = useState('');
+  const [engagementMax, setEngagementMax] = useState('');
+
   const [sortBy, setSortBy] = useState('');
   const [sortDir, setSortDir] = useState<'ASC' | 'DESC'>('DESC');
   const [showAddModal, setShowAddModal] = useState(false);
@@ -556,6 +560,8 @@ function ContactsContent() {
     management: managementFilter || undefined,
     sortBy: sortBy || undefined,
     sortDir: sortBy ? sortDir : undefined,
+    engagementMin: engagementMin || undefined,
+    engagementMax: engagementMax || undefined,
   });
 
   const { data: lists = [] } = useListsList();
@@ -891,6 +897,45 @@ function ContactsContent() {
             </div>
           </div>
 
+          {/* Engagement Score Filter */}
+          <div className="mt-3 border-t border-gray-200 pt-3">
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Engagement Score</p>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-gray-500">Min</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={engagementMin}
+                  onChange={(e) => { setEngagementMin(e.target.value); setPage(1); }}
+                  placeholder="0"
+                  className="w-20 rounded-lg border border-gray-300 px-2 py-1.5 text-sm"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-gray-500">Max</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={engagementMax}
+                  onChange={(e) => { setEngagementMax(e.target.value); setPage(1); }}
+                  placeholder="100"
+                  className="w-20 rounded-lg border border-gray-300 px-2 py-1.5 text-sm"
+                />
+              </div>
+              <div className="flex gap-1">
+                <button onClick={() => { setEngagementMin('70'); setEngagementMax(''); setPage(1); }} className="rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-700 hover:bg-green-200">Hot 70+</button>
+                <button onClick={() => { setEngagementMin('40'); setEngagementMax('69'); setPage(1); }} className="rounded-full bg-yellow-100 px-2.5 py-0.5 text-xs font-medium text-yellow-700 hover:bg-yellow-200">Warm 40-69</button>
+                <button onClick={() => { setEngagementMin(''); setEngagementMax('39'); setPage(1); }} className="rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-700 hover:bg-red-200">Cold &lt;40</button>
+              </div>
+              {(engagementMin || engagementMax) && (
+                <button onClick={() => { setEngagementMin(''); setEngagementMax(''); setPage(1); }} className="text-xs text-gray-500 hover:text-gray-700">Clear</button>
+              )}
+            </div>
+          </div>
+
           {/* Active filter chips */}
           {activeFilterCount > 0 && (
             <div className="mt-3 flex flex-wrap gap-2">
@@ -978,13 +1023,16 @@ function ContactsContent() {
                     <th className="w-[5%] px-3 py-3 text-center font-medium text-gray-600 cursor-pointer select-none hover:text-gray-900" onClick={() => handleSort('send_count')}>
                       Sent<SortIndicator column="send_count" />
                     </th>
+                    <th className="w-[8%] px-3 py-3 text-center font-medium text-gray-600 cursor-pointer select-none hover:text-gray-900" onClick={() => handleSort('engagement_score')}>
+                      Score<SortIndicator column="engagement_score" />
+                    </th>
                     <th className="w-[10%] px-3 py-3 text-right font-medium text-gray-600">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {contacts.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="px-4 py-12 text-center">
+                      <td colSpan={10} className="px-4 py-12 text-center">
                         <div className="text-gray-400">
                           <p className="text-lg font-medium">No contacts found</p>
                           <p className="mt-1 text-sm">
@@ -1029,6 +1077,14 @@ function ContactsContent() {
                         }`}>{c.status}</span>
                       </td>
                       <td className="px-3 py-3 text-center cursor-pointer" onClick={() => navigate(`/contacts/${c.id}`)}>{c.send_count}</td>
+                      <td className="px-3 py-3 text-center cursor-pointer" onClick={() => navigate(`/contacts/${c.id}`)}>
+                        {(() => {
+                          const score = c.engagement_score ?? 50;
+                          if (score >= 70) return <span className="inline-block rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">Hot</span>;
+                          if (score >= 40) return <span className="inline-block rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-700">Warm</span>;
+                          return <span className="inline-block rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">Cold</span>;
+                        })()}
+                      </td>
                       <td className="px-3 py-3 text-right">
                         <div className="flex items-center justify-end gap-1">
                           <button

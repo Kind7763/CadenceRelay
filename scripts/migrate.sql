@@ -262,3 +262,23 @@ ALTER TABLE contact_lists ADD COLUMN IF NOT EXISTS project_id uuid REFERENCES pr
 CREATE INDEX IF NOT EXISTS campaigns_project_id_idx ON campaigns(project_id);
 CREATE INDEX IF NOT EXISTS templates_project_id_idx ON templates(project_id);
 CREATE INDEX IF NOT EXISTS contact_lists_project_id_idx ON contact_lists(project_id);
+
+-- Daily send limits
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS pause_reason text;
+INSERT INTO settings (key, value) VALUES ('gmail_daily_limit', '500') ON CONFLICT (key) DO NOTHING;
+INSERT INTO settings (key, value) VALUES ('ses_daily_limit', '50000') ON CONFLICT (key) DO NOTHING;
+
+-- Suppression list
+CREATE TABLE IF NOT EXISTS suppression_list (
+    id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+    email varchar(320) NOT NULL,
+    reason text DEFAULT 'manual',
+    added_by varchar(50) DEFAULT 'manual',
+    created_at timestamptz DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS suppression_email_idx ON suppression_list(LOWER(email));
+
+-- Engagement scoring
+ALTER TABLE contacts ADD COLUMN IF NOT EXISTS engagement_score integer DEFAULT 50;
+CREATE INDEX IF NOT EXISTS contacts_engagement_idx ON contacts(engagement_score);
+INSERT INTO settings (key, value) VALUES ('engagement_scoring', '{"opened": 3, "clicked": 5, "bounced": -15, "complained": -30, "unsubscribed": -50, "decay_per_week": -5}') ON CONFLICT (key) DO NOTHING;

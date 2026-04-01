@@ -12,6 +12,7 @@ import {
   toggleStar,
   toggleArchive,
   updateCampaignLabel,
+  resendToNonOpeners,
   Campaign,
 } from '../api/campaigns.api';
 import { getRecipientEvents } from '../api/analytics.api';
@@ -113,6 +114,11 @@ export default function CampaignDetail() {
   const [descriptionValue, setDescriptionValue] = useState('');
   const [showLabelPicker, setShowLabelPicker] = useState(false);
   const [duplicating, setDuplicating] = useState(false);
+
+  // Resend to Non-Openers state
+  const [showResendModal, setShowResendModal] = useState(false);
+  const [resendSubject, setResendSubject] = useState('');
+  const [resending, setResending] = useState(false);
 
   async function handleReschedule() {
     if (!id || !newScheduledAt) return;
@@ -436,6 +442,14 @@ export default function CampaignDetail() {
           </button>
           {campaign.status === 'sending' && <button onClick={handlePause} className="rounded-lg border border-orange-300 px-4 py-2 text-sm text-orange-600">Pause</button>}
           {campaign.status === 'paused' && <button onClick={handleResume} className="rounded-lg bg-primary-600 px-4 py-2 text-sm text-white">Resume</button>}
+          {campaign.status === 'completed' && (
+            <button
+              onClick={() => { setResendSubject(`Re: ${campaign.template_subject || campaign.name}`); setShowResendModal(true); }}
+              className="rounded-lg border border-green-300 px-4 py-2 text-sm text-green-700 hover:bg-green-50"
+            >
+              Resend to Non-Openers
+            </button>
+          )}
           {(campaign.status === 'draft' || campaign.status === 'scheduled') && (
             <button onClick={() => navigate(`/campaigns/${id}/edit`)} className="rounded-lg bg-primary-600 px-4 py-2 text-sm text-white hover:bg-primary-700">
               Edit & Send
@@ -443,6 +457,17 @@ export default function CampaignDetail() {
           )}
         </div>
       </div>
+
+      {/* Daily limit pause banner */}
+      {campaign.pause_reason && campaign.pause_reason.startsWith('Daily') && (
+        <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3">
+          <div className="flex items-center gap-2">
+            <svg className="h-5 w-5 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+            <span className="text-sm font-medium text-amber-800">{campaign.pause_reason}</span>
+          </div>
+          <p className="mt-1 text-xs text-amber-600">This campaign was automatically paused. It will resume when the daily send quota resets (midnight UTC).</p>
+        </div>
+      )}
 
       {/* Progress */}
       {campaign.status === 'sending' && (
@@ -846,6 +871,76 @@ export default function CampaignDetail() {
           </div>
         )}
       </div>
+
+      {/* Resend to Non-Openers Modal */}
+      {showResendModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowResendModal(false)}>
+          <div className="w-full max-w-md rounded-xl bg-white p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold">Resend to Non-Openers</h3>
+            <p className="mt-2 text-sm text-gray-600">
+              Create a new campaign targeting recipients who did not open this email.
+            </p>
+
+            {/* Non-opener count from campaign stats */}
+            <div className="mt-3 rounded-lg bg-gray-50 p-3">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-gray-500">Total recipients</span>
+                <span className="font-medium">{totalRecipients}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm mt-1">
+                <span className="text-gray-500">Opened</span>
+                <span className="font-medium text-green-600">{openCount}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm mt-1">
+                <span className="text-gray-500">Non-openers (estimated)</span>
+                <span className="font-bold text-orange-600">{Math.max(0, sentCount - openCount)}</span>
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <label className="mb-1 block text-sm font-medium text-gray-700">Subject Line</label>
+              <input
+                type="text"
+                value={resendSubject}
+                onChange={(e) => setResendSubject(e.target.value)}
+                placeholder="Subject for the resend campaign"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none"
+              />
+              <p className="mt-1 text-xs text-gray-400">The new campaign will use the same template. You can edit it before sending.</p>
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => setShowResendModal(false)}
+                disabled={resending}
+                className="rounded-lg border border-gray-300 px-4 py-2 text-sm hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  if (!id) return;
+                  setResending(true);
+                  try {
+                    const newCampaign = await resendToNonOpeners(id, { subject: resendSubject || undefined });
+                    toast.success('Resend campaign created');
+                    setShowResendModal(false);
+                    if (newCampaign?.id) navigate(`/campaigns/${newCampaign.id}`);
+                  } catch (err) {
+                    toast.error((err as Error).message || 'Failed to create resend campaign');
+                  } finally {
+                    setResending(false);
+                  }
+                }}
+                disabled={resending}
+                className="rounded-lg bg-primary-600 px-4 py-2 text-sm text-white hover:bg-primary-700 disabled:opacity-50"
+              >
+                {resending ? 'Creating...' : 'Create Resend Campaign'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

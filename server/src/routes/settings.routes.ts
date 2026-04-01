@@ -6,6 +6,7 @@ import {
   updateSesConfig,
   updateThrottleDefaults,
   updateReplyTo,
+  updateDailyLimits,
   testEmail,
 } from '../controllers/settings.controller';
 import { validateBody } from '../middleware/validateRequest';
@@ -41,6 +42,11 @@ const replyToSchema = z.object({
   replyTo: z.union([z.string().email(), z.literal('')]),
 });
 
+const dailyLimitsSchema = z.object({
+  gmailDailyLimit: z.number().min(1).max(1000000),
+  sesDailyLimit: z.number().min(1).max(1000000),
+});
+
 const testEmailSchema = z.object({
   to: z.string().email(),
   subject: z.string().optional(),
@@ -54,6 +60,7 @@ router.put('/gmail', validateBody(gmailSchema), updateGmailConfig);
 router.put('/ses', validateBody(sesSchema), updateSesConfig);
 router.put('/throttle', validateBody(throttleSchema), updateThrottleDefaults);
 router.put('/reply-to', validateBody(replyToSchema), updateReplyTo);
+router.put('/daily-limits', validateBody(dailyLimitsSchema), updateDailyLimits);
 router.post('/test-email', validateBody(testEmailSchema), testEmail);
 
 export default router;

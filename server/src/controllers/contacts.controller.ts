@@ -24,12 +24,13 @@ const SORT_COLUMN_MAP: Record<string, string> = {
   created_at: 'c.created_at',
   state: 'c.state',
   district: 'c.district',
+  engagement_score: 'c.engagement_score',
 };
 
 export async function listContacts(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { page, limit, offset } = parsePagination(req.query as { page?: string; limit?: string });
-    const { search, status, listId, minSendCount, maxSendCount, state, district, block, category, management, sortBy, sortDir } = req.query;
+    const { search, status, listId, minSendCount, maxSendCount, state, district, block, category, management, sortBy, sortDir, engagement_min, engagement_max } = req.query;
 
     let whereClause = 'WHERE 1=1';
     const params: unknown[] = [];
@@ -131,6 +132,16 @@ export async function listContacts(req: Request, res: Response, next: NextFuncti
       const managements = (management as string).split(',').map(s => s.trim()).filter(Boolean);
       whereClause += ` AND c.management = ANY($${paramIndex})`;
       params.push(managements);
+      paramIndex++;
+    }
+    if (engagement_min) {
+      whereClause += ` AND COALESCE(c.engagement_score, 50) >= $${paramIndex}`;
+      params.push(parseInt(engagement_min as string));
+      paramIndex++;
+    }
+    if (engagement_max) {
+      whereClause += ` AND COALESCE(c.engagement_score, 50) <= $${paramIndex}`;
+      params.push(parseInt(engagement_max as string));
       paramIndex++;
     }
 

@@ -36,6 +36,11 @@ export async function updateThrottleDefaults(config: { perSecond: number; perHou
   return res.data;
 }
 
+export async function updateDailyLimits(config: { gmailDailyLimit: number; sesDailyLimit: number }) {
+  const res = await apiClient.put('/settings/daily-limits', config);
+  return res.data;
+}
+
 export async function sendTestEmail(to: string, options?: { subject?: string; html?: string; campaignId?: string }) {
   const res = await apiClient.post('/settings/test-email', { to, ...options });
   return res.data;

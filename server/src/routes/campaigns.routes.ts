@@ -5,7 +5,7 @@ import {
   bulkDeleteCampaigns, scheduleCampaign, sendCampaign, pauseCampaign, resumeCampaign,
   getCampaignRecipients, addAttachments, removeAttachment, downloadAttachment,
   duplicateCampaign, toggleStar, toggleArchive, updateLabel,
-  updateDynamicVariables, previewDynamicVariables,
+  updateDynamicVariables, previewDynamicVariables, resendToNonOpeners,
 } from '../controllers/campaigns.controller';
 import { validateBody } from '../middleware/validateRequest';
 import { z } from 'zod';
@@ -59,6 +59,7 @@ router.post('/:id/resume', resumeCampaign);
 router.get('/:id/recipients', getCampaignRecipients);
 // Campaign management actions
 router.post('/:id/duplicate', duplicateCampaign);
+router.post('/:id/resend-non-openers', resendToNonOpeners);
 router.put('/:id/star', toggleStar);
 router.put('/:id/archive', toggleArchive);
 router.put('/:id/label', updateLabel);

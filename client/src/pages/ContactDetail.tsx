@@ -209,6 +209,32 @@ export default function ContactDetail() {
             <p className="font-medium">{contact.last_sent_at ? new Date(contact.last_sent_at).toLocaleDateString() : 'Never'}</p>
           </div>
         </div>
+
+        {/* Engagement Score Bar */}
+        <div className="mt-4">
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-gray-500">Engagement Score</span>
+            <span className={`text-sm font-semibold ${
+              (contact.engagement_score ?? 50) >= 70 ? 'text-green-600' :
+              (contact.engagement_score ?? 50) >= 40 ? 'text-yellow-600' :
+              'text-red-600'
+            }`}>
+              {contact.engagement_score ?? 50}/100
+              {' '}
+              ({(contact.engagement_score ?? 50) >= 70 ? 'Hot' : (contact.engagement_score ?? 50) >= 40 ? 'Warm' : 'Cold'})
+            </span>
+          </div>
+          <div className="mt-1 h-2.5 w-full rounded-full bg-gray-200">
+            <div
+              className={`h-2.5 rounded-full transition-all ${
+                (contact.engagement_score ?? 50) >= 70 ? 'bg-green-500' :
+                (contact.engagement_score ?? 50) >= 40 ? 'bg-yellow-500' :
+                'bg-red-500'
+              }`}
+              style={{ width: `${contact.engagement_score ?? 50}%` }}
+            />
+          </div>
+        </div>
       </div>
 
       {/* School Information */}

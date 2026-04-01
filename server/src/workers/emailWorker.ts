@@ -11,6 +11,8 @@ import {
   PermanentBounceError, TemporaryBounceError, RateLimitError, AuthenticationError,
   EmailAttachment,
 } from '../services/email/EmailProvider';
+import { checkDailyLimit, incrementDailySend } from '../utils/dailyLimits';
+import { isEmailSuppressed } from '../controllers/suppression.controller';
 
 interface DispatchJobData {
   campaignId: string;
@@ -355,6 +357,44 @@ export function startEmailSendWorker(): Worker {
         throw new Error('Campaign paused');
       }
 
+      // --- Suppression check ---
+      const suppressed = await isEmailSuppressed(email);
+      if (suppressed) {
+        await pool.query(
+          "UPDATE campaign_recipients SET status = 'failed', error_message = 'Email suppressed' WHERE id = $1",
+          [campaignRecipientId]
+        );
+        await pool.query(
+          'UPDATE campaigns SET failed_count = failed_count + 1, updated_at = NOW() WHERE id = $1',
+          [campaignId]
+        );
+        logger.info(`Skipping suppressed email ${email}`);
+        // Check campaign completion
+        const suppStats = await pool.query(
+          'SELECT total_recipients, sent_count, failed_count, bounce_count FROM campaigns WHERE id = $1',
+          [campaignId]
+        );
+        const suppCamp = suppStats.rows[0];
+        if (suppCamp && (Number(suppCamp.sent_count) + Number(suppCamp.failed_count) + Number(suppCamp.bounce_count)) >= Number(suppCamp.total_recipients)) {
+          await pool.query(
+            "UPDATE campaigns SET status = 'completed', completed_at = NOW(), updated_at = NOW() WHERE id = $1",
+            [campaignId]
+          );
+        }
+        return; // Don't throw — no retry needed
+      }
+
+      // --- Daily send limit check ---
+      const limitCheck = await checkDailyLimit(provider);
+      if (!limitCheck.allowed) {
+        await pool.query(
+          "UPDATE campaigns SET status = 'paused', pause_reason = 'Daily send limit reached', updated_at = NOW() WHERE id = $1 AND status = 'sending'",
+          [campaignId]
+        );
+        logger.warn(`Daily limit reached for ${provider}: ${limitCheck.current}/${limitCheck.limit}. Pausing campaign ${campaignId}`);
+        throw new UnrecoverableError('DAILY_LIMIT_REACHED');
+      }
+
       // Inject tracking pixel
       const pixelUrl = `${trackingDomain}/api/v1/t/o/${trackingToken}`;
       const trackingPixel = `<img src="${pixelUrl}" width="1" height="1" style="display:block" alt="" />`;
@@ -426,6 +466,9 @@ export function startEmailSendWorker(): Worker {
         // Rate limits and temporary errors: rethrow for BullMQ retry
         throw sendErr;
       }
+
+      // Increment daily send counter
+      await incrementDailySend(provider);
 
       // Update campaign_recipient
       await pool.query(

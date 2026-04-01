@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { pool } from '../config/database';
 import { logger } from '../utils/logger';
 import { eventProcessingQueue } from '../queues/emailQueue';
+import { updateEngagementScore } from '../utils/engagementScore';
 
 export async function handleSnsWebhook(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -107,6 +108,13 @@ export async function processSnsEvent(notificationType: string, message: Record<
             "UPDATE contacts SET status = 'bounced', bounce_count = bounce_count + 1, updated_at = NOW() WHERE email = $1",
             [email]
           );
+          // Auto-add to suppression list
+          await pool.query(
+            "INSERT INTO suppression_list (email, reason, added_by) VALUES ($1, 'permanent_bounce', 'auto') ON CONFLICT DO NOTHING",
+            [email]
+          );
+          // Update engagement score for permanent bounce
+          updateEngagementScore(email, 'bounced');
         }
       } else {
         logger.info('Duplicate bounce event ignored', { recipientId, messageId });
@@ -134,6 +142,8 @@ export async function processSnsEvent(notificationType: string, message: Record<
           "UPDATE contacts SET status = 'complained', updated_at = NOW() WHERE email = $1",
           [email]
         );
+        // Update engagement score for complaint
+        updateEngagementScore(email, 'complained');
       } else {
         logger.info('Duplicate complaint event ignored', { recipientId, messageId });
       }

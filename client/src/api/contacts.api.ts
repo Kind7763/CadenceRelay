@@ -18,6 +18,7 @@ export interface Contact {
   category: string | null;
   management: string | null;
   address: string | null;
+  engagement_score?: number;
   lists?: { id: string; name: string }[];
 }
 
