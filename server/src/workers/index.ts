@@ -7,6 +7,7 @@ import { startEventProcessingWorker } from './eventWorker';
 import { checkScheduledCampaigns } from './campaignScheduler';
 import { checkGmailBounces } from './gmailBounceChecker';
 import { runEngagementDecay } from './engagementDecay';
+import { processAutomationSteps } from './automationProcessor';
 
 async function startWorker(): Promise<void> {
   logger.info(`Starting worker in ${config.nodeEnv} mode`);
@@ -77,12 +78,33 @@ async function startWorker(): Promise<void> {
 
   logger.info('Engagement decay worker started (24h interval)');
 
+  // Start automation processor (every 5 minutes)
+  const automationInterval = setInterval(async () => {
+    try {
+      await processAutomationSteps();
+    } catch (err) {
+      logger.error('Automation processor error', { error: (err as Error).message });
+    }
+  }, 5 * 60 * 1000);
+
+  // Run automation processor once after 45s delay
+  setTimeout(async () => {
+    try {
+      await processAutomationSteps();
+    } catch (err) {
+      logger.error('Initial automation processor error', { error: (err as Error).message });
+    }
+  }, 45000);
+
+  logger.info('Automation processor started (5 min interval)');
+
   // Graceful shutdown
   const shutdown = async (signal: string) => {
     logger.info(`${signal} received. Shutting down workers...`);
     clearInterval(schedulerInterval);
     clearInterval(bounceCheckInterval);
     clearInterval(engagementDecayInterval);
+    clearInterval(automationInterval);
     await dispatchWorker.close();
     await sendWorker.close();
     await eventWorker.close();

@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { pool } from '../config/database';
 import { logger } from '../utils/logger';
 import { updateEngagementScore } from '../utils/engagementScore';
+import { fireAutomationTrigger } from '../workers/automationProcessor';
 
 // 1x1 transparent GIF pixel
 const PIXEL = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
@@ -11,7 +12,7 @@ export async function trackOpen(req: Request, res: Response, _next: NextFunction
     const { token } = req.params;
 
     const result = await pool.query(
-      'SELECT id, campaign_id, email, opened_at FROM campaign_recipients WHERE tracking_token = $1',
+      'SELECT id, campaign_id, contact_id, email, opened_at FROM campaign_recipients WHERE tracking_token = $1',
       [token]
     );
 
@@ -57,6 +58,11 @@ export async function trackOpen(req: Request, res: Response, _next: NextFunction
 
       // Update engagement score (fire-and-forget, after transaction commit)
       updateEngagementScore(recipient.email, 'opened');
+
+      // Fire automation trigger (fire-and-forget)
+      if (recipient.contact_id) {
+        fireAutomationTrigger('email_opened', recipient.contact_id, { campaignId: recipient.campaign_id }).catch(() => {});
+      }
     }
 
     // Always return pixel
@@ -87,7 +93,7 @@ export async function trackClick(req: Request, res: Response, next: NextFunction
     }
 
     const result = await pool.query(
-      'SELECT id, campaign_id, email, link_urls, clicked_at FROM campaign_recipients WHERE tracking_token = $1',
+      'SELECT id, campaign_id, contact_id, email, link_urls, clicked_at FROM campaign_recipients WHERE tracking_token = $1',
       [token]
     );
 
@@ -151,6 +157,11 @@ export async function trackClick(req: Request, res: Response, next: NextFunction
 
     // Update engagement score (fire-and-forget, after transaction commit)
     updateEngagementScore(recipient.email, 'clicked');
+
+    // Fire automation trigger (fire-and-forget)
+    if (recipient.contact_id) {
+      fireAutomationTrigger('email_clicked', recipient.contact_id, { campaignId: recipient.campaign_id }).catch(() => {});
+    }
 
     res.redirect(302, originalUrl);
   } catch (err) {

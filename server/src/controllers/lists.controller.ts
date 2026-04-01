@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { pool } from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { parsePagination, buildPaginatedResult } from '../utils/pagination';
+import { fireAutomationTrigger } from '../workers/automationProcessor';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function validateUUID(id: string, label = 'ID'): void {
@@ -341,6 +342,9 @@ export async function addContactsToList(req: Request, res: Response, next: NextF
       'UPDATE contact_lists SET contact_count = (SELECT COUNT(*) FROM contact_list_members WHERE list_id = $1), updated_at = NOW() WHERE id = $1',
       [id]
     );
+
+    // Fire automation triggers (fire-and-forget)
+    fireAutomationTrigger('list_joined', contactIds, { listId: id }).catch(() => {});
 
     res.json({ message: `Added ${contactIds.length} contacts to list` });
   } catch (err) {

@@ -2,6 +2,7 @@ import { NavLink } from 'react-router-dom';
 import {
   HomeIcon,
   PaperAirplaneIcon,
+  BoltIcon,
   UsersIcon,
   QueueListIcon,
   DocumentTextIcon,
@@ -16,6 +17,7 @@ const navigation = [
   { name: 'Dashboard', href: '/', icon: HomeIcon },
   { name: 'Projects', href: '/projects', icon: FolderIcon },
   { name: 'Campaigns', href: '/campaigns', icon: PaperAirplaneIcon },
+  { name: 'Automations', href: '/automations', icon: BoltIcon },
   { name: 'Contacts', href: '/contacts', icon: UsersIcon },
   { name: 'Import', href: '/import', icon: ArrowUpTrayIcon },
   { name: 'Lists', href: '/lists', icon: QueueListIcon },

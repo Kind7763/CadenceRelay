@@ -17,6 +17,9 @@ const TemplateEditor = lazy(() => import('./pages/TemplateEditor'));
 const Campaigns = lazy(() => import('./pages/Campaigns'));
 const CampaignCreate = lazy(() => import('./pages/CampaignCreate'));
 const CampaignDetail = lazy(() => import('./pages/CampaignDetail'));
+const Automations = lazy(() => import('./pages/Automations'));
+const AutomationBuilder = lazy(() => import('./pages/AutomationBuilder'));
+const AutomationDetail = lazy(() => import('./pages/AutomationDetail'));
 const Analytics = lazy(() => import('./pages/Analytics'));
 const Import = lazy(() => import('./pages/Import'));
 const Projects = lazy(() => import('./pages/Projects'));
@@ -56,6 +59,10 @@ export default function App() {
                       <Route path="/campaigns/new" element={<CampaignCreate />} />
                       <Route path="/campaigns/:id/edit" element={<CampaignCreate />} />
                       <Route path="/campaigns/:id" element={<CampaignDetail />} />
+                      <Route path="/automations" element={<Automations />} />
+                      <Route path="/automations/new" element={<AutomationBuilder />} />
+                      <Route path="/automations/:id" element={<AutomationDetail />} />
+                      <Route path="/automations/:id/edit" element={<AutomationBuilder />} />
                       <Route path="/contacts" element={<Contacts />} />
                       <Route path="/contacts/:id" element={<ContactDetail />} />
                       <Route path="/import" element={<Import />} />

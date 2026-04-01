@@ -4,6 +4,7 @@ import { AppError } from '../middleware/errorHandler';
 import { parsePagination, buildPaginatedResult } from '../utils/pagination';
 import { verifyAdminPassword } from '../utils/adminAuth';
 import { cacheThrough, cacheDel } from '../utils/cache';
+import { fireAutomationTrigger } from '../workers/automationProcessor';
 import fs from 'fs';
 import readline from 'readline';
 
@@ -252,6 +253,9 @@ export async function createContact(req: Request, res: Response, next: NextFunct
         [listIds]
       );
     }
+
+    // Fire automation triggers (fire-and-forget)
+    fireAutomationTrigger('contact_added', contact.id).catch(() => {});
 
     res.status(201).json({ contact });
   } catch (err) {

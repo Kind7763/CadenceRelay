@@ -287,3 +287,47 @@ INSERT INTO settings (key, value) VALUES ('engagement_scoring', '{"opened": 3, "
 ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS ab_test jsonb DEFAULT NULL;
 ALTER TABLE campaign_recipients ADD COLUMN IF NOT EXISTS ab_variant varchar(10);
 CREATE INDEX IF NOT EXISTS cr_ab_variant_idx ON campaign_recipients(campaign_id, ab_variant);
+
+-- Email Automations (Drip Sequences)
+CREATE TABLE IF NOT EXISTS automations (
+    id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name varchar(255) NOT NULL,
+    description text,
+    status varchar(20) NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'active', 'paused', 'archived')),
+    trigger_type varchar(30) NOT NULL CHECK (trigger_type IN ('manual', 'contact_added', 'list_joined', 'email_opened', 'email_clicked', 'tag_added')),
+    trigger_config jsonb DEFAULT '{}'::jsonb,
+    project_id uuid REFERENCES projects(id) ON DELETE SET NULL,
+    provider varchar(10) DEFAULT 'ses' CHECK (provider IN ('gmail', 'ses')),
+    total_enrolled integer DEFAULT 0,
+    total_completed integer DEFAULT 0,
+    created_at timestamptz DEFAULT NOW(),
+    updated_at timestamptz DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS automation_steps (
+    id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+    automation_id uuid NOT NULL REFERENCES automations(id) ON DELETE CASCADE,
+    step_order integer NOT NULL,
+    template_id uuid REFERENCES templates(id),
+    subject_override varchar(998),
+    delay_days integer DEFAULT 0,
+    delay_hours integer DEFAULT 0,
+    delay_minutes integer DEFAULT 0,
+    created_at timestamptz DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS auto_steps_automation_idx ON automation_steps(automation_id, step_order);
+
+CREATE TABLE IF NOT EXISTS automation_enrollments (
+    id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+    automation_id uuid NOT NULL REFERENCES automations(id) ON DELETE CASCADE,
+    contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+    current_step integer DEFAULT 0,
+    status varchar(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'completed', 'paused', 'cancelled')),
+    enrolled_at timestamptz DEFAULT NOW(),
+    next_step_at timestamptz,
+    completed_at timestamptz,
+    last_step_sent_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS auto_enroll_automation_idx ON automation_enrollments(automation_id);
+CREATE INDEX IF NOT EXISTS auto_enroll_next_step_idx ON automation_enrollments(next_step_at) WHERE status = 'active';
+CREATE UNIQUE INDEX IF NOT EXISTS auto_enroll_unique_idx ON automation_enrollments(automation_id, contact_id);
