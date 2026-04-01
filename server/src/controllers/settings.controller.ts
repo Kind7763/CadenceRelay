@@ -1,10 +1,13 @@
 import { Request, Response, NextFunction } from 'express';
 import fs from 'fs';
+import dns from 'dns';
 import { pool } from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { cacheThrough, cacheDel } from '../utils/cache';
 import { encryptCredential, decryptCredential, isEncrypted } from '../utils/crypto';
 import { logger } from '../utils/logger';
+
+const dnsPromises = dns.promises;
 
 // FIX: Mask sensitive fields so credentials are never returned in plaintext
 const SENSITIVE_KEYS = ['pass', 'password', 'secretAccessKey', 'secret', 'accessKeyId'];
@@ -343,6 +346,252 @@ export async function testEmail(req: Request, res: Response, next: NextFunction)
     });
 
     res.json({ message: `Test email sent to ${to} via ${provider}` });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ─── Domain Health / Deliverability Dashboard ───────────────────────────────
+
+/** Run a DNS query with a 5-second timeout. Returns null on any error. */
+async function dnsWithTimeout<T>(fn: () => Promise<T>): Promise<T | null> {
+  try {
+    const result = await Promise.race([
+      fn(),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('DNS timeout')), 5000)),
+    ]);
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+type CheckStatus = 'pass' | 'warning' | 'fail' | 'info' | 'unknown';
+interface DnsCheck {
+  status: CheckStatus;
+  message: string;
+  record?: string;
+  recommendation?: string;
+}
+
+async function checkSpf(domain: string): Promise<DnsCheck> {
+  const records = await dnsWithTimeout(() => dnsPromises.resolveTxt(domain));
+  if (!records) {
+    return { status: 'unknown', message: 'Could not query SPF (DNS timeout or error)' };
+  }
+  // TXT records come back as arrays of chunks; join each record
+  for (const chunks of records) {
+    const txt = chunks.join('');
+    if (txt.includes('v=spf1')) {
+      if (txt.includes('include:amazonses.com')) {
+        return { status: 'pass', message: 'SPF configured with SES', record: txt };
+      }
+      if (txt.includes('include:_spf.google.com') || txt.includes('include:google.com')) {
+        return { status: 'pass', message: 'SPF configured with Google', record: txt };
+      }
+      return { status: 'warning', message: 'SPF found but may not include your email provider', record: txt };
+    }
+  }
+  return {
+    status: 'fail',
+    message: 'No SPF record found',
+    recommendation: `Add TXT record: ${domain} -> "v=spf1 include:amazonses.com ~all"`,
+  };
+}
+
+async function checkDkim(domain: string): Promise<DnsCheck> {
+  const selectors = ['google', 'default', 's1', 's2', 'selector1', 'selector2', 'k1'];
+  for (const sel of selectors) {
+    const host = `${sel}._domainkey.${domain}`;
+    const txt = await dnsWithTimeout(() => dnsPromises.resolveTxt(host));
+    if (txt && txt.length > 0) {
+      return { status: 'pass', message: `DKIM found (selector: ${sel})`, record: txt[0].join('') };
+    }
+    const cname = await dnsWithTimeout(() => dnsPromises.resolveCname(host));
+    if (cname && cname.length > 0) {
+      return { status: 'pass', message: `DKIM found via CNAME (selector: ${sel})`, record: cname[0] };
+    }
+  }
+  // Also try the bare _domainkey subdomain
+  const bare = await dnsWithTimeout(() => dnsPromises.resolveTxt(`_domainkey.${domain}`));
+  if (bare && bare.length > 0) {
+    return { status: 'pass', message: 'DKIM records found', record: bare[0].join('') };
+  }
+  return {
+    status: 'warning',
+    message: 'Could not verify DKIM (may still be configured via provider)',
+  };
+}
+
+async function checkDmarc(domain: string): Promise<DnsCheck> {
+  const records = await dnsWithTimeout(() => dnsPromises.resolveTxt(`_dmarc.${domain}`));
+  if (!records) {
+    return { status: 'unknown', message: 'Could not query DMARC (DNS timeout or error)' };
+  }
+  for (const chunks of records) {
+    const txt = chunks.join('');
+    if (txt.includes('v=DMARC1')) {
+      if (txt.includes('p=reject') || txt.includes('p=quarantine')) {
+        return { status: 'pass', message: 'DMARC enforced', record: txt };
+      }
+      if (txt.includes('p=none')) {
+        return {
+          status: 'warning',
+          message: 'DMARC in monitoring mode (p=none). Upgrade to p=quarantine for better deliverability',
+          record: txt,
+        };
+      }
+      return { status: 'pass', message: 'DMARC configured', record: txt };
+    }
+  }
+  return {
+    status: 'fail',
+    message: 'No DMARC record found',
+    recommendation: `Add TXT record: _dmarc.${domain} -> "v=DMARC1; p=quarantine; rua=mailto:dmarc@${domain}"`,
+  };
+}
+
+async function checkMx(domain: string): Promise<DnsCheck> {
+  const records = await dnsWithTimeout(() => dnsPromises.resolveMx(domain));
+  if (!records) {
+    return { status: 'unknown', message: 'Could not query MX records (DNS timeout or error)' };
+  }
+  if (records.length > 0) {
+    return { status: 'pass', message: `MX records found (${records.length})` };
+  }
+  return { status: 'info', message: 'No MX records (domain cannot receive replies)' };
+}
+
+function gradeFromScore(score: number): string {
+  if (score >= 90) return 'A+';
+  if (score >= 80) return 'A';
+  if (score >= 70) return 'B';
+  if (score >= 60) return 'C';
+  if (score >= 50) return 'D';
+  return 'F';
+}
+
+export async function getDomainHealth(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    // 1. Extract the sending domain from settings
+    const providerResult = await pool.query("SELECT value FROM settings WHERE key = 'email_provider'");
+    const activeProvider: string = providerResult.rows[0]?.value || 'ses';
+
+    let domain = '';
+    if (activeProvider === 'ses') {
+      const sesResult = await pool.query("SELECT value FROM settings WHERE key = 'ses_config'");
+      const sesConfig = sesResult.rows[0]?.value;
+      if (sesConfig) {
+        const parsed = typeof sesConfig === 'string' ? JSON.parse(sesConfig) : sesConfig;
+        if (parsed.fromEmail) {
+          domain = parsed.fromEmail.split('@')[1] || '';
+        }
+      }
+    } else {
+      const gmailResult = await pool.query("SELECT value FROM settings WHERE key = 'gmail_config'");
+      const gmailConfig = gmailResult.rows[0]?.value;
+      if (gmailConfig) {
+        const parsed = typeof gmailConfig === 'string' ? JSON.parse(gmailConfig) : gmailConfig;
+        if (parsed.user) {
+          domain = parsed.user.split('@')[1] || '';
+        }
+      }
+    }
+
+    if (!domain) {
+      res.json({
+        domain: '',
+        healthScore: 0,
+        grade: 'N/A',
+        checks: {
+          spf: { status: 'unknown', message: 'No sending domain configured' },
+          dkim: { status: 'unknown', message: 'No sending domain configured' },
+          dmarc: { status: 'unknown', message: 'No sending domain configured' },
+          mx: { status: 'unknown', message: 'No sending domain configured' },
+        },
+        metrics: { sent30d: 0, bounceRate: 0, complaintRate: 0, unsubRate: 0, bounceRateGrade: 'good', complaintRateGrade: 'good' },
+        recommendations: ['Configure an email provider to enable domain health checks'],
+      });
+      return;
+    }
+
+    // 2. Run DNS checks in parallel
+    const [spf, dkim, dmarc, mx] = await Promise.all([
+      checkSpf(domain),
+      checkDkim(domain),
+      checkDmarc(domain),
+      checkMx(domain),
+    ]);
+
+    // 3. Deliverability metrics from database (last 30 days)
+    const metricsResult = await pool.query(
+      `SELECT
+        COALESCE(SUM(sent_count), 0) as sent,
+        COALESCE(SUM(bounce_count), 0) as bounced,
+        COALESCE(SUM(complaint_count), 0) as complaints,
+        COALESCE(SUM(unsubscribe_count), 0) as unsubs
+       FROM campaigns
+       WHERE created_at >= NOW() - INTERVAL '30 days'`
+    );
+    const m = metricsResult.rows[0];
+    const sent30d = Number(m.sent) || 0;
+    const bounceRate = sent30d > 0 ? (Number(m.bounced) / sent30d) * 100 : 0;
+    const complaintRate = sent30d > 0 ? (Number(m.complaints) / sent30d) * 100 : 0;
+    const unsubRate = sent30d > 0 ? (Number(m.unsubs) / sent30d) * 100 : 0;
+
+    const bounceRateGrade = bounceRate < 2 ? 'good' : bounceRate < 5 ? 'warning' : 'bad';
+    const complaintRateGrade = complaintRate < 0.1 ? 'good' : complaintRate < 0.3 ? 'warning' : 'bad';
+
+    // 4. Calculate health score (0-100)
+    let healthScore = 0;
+    // SPF: pass +25, warning +10
+    if (spf.status === 'pass') healthScore += 25;
+    else if (spf.status === 'warning') healthScore += 10;
+    // DKIM: pass +25, warning +15
+    if (dkim.status === 'pass') healthScore += 25;
+    else if (dkim.status === 'warning') healthScore += 15;
+    // DMARC: pass +20, warning +10
+    if (dmarc.status === 'pass') healthScore += 20;
+    else if (dmarc.status === 'warning') healthScore += 10;
+    // Bounce rate: <2% +15, <5% +10
+    if (bounceRate < 2) healthScore += 15;
+    else if (bounceRate < 5) healthScore += 10;
+    // Complaint rate: <0.1% +15, <0.3% +10
+    if (complaintRate < 0.1) healthScore += 15;
+    else if (complaintRate < 0.3) healthScore += 10;
+
+    const grade = gradeFromScore(healthScore);
+
+    // 5. Recommendations
+    const recommendations: string[] = [];
+    if (spf.status === 'fail') recommendations.push('Add an SPF record to authenticate your sending domain');
+    if (spf.status === 'warning') recommendations.push('Update your SPF record to include your email provider');
+    if (dkim.status === 'warning' || dkim.status === 'fail') recommendations.push('Configure DKIM signing for your domain');
+    if (dmarc.status === 'fail' && dmarc.recommendation) recommendations.push(`Add a DMARC record: ${dmarc.recommendation}`);
+    if (dmarc.status === 'warning') recommendations.push('Upgrade DMARC policy from p=none to p=quarantine for better deliverability');
+    if (bounceRateGrade === 'good') recommendations.push('Your bounce rate is excellent -- keep it under 2%');
+    if (bounceRateGrade === 'warning') recommendations.push('Bounce rate is elevated (2-5%). Clean your contact list to remove invalid addresses');
+    if (bounceRateGrade === 'bad') recommendations.push('Bounce rate is critical (>5%). Immediately clean your contact list and check for list quality issues');
+    if (complaintRateGrade === 'warning') recommendations.push('Complaint rate is elevated. Review your content and sending frequency');
+    if (complaintRateGrade === 'bad') recommendations.push('Complaint rate is critical (>0.3%). This risks your domain being blacklisted');
+    if (sent30d === 0) recommendations.push('No emails sent in the last 30 days -- send a campaign to see deliverability metrics');
+
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.json({
+      domain,
+      healthScore,
+      grade,
+      checks: { spf, dkim, dmarc, mx },
+      metrics: {
+        sent30d,
+        bounceRate: Math.round(bounceRate * 100) / 100,
+        complaintRate: Math.round(complaintRate * 1000) / 1000,
+        unsubRate: Math.round(unsubRate * 100) / 100,
+        bounceRateGrade,
+        complaintRateGrade,
+      },
+      recommendations,
+    });
   } catch (err) {
     next(err);
   }

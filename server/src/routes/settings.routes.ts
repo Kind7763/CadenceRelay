@@ -8,6 +8,7 @@ import {
   updateReplyTo,
   updateDailyLimits,
   testEmail,
+  getDomainHealth,
 } from '../controllers/settings.controller';
 import { validateBody } from '../middleware/validateRequest';
 import { z } from 'zod';
@@ -55,6 +56,7 @@ const testEmailSchema = z.object({
 });
 
 router.get('/', getSettings);
+router.get('/domain-health', getDomainHealth);
 router.put('/provider', validateBody(providerSchema), updateProvider);
 router.put('/gmail', validateBody(gmailSchema), updateGmailConfig);
 router.put('/ses', validateBody(sesSchema), updateSesConfig);

@@ -12,7 +12,9 @@ import {
   useUpdateThrottleDefaults,
   useUpdateReplyTo,
   useUpdateDailyLimits,
+  useDomainHealth,
 } from '../hooks/useSettings';
+import type { DnsCheck } from '../api/settings.api';
 import {
   useSuppressionList,
   useSuppressionCount,
@@ -34,8 +36,34 @@ import AdminPasswordModal from '../components/ui/AdminPasswordModal';
 
 type ConnectionStatus = 'idle' | 'testing' | 'success' | 'error';
 
+function DomainHealthStatusIcon({ status }: { status: DnsCheck['status'] }) {
+  if (status === 'pass') return <span className="text-green-600 font-bold">&#10003;</span>;
+  if (status === 'warning') return <span className="text-yellow-500 font-bold">&#9888;</span>;
+  if (status === 'fail') return <span className="text-red-600 font-bold">&#10007;</span>;
+  if (status === 'info') return <span className="text-blue-500 font-bold">&#8505;</span>;
+  return <span className="text-gray-400 font-bold">?</span>;
+}
+
+function MetricGradeColor({ grade }: { grade: string }) {
+  if (grade === 'good') return <span className="inline-block h-2 w-2 rounded-full bg-green-500 ml-1" />;
+  if (grade === 'warning') return <span className="inline-block h-2 w-2 rounded-full bg-yellow-500 ml-1" />;
+  return <span className="inline-block h-2 w-2 rounded-full bg-red-500 ml-1" />;
+}
+
 function SettingsContent() {
   const { data: settingsData, isLoading, isError } = useSettings();
+
+  // Domain health — manual trigger
+  const [healthEnabled, setHealthEnabled] = useState(false);
+  const { data: healthData, isLoading: healthLoading, refetch: refetchHealth } = useDomainHealth(healthEnabled);
+
+  function handleRunHealthCheck() {
+    if (healthEnabled) {
+      refetchHealth();
+    } else {
+      setHealthEnabled(true);
+    }
+  }
 
   const [provider, setProvider] = useState<'gmail' | 'ses'>('ses');
   const [gmail, setGmail] = useState({ host: 'smtp.gmail.com', port: 587, user: '', pass: '' });
@@ -311,6 +339,121 @@ function SettingsContent() {
   return (
     <div className="mx-auto max-w-4xl p-6">
       <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
+
+      {/* Domain Health Dashboard */}
+      <div className="mt-6 rounded-xl bg-white p-6 shadow-sm">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">Domain Health</h2>
+            <p className="mt-1 text-sm text-gray-500">Check DNS configuration and deliverability metrics for your sending domain</p>
+          </div>
+          <button
+            onClick={handleRunHealthCheck}
+            disabled={healthLoading}
+            className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 disabled:opacity-50 transition-colors"
+          >
+            {healthLoading ? 'Checking...' : healthData ? 'Refresh Health Check' : 'Run Health Check'}
+          </button>
+        </div>
+
+        {healthLoading && (
+          <div className="mt-4 flex items-center gap-2 text-sm text-gray-500">
+            <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-primary-600 border-t-transparent" />
+            Running DNS checks and loading metrics...
+          </div>
+        )}
+
+        {healthData && !healthLoading && (
+          <div className="mt-4 space-y-4">
+            {/* Score and Grade */}
+            <div className="flex items-center gap-4">
+              <div className={`text-3xl font-bold ${
+                healthData.healthScore >= 80 ? 'text-green-600' :
+                healthData.healthScore >= 50 ? 'text-yellow-600' : 'text-red-600'
+              }`}>
+                {healthData.healthScore}/100
+              </div>
+              <div className={`rounded-lg px-3 py-1 text-lg font-bold ${
+                healthData.healthScore >= 80 ? 'bg-green-100 text-green-700' :
+                healthData.healthScore >= 50 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'
+              }`}>
+                Grade: {healthData.grade}
+              </div>
+              {healthData.domain && (
+                <span className="text-sm text-gray-500">Domain: <span className="font-mono font-medium text-gray-700">{healthData.domain}</span></span>
+              )}
+            </div>
+
+            {/* DNS Checks */}
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {(Object.entries(healthData.checks) as [string, DnsCheck][]).map(([key, check]) => (
+                <div
+                  key={key}
+                  className={`flex items-start gap-2 rounded-lg border p-3 ${
+                    check.status === 'pass' ? 'border-green-200 bg-green-50' :
+                    check.status === 'warning' ? 'border-yellow-200 bg-yellow-50' :
+                    check.status === 'fail' ? 'border-red-200 bg-red-50' :
+                    'border-gray-200 bg-gray-50'
+                  }`}
+                >
+                  <DomainHealthStatusIcon status={check.status} />
+                  <div className="min-w-0">
+                    <span className="text-sm font-semibold uppercase text-gray-700">{key}</span>
+                    <p className="text-xs text-gray-600">{check.message}</p>
+                    {check.record && (
+                      <p className="mt-1 truncate text-xs font-mono text-gray-400" title={check.record}>{check.record}</p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Deliverability Metrics */}
+            <div>
+              <h3 className="text-sm font-semibold text-gray-700">Deliverability Metrics (Last 30 Days)</h3>
+              <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-center">
+                  <div className="text-lg font-bold text-gray-900">{healthData.metrics.sent30d.toLocaleString()}</div>
+                  <div className="text-xs text-gray-500">Sent</div>
+                </div>
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-center">
+                  <div className="flex items-center justify-center gap-1">
+                    <span className="text-lg font-bold text-gray-900">{healthData.metrics.bounceRate}%</span>
+                    <MetricGradeColor grade={healthData.metrics.bounceRateGrade} />
+                  </div>
+                  <div className="text-xs text-gray-500">Bounce Rate</div>
+                </div>
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-center">
+                  <div className="flex items-center justify-center gap-1">
+                    <span className="text-lg font-bold text-gray-900">{healthData.metrics.complaintRate}%</span>
+                    <MetricGradeColor grade={healthData.metrics.complaintRateGrade} />
+                  </div>
+                  <div className="text-xs text-gray-500">Complaint Rate</div>
+                </div>
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-center">
+                  <div className="text-lg font-bold text-gray-900">{healthData.metrics.unsubRate}%</div>
+                  <div className="text-xs text-gray-500">Unsub Rate</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Recommendations */}
+            {healthData.recommendations.length > 0 && (
+              <div>
+                <h3 className="text-sm font-semibold text-gray-700">Recommendations</h3>
+                <ul className="mt-2 space-y-1">
+                  {healthData.recommendations.map((rec, i) => (
+                    <li key={i} className="flex items-start gap-2 text-sm text-gray-600">
+                      <span className="mt-0.5 text-primary-500">&bull;</span>
+                      <span>{rec}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Provider Toggle */}
       <div className="mt-6 rounded-xl bg-white p-6 shadow-sm">

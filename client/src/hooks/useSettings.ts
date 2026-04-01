@@ -9,6 +9,8 @@ import {
   updateReplyTo,
   updateDailyLimits,
   sendTestEmail,
+  getDomainHealth,
+  DomainHealthData,
 } from '../api/settings.api';
 
 export function useSettings() {
@@ -104,6 +106,16 @@ export function useUpdateDailyLimits() {
     onError: () => {
       toast.error('Failed to save daily send limits');
     },
+  });
+}
+
+export function useDomainHealth(enabled = false) {
+  return useQuery<DomainHealthData>({
+    queryKey: ['domain-health'],
+    queryFn: getDomainHealth,
+    enabled,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    retry: 1,
   });
 }
 

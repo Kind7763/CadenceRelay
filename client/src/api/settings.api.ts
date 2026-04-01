@@ -45,3 +45,36 @@ export async function sendTestEmail(to: string, options?: { subject?: string; ht
   const res = await apiClient.post('/settings/test-email', { to, ...options });
   return res.data;
 }
+
+export interface DnsCheck {
+  status: 'pass' | 'warning' | 'fail' | 'info' | 'unknown';
+  message: string;
+  record?: string;
+  recommendation?: string;
+}
+
+export interface DomainHealthData {
+  domain: string;
+  healthScore: number;
+  grade: string;
+  checks: {
+    spf: DnsCheck;
+    dkim: DnsCheck;
+    dmarc: DnsCheck;
+    mx: DnsCheck;
+  };
+  metrics: {
+    sent30d: number;
+    bounceRate: number;
+    complaintRate: number;
+    unsubRate: number;
+    bounceRateGrade: string;
+    complaintRateGrade: string;
+  };
+  recommendations: string[];
+}
+
+export async function getDomainHealth(): Promise<DomainHealthData> {
+  const res = await apiClient.get('/settings/domain-health');
+  return res.data;
+}

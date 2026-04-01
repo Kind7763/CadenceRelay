@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import { getTemplate, createTemplate, updateTemplate, getTemplateVersions, getTemplateVersion, restoreTemplateVersion, updateVersionLabel, checkSpamScore, SpamCheckResult } from '../api/templates.api';
 import { sendTestEmail } from '../api/settings.api';
 import { useCustomVariables } from '../hooks/useCustomVariables';
+import EmailVisualBuilder, { EmailBlock, blocksToHtml, htmlToBlocks } from '../components/EmailVisualBuilder';
 
 const DEFAULT_HTML = `<!DOCTYPE html>
 <html>
@@ -60,6 +61,8 @@ export default function TemplateEditor() {
   const [showSpamModal, setShowSpamModal] = useState(false);
   const [spamResult, setSpamResult] = useState<SpamCheckResult | null>(null);
   const [spamChecking, setSpamChecking] = useState(false);
+  const [editorMode, setEditorMode] = useState<'code' | 'visual'>('code');
+  const [visualBlocks, setVisualBlocks] = useState<EmailBlock[]>([]);
 
   const { data: customVariables = [] } = useCustomVariables();
 
@@ -281,6 +284,38 @@ export default function TemplateEditor() {
     e.target.value = '';
   }
 
+  function handleSwitchMode(mode: 'code' | 'visual') {
+    if (mode === editorMode) return;
+    if (mode === 'visual') {
+      // Code -> Visual: try parsing current HTML into blocks
+      const parsed = htmlToBlocks(htmlBody);
+      if (parsed) {
+        setVisualBlocks(parsed);
+      } else {
+        // Can't parse — start with a single text block containing the body content
+        setVisualBlocks([{
+          id: crypto.randomUUID(),
+          type: 'text',
+          props: { content: 'Start adding blocks to build your email visually.', fontSize: '16', color: '#333333' },
+        }]);
+        toast('Existing HTML could not be parsed into blocks.\nStarting with a fresh canvas — your code is preserved if you switch back.', { icon: '\u2139\uFE0F', duration: 5000 });
+      }
+    } else {
+      // Visual -> Code: generate HTML from blocks
+      const generatedHtml = blocksToHtml(visualBlocks);
+      setHtmlBody(generatedHtml);
+    }
+    setEditorMode(mode);
+  }
+
+  const handleVisualBlocksChange = useCallback((newBlocks: EmailBlock[]) => {
+    setVisualBlocks(newBlocks);
+  }, []);
+
+  const handleVisualHtmlChange = useCallback((html: string) => {
+    setHtmlBody(html);
+  }, []);
+
   return (
     <div className="flex h-full flex-col">
       {/* Toolbar */}
@@ -309,6 +344,29 @@ export default function TemplateEditor() {
         {hasUnsavedChanges && (
           <span className="text-xs text-orange-500 font-medium">Unsaved</span>
         )}
+        {/* Editor Mode Toggle */}
+        <div className="flex rounded-lg border border-gray-300 overflow-hidden">
+          <button
+            onClick={() => handleSwitchMode('code')}
+            className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+              editorMode === 'code'
+                ? 'bg-primary-600 text-white'
+                : 'bg-white text-gray-600 hover:bg-gray-50'
+            }`}
+          >
+            Code
+          </button>
+          <button
+            onClick={() => handleSwitchMode('visual')}
+            className={`px-3 py-1.5 text-sm font-medium transition-colors border-l border-gray-300 ${
+              editorMode === 'visual'
+                ? 'bg-primary-600 text-white'
+                : 'bg-white text-gray-600 hover:bg-gray-50'
+            }`}
+          >
+            Visual
+          </button>
+        </div>
         <button
           onClick={() => setShowVariablesPanel(!showVariablesPanel)}
           className={`rounded-lg border px-3 py-1.5 text-sm ${showVariablesPanel ? 'border-primary-300 bg-primary-50 text-primary-700' : 'border-gray-300 hover:bg-gray-50'}`}
@@ -485,52 +543,64 @@ export default function TemplateEditor() {
           </div>
         )}
 
-        <div className={showVariablesPanel || showVersionHistory ? 'flex flex-1 overflow-hidden' : 'flex flex-1 overflow-hidden'}>
-          <div className="w-1/2 border-r border-gray-200">
-            <Editor
-              height="100%"
-              defaultLanguage="html"
-              value={htmlBody}
-              onChange={(val) => setHtmlBody(val || '')}
-              theme="vs-dark"
-              options={{
-                minimap: { enabled: false },
-                fontSize: 13,
-                wordWrap: 'on',
-                lineNumbers: 'on',
-                scrollBeyondLastLine: false,
-              }}
+        {editorMode === 'visual' ? (
+          /* Visual Builder — takes the full remaining width */
+          <div className="flex flex-1 overflow-hidden">
+            <EmailVisualBuilder
+              blocks={visualBlocks}
+              onChange={handleVisualBlocksChange}
+              onHtmlChange={handleVisualHtmlChange}
             />
           </div>
-          <div className="w-1/2 bg-gray-100 p-4">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="text-xs font-medium text-gray-500">
-                {previewingVersion ? `Preview — v${previewingVersion}` : 'Preview'}
-              </span>
-              {previewingVersion && (
-                <button onClick={() => { setPreviewingVersion(null); setPreviewVersionHtml(''); }} className="text-xs text-primary-600">
-                  Back to current
-                </button>
+        ) : (
+          /* Code Editor + Preview (original layout) */
+          <div className="flex flex-1 overflow-hidden">
+            <div className="w-1/2 border-r border-gray-200">
+              <Editor
+                height="100%"
+                defaultLanguage="html"
+                value={htmlBody}
+                onChange={(val) => setHtmlBody(val || '')}
+                theme="vs-dark"
+                options={{
+                  minimap: { enabled: false },
+                  fontSize: 13,
+                  wordWrap: 'on',
+                  lineNumbers: 'on',
+                  scrollBeyondLastLine: false,
+                }}
+              />
+            </div>
+            <div className="w-1/2 bg-gray-100 p-4">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-xs font-medium text-gray-500">
+                  {previewingVersion ? `Preview — v${previewingVersion}` : 'Preview'}
+                </span>
+                {previewingVersion && (
+                  <button onClick={() => { setPreviewingVersion(null); setPreviewVersionHtml(''); }} className="text-xs text-primary-600">
+                    Back to current
+                  </button>
+                )}
+              </div>
+              {previewingVersion && previewVersionHtml ? (
+                <iframe
+                  className="h-full w-full rounded-lg border bg-white"
+                  title="Version Preview"
+                  sandbox="allow-same-origin"
+                  srcDoc={previewVersionHtml}
+                />
+              ) : (
+                <iframe
+                  ref={iframeRef}
+                  className="h-full w-full rounded-lg border bg-white"
+                  title="Template Preview"
+                  sandbox="allow-same-origin"
+                  onLoad={handleIframeLoad}
+                />
               )}
             </div>
-            {previewingVersion && previewVersionHtml ? (
-              <iframe
-                className="h-full w-full rounded-lg border bg-white"
-                title="Version Preview"
-                sandbox="allow-same-origin"
-                srcDoc={previewVersionHtml}
-              />
-            ) : (
-              <iframe
-                ref={iframeRef}
-                className="h-full w-full rounded-lg border bg-white"
-                title="Template Preview"
-                sandbox="allow-same-origin"
-                onLoad={handleIframeLoad}
-              />
-            )}
           </div>
-        </div>
+        )}
       </div>
 
       {/* Send Test Email Modal */}
