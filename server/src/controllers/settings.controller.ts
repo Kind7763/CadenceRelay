@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import fs from 'fs';
 import { pool } from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { cacheThrough, cacheDel } from '../utils/cache';
@@ -212,7 +213,7 @@ export async function updateReplyTo(req: Request, res: Response, next: NextFunct
 
 export async function testEmail(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { to, subject, html } = req.body;
+    const { to, subject, html, campaignId } = req.body;
     if (!to) {
       throw new AppError('Recipient email required', 400);
     }
@@ -279,12 +280,39 @@ export async function testEmail(req: Request, res: Response, next: NextFunction)
     const emailHtml = html || '<h1>Test Email</h1><p>If you received this, your email provider is configured correctly.</p>';
     const emailText = html ? undefined : 'Test Email - If you received this, your email provider is configured correctly.';
 
+    // Load attachments from campaign if campaignId is provided
+    let attachments: Array<{ filename: string; content: Buffer; contentType: string }> | undefined;
+    if (campaignId) {
+      try {
+        const campaignResult = await pool.query('SELECT attachments FROM campaigns WHERE id = $1', [campaignId]);
+        const campaignAttachments = campaignResult.rows[0]?.attachments || [];
+        if (Array.isArray(campaignAttachments) && campaignAttachments.length > 0) {
+          attachments = [];
+          for (const att of campaignAttachments) {
+            if (att.storagePath && fs.existsSync(att.storagePath)) {
+              attachments.push({
+                filename: att.filename,
+                content: fs.readFileSync(att.storagePath),
+                contentType: att.contentType || 'application/octet-stream',
+              });
+            } else {
+              logger.warn(`Test email: attachment file not found: ${att.storagePath}`);
+            }
+          }
+          if (attachments.length === 0) attachments = undefined;
+        }
+      } catch (err) {
+        logger.warn('Test email: failed to load campaign attachments', { error: (err as Error).message });
+      }
+    }
+
     await emailProvider.send({
       to,
       subject: emailSubject,
       html: emailHtml,
       text: emailText,
       replyTo,
+      attachments,
     });
 
     res.json({ message: `Test email sent to ${to} via ${provider}` });

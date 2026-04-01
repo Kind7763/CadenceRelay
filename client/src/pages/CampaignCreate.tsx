@@ -1193,8 +1193,8 @@ export default function CampaignCreate() {
                         };
                         const renderedSubject = replaceVariables(selectedTemplate.subject, sampleContact);
                         const renderedHtml = replaceVariables(selectedTemplate.html_body, sampleContact);
-                        await sendTestEmail(testEmailAddress, { subject: renderedSubject, html: renderedHtml });
-                        toast.success(`Test email sent to ${testEmailAddress}`);
+                        await sendTestEmail(testEmailAddress, { subject: renderedSubject, html: renderedHtml, campaignId: draftId || undefined });
+                        toast.success(`Test email sent to ${testEmailAddress}${draftId && (existingAttachments.length > 0 || attachments.length > 0) ? ' (with attachments)' : ''}`);
                       } catch {
                         toast.error('Failed to send test email');
                       } finally {
@@ -1250,7 +1250,7 @@ export default function CampaignCreate() {
                           try {
                             const renderedSubject = replaceVariables(selectedTemplate.subject, contact);
                             const renderedHtml = replaceVariables(selectedTemplate.html_body, contact);
-                            await sendTestEmail(contact.email, { subject: renderedSubject, html: renderedHtml });
+                            await sendTestEmail(contact.email, { subject: renderedSubject, html: renderedHtml, campaignId: draftId || undefined });
                             successCount++;
                           } catch {
                             failCount++;

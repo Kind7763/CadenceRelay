@@ -45,6 +45,7 @@ const testEmailSchema = z.object({
   to: z.string().email(),
   subject: z.string().optional(),
   html: z.string().optional(),
+  campaignId: z.string().uuid().optional(),
 });
 
 router.get('/', getSettings);
