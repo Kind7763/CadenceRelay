@@ -106,12 +106,70 @@ export default function TemplateEditor() {
     }
   }, [id, isNew]);
 
+  const [showDraftBanner, setShowDraftBanner] = useState(false);
+  const autoSaveDraftRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const draftKey = `cadencerelay-template-draft-${id || 'new'}`;
+
+  // Check for saved draft on mount
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(draftKey);
+      if (raw) {
+        const draft = JSON.parse(raw);
+        if (draft && draft.htmlBody && draft.savedAt) {
+          const savedAgo = Date.now() - draft.savedAt;
+          // Only show draft if less than 7 days old
+          if (savedAgo < 7 * 24 * 60 * 60 * 1000) {
+            setShowDraftBanner(true);
+          } else {
+            localStorage.removeItem(draftKey);
+          }
+        }
+      }
+    } catch { /* ignore corrupt data */ }
+  }, [draftKey]);
+
+  function restoreDraft() {
+    try {
+      const raw = localStorage.getItem(draftKey);
+      if (raw) {
+        const draft = JSON.parse(raw);
+        if (draft.name) setName(draft.name);
+        if (draft.subject) setSubject(draft.subject);
+        if (draft.htmlBody) setHtmlBody(draft.htmlBody);
+        if (draft.textBody) setTextBody(draft.textBody);
+        toast.success('Draft restored');
+      }
+    } catch { /* ignore */ }
+    setShowDraftBanner(false);
+  }
+
+  function dismissDraft() {
+    localStorage.removeItem(draftKey);
+    setShowDraftBanner(false);
+  }
+
   // Track unsaved changes
   useEffect(() => {
     const saved = savedStateRef.current;
     const changed = name !== saved.name || subject !== saved.subject || htmlBody !== saved.htmlBody || textBody !== saved.textBody;
     setHasUnsavedChanges(changed);
   }, [name, subject, htmlBody, textBody]);
+
+  // Auto-save draft to localStorage every 30 seconds when there are unsaved changes
+  useEffect(() => {
+    if (autoSaveDraftRef.current) clearInterval(autoSaveDraftRef.current);
+    autoSaveDraftRef.current = setInterval(() => {
+      if (hasUnsavedChanges && (name || subject || htmlBody !== DEFAULT_HTML)) {
+        try {
+          localStorage.setItem(draftKey, JSON.stringify({
+            name, subject, htmlBody, textBody, savedAt: Date.now(),
+          }));
+        } catch { /* localStorage full or unavailable */ }
+      }
+    }, 30000); // 30 seconds
+    return () => { if (autoSaveDraftRef.current) clearInterval(autoSaveDraftRef.current); };
+  }, [hasUnsavedChanges, name, subject, htmlBody, textBody, draftKey]);
 
   // Warn before navigating away with unsaved changes
   useEffect(() => {
@@ -166,12 +224,16 @@ export default function TemplateEditor() {
         toast.success('Template created');
         savedStateRef.current = { name, subject, htmlBody, textBody };
         setHasUnsavedChanges(false);
+        // Clear draft on successful save
+        localStorage.removeItem(draftKey);
         navigate(`/templates/${t.id}/edit`, { replace: true });
       } else {
         await updateTemplate(id!, { name, subject, htmlBody, textBody });
         toast.success('Template saved');
         savedStateRef.current = { name, subject, htmlBody, textBody };
         setHasUnsavedChanges(false);
+        // Clear draft on successful save
+        localStorage.removeItem(draftKey);
         getTemplateVersions(id!).then(setVersions).catch(() => {});
       }
     } catch {
@@ -296,27 +358,47 @@ export default function TemplateEditor() {
     e.target.value = '';
   }
 
+  // Store the HTML before switching to visual, so we can restore if parsing fails
+  const preVisualHtmlRef = useRef<string | null>(null);
+
   function handleSwitchMode(mode: 'code' | 'visual' | 'plaintext') {
     if (mode === editorMode) return;
 
     // Switching away from visual -> code: generate HTML from blocks
+    // But ONLY if we actually used the visual editor (not if parsing failed and we preserved original)
     if (editorMode === 'visual' && mode !== 'visual') {
-      const generatedHtml = blocksToHtml(visualBlocks);
-      setHtmlBody(generatedHtml);
+      if (preVisualHtmlRef.current !== null && visualBlocks.length <= 1 && visualBlocks[0]?.props?.content?.includes('Start adding blocks')) {
+        // User switched to visual but parsing failed and they didn't add any blocks — restore original HTML
+        setHtmlBody(preVisualHtmlRef.current);
+      } else {
+        const generatedHtml = blocksToHtml(visualBlocks);
+        setHtmlBody(generatedHtml);
+      }
+      preVisualHtmlRef.current = null;
     }
 
-    // Switching to visual from code/plaintext: parse HTML into blocks
+    // Switching to visual from code/plaintext: try to parse HTML into blocks
     if (mode === 'visual') {
       const parsed = htmlToBlocks(htmlBody);
       if (parsed) {
         setVisualBlocks(parsed);
+        preVisualHtmlRef.current = null;
       } else {
+        // HTML can't be parsed — warn user with a confirmation dialog
+        const proceed = window.confirm(
+          'Your custom HTML cannot be automatically converted to visual blocks.\n\n' +
+          'If you proceed, you\'ll start with a blank visual canvas. Your code will be safely preserved — switching back to Code mode will restore it.\n\n' +
+          'Alternatively, click Cancel to stay in Code mode.'
+        );
+        if (!proceed) return; // Stay in code mode
+
+        // Save current HTML so we can restore when they switch back
+        preVisualHtmlRef.current = htmlBody;
         setVisualBlocks([{
           id: crypto.randomUUID(),
           type: 'text',
           props: { content: 'Start adding blocks to build your email visually.', fontSize: '16', color: '#333333' },
         }]);
-        toast('Existing HTML could not be parsed into blocks.\nStarting with a fresh canvas -- your code is preserved if you switch back.', { icon: '\u2139\uFE0F', duration: 5000 });
       }
     }
 
@@ -339,6 +421,24 @@ export default function TemplateEditor() {
 
   return (
     <div className="flex h-full flex-col">
+      {/* Draft Recovery Banner */}
+      {showDraftBanner && (
+        <div className="flex items-center justify-between bg-amber-50 border-b border-amber-200 px-4 py-2">
+          <div className="flex items-center gap-2 text-sm text-amber-800">
+            <span className="text-amber-500 text-lg">&#x1f4dd;</span>
+            <span>You have an unsaved draft from a previous session.</span>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={restoreDraft} className="rounded bg-amber-600 px-3 py-1 text-xs text-white hover:bg-amber-700">
+              Restore Draft
+            </button>
+            <button onClick={dismissDraft} className="rounded border border-amber-300 px-3 py-1 text-xs text-amber-700 hover:bg-amber-100">
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Toolbar */}
       <div className="flex items-center gap-3 border-b border-gray-200 bg-white px-4 py-3">
         <button onClick={handleBack} className="text-sm text-gray-500 hover:text-gray-700">&larr; Back</button>
@@ -363,7 +463,7 @@ export default function TemplateEditor() {
           </span>
         )}
         {hasUnsavedChanges && (
-          <span className="text-xs text-orange-500 font-medium">Unsaved</span>
+          <span className="text-xs text-orange-500 font-medium" title="Changes auto-saved as draft every 30s">Unsaved (draft auto-saving)</span>
         )}
         {/* Editor Mode Toggle */}
         <div className="flex rounded-lg border border-gray-300 overflow-hidden">
