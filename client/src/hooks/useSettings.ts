@@ -11,6 +11,12 @@ import {
   sendTestEmail,
   getDomainHealth,
   DomainHealthData,
+  getSesQuota,
+  SesQuotaData,
+  getSnsStatus,
+  SnsStatusData,
+  setupSns,
+  SnsSetupResult,
 } from '../api/settings.api';
 
 export function useSettings() {
@@ -127,6 +133,45 @@ export function useSendTestEmail() {
     },
     onError: () => {
       toast.error('Failed to send test email');
+    },
+  });
+}
+
+// ─── SES Quota ────────────────────────────────────────────────────────────────
+
+export function useSesQuota(enabled = false) {
+  return useQuery<SesQuotaData>({
+    queryKey: ['ses-quota'],
+    queryFn: getSesQuota,
+    enabled,
+    staleTime: 5 * 60 * 1000,
+    retry: 1,
+  });
+}
+
+// ─── SNS Status & Setup ──────────────────────────────────────────────────────
+
+export function useSnsStatus(enabled = false) {
+  return useQuery<SnsStatusData>({
+    queryKey: ['sns-status'],
+    queryFn: getSnsStatus,
+    enabled,
+    staleTime: 5 * 60 * 1000,
+    retry: 1,
+  });
+}
+
+export function useSetupSns() {
+  const queryClient = useQueryClient();
+  return useMutation<SnsSetupResult>({
+    mutationFn: setupSns,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sns-status'] });
+      toast.success('SNS bounce & complaint notifications configured successfully');
+    },
+    onError: (err) => {
+      const message = (err as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Failed to set up SNS notifications';
+      toast.error(message);
     },
   });
 }

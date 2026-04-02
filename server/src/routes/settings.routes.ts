@@ -9,6 +9,9 @@ import {
   updateDailyLimits,
   testEmail,
   getDomainHealth,
+  getSesQuota,
+  setupSns,
+  getSnsStatus,
 } from '../controllers/settings.controller';
 import { validateBody } from '../middleware/validateRequest';
 import { z } from 'zod';
@@ -64,5 +67,8 @@ router.put('/throttle', validateBody(throttleSchema), updateThrottleDefaults);
 router.put('/reply-to', validateBody(replyToSchema), updateReplyTo);
 router.put('/daily-limits', validateBody(dailyLimitsSchema), updateDailyLimits);
 router.post('/test-email', validateBody(testEmailSchema), testEmail);
+router.get('/ses-quota', getSesQuota);
+router.get('/sns-status', getSnsStatus);
+router.post('/setup-sns', setupSns);
 
 export default router;

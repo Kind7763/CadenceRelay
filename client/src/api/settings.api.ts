@@ -78,3 +78,53 @@ export async function getDomainHealth(): Promise<DomainHealthData> {
   const res = await apiClient.get('/settings/domain-health');
   return res.data;
 }
+
+// ─── SES Quota ────────────────────────────────────────────────────────────────
+
+export interface SesQuotaData {
+  max24HourSend: number;
+  sentLast24Hours: number;
+  maxSendRate: number;
+  remaining: number;
+  usagePercent: number;
+  sandbox: boolean;
+  recentStats: Array<{
+    timestamp: string;
+    deliveryAttempts: number;
+    bounces: number;
+    complaints: number;
+    rejects: number;
+  }>;
+}
+
+export async function getSesQuota(): Promise<SesQuotaData> {
+  const res = await apiClient.get('/settings/ses-quota');
+  return res.data;
+}
+
+// ─── SNS Setup ────────────────────────────────────────────────────────────────
+
+export interface SnsStatusData {
+  configured: boolean;
+  identity?: string;
+  bounceTopicArn?: string;
+  complaintTopicArn?: string;
+  message?: string;
+}
+
+export async function getSnsStatus(): Promise<SnsStatusData> {
+  const res = await apiClient.get('/settings/sns-status');
+  return res.data;
+}
+
+export interface SnsSetupResult {
+  message: string;
+  topicArn: string;
+  identity: string;
+  webhookUrl: string;
+}
+
+export async function setupSns(): Promise<SnsSetupResult> {
+  const res = await apiClient.post('/settings/setup-sns');
+  return res.data;
+}

@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell, Legend } from 'recharts';
 import { useDashboard } from '../hooks/useDashboard';
+import { useSesQuota } from '../hooks/useSettings';
 import { DashboardSkeleton } from '../components/ui/Skeleton';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { exportAnalytics } from '../api/analytics.api';
@@ -38,6 +39,7 @@ const DATE_PRESETS = [
 
 function DashboardContent() {
   const navigate = useNavigate();
+  const { data: sesQuotaData } = useSesQuota(true);
   const [datePreset, setDatePreset] = useState(30);
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
@@ -416,6 +418,20 @@ function DashboardContent() {
               );
             })}
           </div>
+          {/* SES Quota from AWS */}
+          {sesQuotaData && (
+            <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-3">
+              {sesQuotaData.sandbox && (
+                <div className="flex items-center gap-1.5 rounded bg-yellow-100 border border-yellow-300 px-2 py-1 text-xs font-medium text-yellow-800 mb-2">
+                  <span>&#9888;</span> SES Sandbox Mode
+                </div>
+              )}
+              <div className="flex items-center justify-between text-xs text-blue-700">
+                <span>AWS SES quota (24h): {sesQuotaData.sentLast24Hours.toLocaleString()} / {sesQuotaData.max24HourSend.toLocaleString()}</span>
+                <span>Max rate: {sesQuotaData.maxSendRate}/sec</span>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

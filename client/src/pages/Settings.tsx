@@ -13,8 +13,12 @@ import {
   useUpdateReplyTo,
   useUpdateDailyLimits,
   useDomainHealth,
+  useSesQuota,
+  useSnsStatus,
+  useSetupSns,
 } from '../hooks/useSettings';
 import type { DnsCheck } from '../api/settings.api';
+import { getSesQuota } from '../api/settings.api';
 import {
   useSuppressionList,
   useSuppressionCount,
@@ -84,6 +88,43 @@ function SettingsContent() {
   // Daily send limits state
   const [dailyLimits, setDailyLimits] = useState({ gmailDailyLimit: 500, sesDailyLimit: 50000 });
   const updateDailyLimitsMutation = useUpdateDailyLimits();
+
+  // SES Quota state
+  const [sesQuotaEnabled, setSesQuotaEnabled] = useState(false);
+  const { data: sesQuotaData, refetch: refetchSesQuota } = useSesQuota(sesQuotaEnabled);
+  const [sesQuotaSyncing, setSesQuotaSyncing] = useState(false);
+
+  // SNS status state
+  const [snsStatusEnabled, setSnsStatusEnabled] = useState(false);
+  const { data: snsStatusData, isLoading: snsStatusLoading, refetch: refetchSnsStatus } = useSnsStatus(snsStatusEnabled);
+  const setupSnsMutation = useSetupSns();
+
+  // Auto-fetch SNS status on mount
+  useEffect(() => {
+    setSnsStatusEnabled(true);
+  }, []);
+
+  async function handleSyncSesQuota() {
+    setSesQuotaSyncing(true);
+    try {
+      const quota = await getSesQuota();
+      const newLimit = Math.floor(quota.max24HourSend * 0.95);
+      setDailyLimits(prev => ({ ...prev, sesDailyLimit: newLimit }));
+      setSesQuotaEnabled(true);
+      // Also trigger a refetch so the quota display updates
+      if (sesQuotaEnabled) refetchSesQuota();
+      toast.success(`SES daily limit synced to ${newLimit.toLocaleString()} (95% of ${quota.max24HourSend.toLocaleString()} quota)`);
+    } catch {
+      toast.error('Failed to fetch SES quota. Check your IAM permissions (ses:GetSendQuota).');
+    } finally {
+      setSesQuotaSyncing(false);
+    }
+  }
+
+  async function handleSetupSns() {
+    await setupSnsMutation.mutateAsync();
+    refetchSnsStatus();
+  }
 
   // Suppression list state
   const [suppressionPage, setSuppressionPage] = useState(1);
@@ -623,8 +664,48 @@ function SettingsContent() {
 
       {/* Daily Send Limits */}
       <form onSubmit={(e) => { e.preventDefault(); updateDailyLimitsMutation.mutate(dailyLimits); }} className="mt-6 rounded-xl bg-white p-6 shadow-sm">
-        <h2 className="text-lg font-semibold text-gray-900">Daily Send Limits</h2>
-        <p className="mt-1 text-sm text-gray-500">Maximum emails per day per provider. Campaigns auto-pause when the limit is reached and auto-resume the next day.</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">Daily Send Limits</h2>
+            <p className="mt-1 text-sm text-gray-500">Maximum emails per day per provider. Campaigns auto-pause when the limit is reached and auto-resume the next day.</p>
+          </div>
+          <button
+            type="button"
+            onClick={handleSyncSesQuota}
+            disabled={sesQuotaSyncing}
+            className="rounded-lg border border-orange-300 bg-orange-50 px-3 py-1.5 text-xs font-medium text-orange-700 hover:bg-orange-100 disabled:opacity-50 transition-colors whitespace-nowrap"
+          >
+            {sesQuotaSyncing ? 'Syncing...' : 'Sync from AWS'}
+          </button>
+        </div>
+
+        {/* SES Quota Info */}
+        {sesQuotaData && (
+          <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-3 space-y-1">
+            {sesQuotaData.sandbox && (
+              <div className="flex items-center gap-1.5 rounded bg-yellow-100 border border-yellow-300 px-2 py-1 text-xs font-medium text-yellow-800 mb-2">
+                <span>&#9888;</span> SES Sandbox Mode -- You can only send to verified email addresses. Request production access from AWS to lift this restriction.
+              </div>
+            )}
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-blue-700">SES usage (last 24h):</span>
+              <span className="font-semibold text-blue-900">
+                {sesQuotaData.sentLast24Hours.toLocaleString()} / {sesQuotaData.max24HourSend.toLocaleString()} sent
+              </span>
+            </div>
+            <div className="h-1.5 w-full rounded-full bg-blue-200">
+              <div
+                className={`h-1.5 rounded-full transition-all ${sesQuotaData.usagePercent >= 80 ? 'bg-red-500' : 'bg-blue-500'}`}
+                style={{ width: `${Math.min(100, sesQuotaData.usagePercent)}%` }}
+              />
+            </div>
+            <div className="flex items-center justify-between text-xs text-blue-600">
+              <span>{sesQuotaData.usagePercent}% used ({sesQuotaData.remaining.toLocaleString()} remaining)</span>
+              <span>Max rate: {sesQuotaData.maxSendRate} emails/sec</span>
+            </div>
+          </div>
+        )}
+
         <div className="mt-4 grid grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700">Gmail Daily Limit</label>
@@ -651,6 +732,90 @@ function SettingsContent() {
           {saving ? 'Saving...' : 'Save Daily Limits'}
         </button>
       </form>
+
+      {/* Bounce & Complaint Tracking (SNS Setup) */}
+      <div className="mt-6 rounded-xl bg-white p-6 shadow-sm">
+        <h2 className="text-lg font-semibold text-gray-900">Bounce & Complaint Tracking</h2>
+        <p className="mt-1 text-sm text-gray-500">
+          SES bounce notifications let the platform automatically detect bounced emails and mark contacts accordingly. This prevents sending to invalid addresses and protects your sender reputation.
+        </p>
+
+        {snsStatusLoading && (
+          <div className="mt-4 flex items-center gap-2 text-sm text-gray-500">
+            <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-primary-600 border-t-transparent" />
+            Checking SNS configuration...
+          </div>
+        )}
+
+        {snsStatusData && !snsStatusLoading && (
+          <div className="mt-4">
+            {snsStatusData.configured ? (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-green-600 font-bold text-lg">&#10003;</span>
+                  <span className="text-sm font-medium text-green-700">Configured</span>
+                </div>
+                <div className="rounded-lg border border-green-200 bg-green-50 p-3 space-y-1 text-sm">
+                  {snsStatusData.bounceTopicArn && (
+                    <div className="flex items-start gap-2">
+                      <span className="font-medium text-gray-700 whitespace-nowrap">Bounces:</span>
+                      <span className="text-gray-600 font-mono text-xs break-all">{snsStatusData.bounceTopicArn}</span>
+                    </div>
+                  )}
+                  {snsStatusData.complaintTopicArn && (
+                    <div className="flex items-start gap-2">
+                      <span className="font-medium text-gray-700 whitespace-nowrap">Complaints:</span>
+                      <span className="text-gray-600 font-mono text-xs break-all">{snsStatusData.complaintTopicArn}</span>
+                    </div>
+                  )}
+                </div>
+                <p className="text-xs text-gray-500">Bounced contacts are automatically marked and added to the suppression list.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-red-600 font-bold text-lg">&#10007;</span>
+                  <span className="text-sm font-medium text-red-700">Not configured</span>
+                </div>
+                <button
+                  onClick={handleSetupSns}
+                  disabled={setupSnsMutation.isPending}
+                  className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 disabled:opacity-50 transition-colors"
+                >
+                  {setupSnsMutation.isPending ? (
+                    <span className="flex items-center gap-2">
+                      <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                      Setting up...
+                    </span>
+                  ) : (
+                    'Set Up Automatically'
+                  )}
+                </button>
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs text-gray-600 space-y-1.5">
+                  <p className="font-medium text-gray-700">This will:</p>
+                  <ul className="list-disc list-inside space-y-0.5 ml-1">
+                    <li>Create an SNS topic &quot;cadencerelay-notifications&quot;</li>
+                    <li>Subscribe our webhook endpoint</li>
+                    <li>Configure SES to send bounce & complaint notifications</li>
+                  </ul>
+                  <p className="mt-2 text-gray-500">
+                    Required IAM permissions: <span className="font-mono">sns:CreateTopic</span>, <span className="font-mono">sns:Subscribe</span>, <span className="font-mono">ses:SetIdentityNotificationTopic</span>
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {!snsStatusData && !snsStatusLoading && (
+          <button
+            onClick={() => setSnsStatusEnabled(true)}
+            className="mt-4 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+          >
+            Check SNS Status
+          </button>
+        )}
+      </div>
 
       {/* Suppression List */}
       <div className="mt-6 rounded-xl bg-white p-6 shadow-sm">

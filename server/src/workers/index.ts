@@ -5,6 +5,7 @@ import { logger } from '../utils/logger';
 import { startCampaignDispatchWorker, startEmailSendWorker } from './emailWorker';
 import { startEventProcessingWorker } from './eventWorker';
 import { checkScheduledCampaigns } from './campaignScheduler';
+import { syncSesQuotaToSettings } from '../utils/dailyLimits';
 import { checkGmailBounces } from './gmailBounceChecker';
 import { runEngagementDecay } from './engagementDecay';
 import { processAutomationSteps } from './automationProcessor';
@@ -34,7 +35,13 @@ async function startWorker(): Promise<void> {
   logger.info('Event processing worker started (SNS bounces/complaints)');
 
   // Start campaign scheduler (check every 60s)
-  const schedulerInterval = setInterval(checkScheduledCampaigns, 60000);
+  const schedulerInterval = setInterval(async () => {
+    await checkScheduledCampaigns();
+    // Also sync SES quota (internally cached for 1 hour, safe to call every 60s)
+    try { await syncSesQuotaToSettings(); } catch (err) {
+      logger.warn('SES quota sync error', { error: (err as Error).message });
+    }
+  }, 60000);
   checkScheduledCampaigns();
   logger.info('Campaign scheduler started (60s interval)');
 

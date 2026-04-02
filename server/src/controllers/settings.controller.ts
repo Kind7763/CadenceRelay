@@ -6,6 +6,8 @@ import { AppError } from '../middleware/errorHandler';
 import { cacheThrough, cacheDel } from '../utils/cache';
 import { encryptCredential, decryptCredential, isEncrypted } from '../utils/crypto';
 import { logger } from '../utils/logger';
+import { SESClient, GetSendQuotaCommand, GetSendStatisticsCommand, SetIdentityNotificationTopicCommand, GetIdentityNotificationAttributesCommand } from '@aws-sdk/client-ses';
+import { SNSClient, CreateTopicCommand, SubscribeCommand } from '@aws-sdk/client-sns';
 
 const dnsPromises = dns.promises;
 
@@ -592,6 +594,232 @@ export async function getDomainHealth(_req: Request, res: Response, next: NextFu
       },
       recommendations,
     });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ─── Helper: decrypt credential if encrypted (same as providerFactory) ────────
+
+function maybeDecrypt(value: string): string {
+  if (!value) return value;
+  let current = value;
+  for (let i = 0; i < 5; i++) {
+    if (!isEncrypted(current)) break;
+    const decrypted = decryptCredential(current);
+    if (decrypted === null) break;
+    current = decrypted;
+  }
+  return current;
+}
+
+/** Load SES config from settings and create an SESClient with decrypted credentials */
+async function loadSesClient(): Promise<{ client: SESClient; snsClient: SNSClient; region: string; fromEmail: string }> {
+  const sesResult = await pool.query("SELECT value FROM settings WHERE key = 'ses_config'");
+  const sesConfig = sesResult.rows[0]?.value;
+  if (!sesConfig) {
+    throw new AppError('SES is not configured. Please set up SES credentials first.', 400);
+  }
+  const parsed = typeof sesConfig === 'string' ? JSON.parse(sesConfig) : sesConfig;
+  if (!parsed.region || !parsed.accessKeyId || !parsed.secretAccessKey) {
+    throw new AppError('SES configuration is incomplete: region, accessKeyId, and secretAccessKey are required.', 400);
+  }
+  const credentials = {
+    accessKeyId: maybeDecrypt(parsed.accessKeyId),
+    secretAccessKey: maybeDecrypt(parsed.secretAccessKey),
+  };
+  const client = new SESClient({ region: parsed.region, credentials });
+  const snsClient = new SNSClient({ region: parsed.region, credentials });
+  return { client, snsClient, region: parsed.region, fromEmail: parsed.fromEmail || '' };
+}
+
+// ─── SES Quota Endpoint ───────────────────────────────────────────────────────
+
+export async function getSesQuota(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { client } = await loadSesClient();
+
+    const [quotaResp, statsResp] = await Promise.all([
+      client.send(new GetSendQuotaCommand({})),
+      client.send(new GetSendStatisticsCommand({})),
+    ]);
+
+    const max24HourSend = quotaResp.Max24HourSend || 0;
+    const sentLast24Hours = quotaResp.SentLast24Hours || 0;
+    const maxSendRate = quotaResp.MaxSendRate || 0;
+    const remaining = max24HourSend - sentLast24Hours;
+    const usagePercent = max24HourSend > 0 ? Math.round((sentLast24Hours / max24HourSend) * 1000) / 10 : 0;
+    const sandbox = max24HourSend <= 200 && sentLast24Hours <= 200;
+
+    // Recent send statistics (last few data points)
+    const recentStats = (statsResp.SendDataPoints || [])
+      .sort((a, b) => {
+        const ta = a.Timestamp?.getTime() || 0;
+        const tb = b.Timestamp?.getTime() || 0;
+        return tb - ta;
+      })
+      .slice(0, 10)
+      .map(dp => ({
+        timestamp: dp.Timestamp?.toISOString(),
+        deliveryAttempts: dp.DeliveryAttempts || 0,
+        bounces: dp.Bounces || 0,
+        complaints: dp.Complaints || 0,
+        rejects: dp.Rejects || 0,
+      }));
+
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.json({
+      max24HourSend,
+      sentLast24Hours,
+      maxSendRate,
+      remaining,
+      usagePercent,
+      sandbox,
+      recentStats,
+    });
+  } catch (err) {
+    const error = err as { name?: string; message?: string; $metadata?: { httpStatusCode?: number } };
+    if (error.name === 'AccessDeniedException' || error.name === 'AccessDenied') {
+      next(new AppError('Missing IAM permission: ses:GetSendQuota. Please add this permission to your IAM user.', 403));
+      return;
+    }
+    next(err);
+  }
+}
+
+// ─── SNS Bounce Setup Endpoint ────────────────────────────────────────────────
+
+export async function setupSns(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { client, snsClient, fromEmail } = await loadSesClient();
+
+    if (!fromEmail) {
+      throw new AppError('SES fromEmail is not configured. Please set a From Email in SES settings first.', 400);
+    }
+
+    // Load tracking domain for the webhook endpoint
+    const trackingResult = await pool.query("SELECT value FROM settings WHERE key = 'tracking_domain'");
+    let trackingDomain = trackingResult.rows[0]?.value || '';
+    // Strip surrounding quotes if stored as JSON string
+    if (typeof trackingDomain === 'string') {
+      trackingDomain = trackingDomain.replace(/^"|"$/g, '');
+    }
+    if (!trackingDomain || trackingDomain === 'http://localhost:3001') {
+      throw new AppError('A public tracking domain is required for SNS webhook subscriptions. Please configure a tracking domain in settings (not localhost).', 400);
+    }
+
+    // 1. Create SNS topic (idempotent)
+    let topicArn: string;
+    try {
+      const topicResp = await snsClient.send(new CreateTopicCommand({ Name: 'cadencerelay-notifications' }));
+      topicArn = topicResp.TopicArn || '';
+      if (!topicArn) throw new Error('No topic ARN returned');
+    } catch (err) {
+      const error = err as { name?: string; message?: string };
+      if (error.name === 'AuthorizationErrorException' || error.name === 'AccessDeniedException') {
+        throw new AppError('Missing IAM permission: sns:CreateTopic. Please add this permission to your IAM user.', 403);
+      }
+      throw err;
+    }
+
+    // 2. Subscribe our webhook endpoint (idempotent — SNS deduplicates same topic+protocol+endpoint)
+    const webhookUrl = `${trackingDomain}/api/v1/webhooks/sns`;
+    try {
+      await snsClient.send(new SubscribeCommand({
+        TopicArn: topicArn,
+        Protocol: 'https',
+        Endpoint: webhookUrl,
+      }));
+    } catch (err) {
+      const error = err as { name?: string; message?: string };
+      if (error.name === 'AuthorizationErrorException' || error.name === 'AccessDeniedException') {
+        throw new AppError('Missing IAM permission: sns:Subscribe. Please add this permission to your IAM user.', 403);
+      }
+      throw err;
+    }
+
+    // 3. Configure SES to send bounces and complaints to the SNS topic
+    // Use the domain from the fromEmail as the identity
+    const identity = fromEmail.includes('@') ? fromEmail.split('@')[1] : fromEmail;
+    try {
+      await Promise.all([
+        client.send(new SetIdentityNotificationTopicCommand({
+          Identity: identity,
+          NotificationType: 'Bounce',
+          SnsTopic: topicArn,
+        })),
+        client.send(new SetIdentityNotificationTopicCommand({
+          Identity: identity,
+          NotificationType: 'Complaint',
+          SnsTopic: topicArn,
+        })),
+      ]);
+    } catch (err) {
+      const error = err as { name?: string; message?: string };
+      if (error.name === 'AccessDeniedException' || error.name === 'AccessDenied') {
+        throw new AppError('Missing IAM permission: ses:SetIdentityNotificationTopic. Please add this permission to your IAM user.', 403);
+      }
+      throw err;
+    }
+
+    logger.info('SNS bounce/complaint setup completed', { topicArn, identity, webhookUrl });
+
+    res.json({
+      message: 'SNS bounce and complaint notifications configured successfully',
+      topicArn,
+      identity,
+      webhookUrl,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ─── SNS Status Endpoint ──────────────────────────────────────────────────────
+
+export async function getSnsStatus(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { client, fromEmail } = await loadSesClient();
+
+    if (!fromEmail) {
+      res.json({ configured: false, message: 'No SES fromEmail configured' });
+      return;
+    }
+
+    const identity = fromEmail.includes('@') ? fromEmail.split('@')[1] : fromEmail;
+
+    try {
+      const resp = await client.send(new GetIdentityNotificationAttributesCommand({
+        Identities: [identity],
+      }));
+
+      const attrs = resp.NotificationAttributes?.[identity];
+      if (!attrs) {
+        res.json({ configured: false, identity, message: 'No notification attributes found for identity' });
+        return;
+      }
+
+      const bounceTopicArn = attrs.BounceTopic || '';
+      const complaintTopicArn = attrs.ComplaintTopic || '';
+      const configured = !!(bounceTopicArn && complaintTopicArn);
+
+      res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.json({
+        configured,
+        identity,
+        bounceTopicArn,
+        complaintTopicArn,
+        headersInBounceNotificationsEnabled: attrs.HeadersInBounceNotificationsEnabled || false,
+        headersInComplaintNotificationsEnabled: attrs.HeadersInComplaintNotificationsEnabled || false,
+      });
+    } catch (err) {
+      const error = err as { name?: string; message?: string };
+      if (error.name === 'AccessDeniedException' || error.name === 'AccessDenied') {
+        next(new AppError('Missing IAM permission: ses:GetIdentityNotificationAttributes. Please add this permission to your IAM user.', 403));
+        return;
+      }
+      throw err;
+    }
   } catch (err) {
     next(err);
   }
