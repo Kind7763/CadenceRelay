@@ -336,7 +336,7 @@ export default function CampaignCreate() {
   useEffect(() => {
     if (step === 5 && selectedTemplate) {
       setSpamChecking(true);
-      checkSpamScore({ subject: selectedTemplate.subject, html: selectedTemplate.html_body })
+      checkSpamScore({ subject: selectedTemplate.subject, html: selectedTemplate.html_body, hasPlainText: !!selectedTemplate.text_body })
         .then(setSpamResult)
         .catch(() => {})
         .finally(() => setSpamChecking(false));

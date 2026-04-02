@@ -14,7 +14,7 @@ function validateUUID(id: string, label = 'ID'): void {
 export async function listTemplates(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { project_id: projectId } = req.query;
-    let query = 'SELECT id, name, subject, html_body, variables, version, is_active, project_id, created_at, updated_at FROM templates WHERE is_active = true';
+    let query = 'SELECT id, name, subject, html_body, text_body, variables, version, is_active, project_id, created_at, updated_at FROM templates WHERE is_active = true';
     const params: unknown[] = [];
 
     if (projectId === 'none') {
