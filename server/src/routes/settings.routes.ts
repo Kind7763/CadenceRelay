@@ -14,6 +14,7 @@ import {
   getSnsStatus,
   getSesStats,
   getBouncedEmails,
+  classifyAndImportBounces,
 } from '../controllers/settings.controller';
 import { validateBody } from '../middleware/validateRequest';
 import { z } from 'zod';
@@ -72,6 +73,7 @@ router.post('/test-email', validateBody(testEmailSchema), testEmail);
 router.get('/ses-quota', getSesQuota);
 router.get('/ses-stats', getSesStats);
 router.get('/ses-bounced-emails', getBouncedEmails);
+router.post('/classify-bounces', classifyAndImportBounces);
 router.get('/sns-status', getSnsStatus);
 router.post('/setup-sns', setupSns);
 

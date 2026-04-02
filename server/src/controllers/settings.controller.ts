@@ -891,9 +891,18 @@ export async function getSesStats(_req: Request, res: Response, next: NextFuncti
         COUNT(*) FILTER (WHERE bounce_type = 'undetermined' OR (status IN ('bounced','failed') AND bounce_type IS NULL)) as undetermined_bounces
        FROM campaign_recipients`
     );
-    const permanentBounces = Number(bounceBreakdown.rows[0]?.permanent_bounces || 0);
-    const transientBounces = Number(bounceBreakdown.rows[0]?.transient_bounces || 0);
-    const undeterminedBounces = Number(bounceBreakdown.rows[0]?.undetermined_bounces || 0);
+    const dbPermanent = Number(bounceBreakdown.rows[0]?.permanent_bounces || 0);
+    const dbTransient = Number(bounceBreakdown.rows[0]?.transient_bounces || 0);
+    const dbUndetermined = Number(bounceBreakdown.rows[0]?.undetermined_bounces || 0);
+
+    // If we have more SES bounces than our classified ones, the difference is unclassified (pre-SNS setup)
+    const totalClassified = dbPermanent + dbTransient + dbUndetermined;
+    const unclassifiedFromSes = Math.max(0, totalBounces - totalClassified);
+
+    // Use SES totals as source of truth, supplement with our breakdown
+    const permanentBounces = dbPermanent;
+    const transientBounces = dbTransient;
+    const undeterminedBounces = dbUndetermined + unclassifiedFromSes;
 
     const totalOpens = Number(ownStatsResult.rows[0]?.total_opens || 0);
     const totalClicks = Number(ownStatsResult.rows[0]?.total_clicks || 0);
@@ -936,6 +945,78 @@ export async function getSesStats(_req: Request, res: Response, next: NextFuncti
       next(new AppError('Missing IAM permission: ses:GetSendStatistics. Please add this permission to your IAM user.', 403));
       return;
     }
+    next(err);
+  }
+}
+
+/**
+ * Classify old unclassified bounced/failed recipients by analyzing error messages.
+ * Also adds all permanent bounces to suppression list.
+ */
+export async function classifyAndImportBounces(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    // 1. Classify unclassified bounced recipients based on error messages
+    // SMTP 5xx, "does not exist", "not found", "invalid", "rejected" → permanent
+    // SMTP 4xx, "timeout", "temporarily", "try again", "rate limit", "connection" → transient
+    const classifyPermanent = await pool.query(
+      `UPDATE campaign_recipients SET bounce_type = 'permanent'
+       WHERE (status = 'bounced' OR status = 'failed') AND bounce_type IS NULL
+       AND (
+         error_message ~* '(5[0-9]{2}|does not exist|not found|invalid|rejected|no such user|mailbox not found|address rejected|user unknown|MessageRejected|permanently)'
+       )
+       RETURNING email`
+    );
+
+    const classifyTransient = await pool.query(
+      `UPDATE campaign_recipients SET bounce_type = 'transient'
+       WHERE (status = 'bounced' OR status = 'failed') AND bounce_type IS NULL
+       AND (
+         error_message ~* '(4[0-9]{2}|timeout|temporarily|try again|rate limit|connection|throttl|too many|mailbox full|over quota|service unavailable)'
+       )
+       RETURNING email`
+    );
+
+    // Everything else that's still unclassified → undetermined
+    const classifyUndetermined = await pool.query(
+      `UPDATE campaign_recipients SET bounce_type = 'undetermined'
+       WHERE (status = 'bounced' OR status = 'failed') AND bounce_type IS NULL
+       RETURNING email`
+    );
+
+    // 2. Update contacts with bounce_type from their most severe bounce
+    await pool.query(
+      `UPDATE contacts SET bounce_type = 'permanent', status = 'bounced', updated_at = NOW()
+       WHERE email IN (
+         SELECT DISTINCT email FROM campaign_recipients WHERE bounce_type = 'permanent'
+       ) AND (bounce_type IS NULL OR bounce_type != 'permanent')`
+    );
+
+    await pool.query(
+      `UPDATE contacts SET bounce_type = 'transient', updated_at = NOW()
+       WHERE email IN (
+         SELECT DISTINCT email FROM campaign_recipients WHERE bounce_type = 'transient'
+         AND email NOT IN (SELECT DISTINCT email FROM campaign_recipients WHERE bounce_type = 'permanent')
+       ) AND bounce_type IS NULL`
+    );
+
+    // 3. Add all permanent bounces to suppression list
+    const suppressResult = await pool.query(
+      `INSERT INTO suppression_list (email, reason, added_by)
+       SELECT DISTINCT email, 'permanent_bounce_import', 'auto_classify'
+       FROM campaign_recipients WHERE bounce_type = 'permanent'
+       ON CONFLICT DO NOTHING`
+    );
+
+    res.json({
+      classified: {
+        permanent: classifyPermanent.rowCount || 0,
+        transient: classifyTransient.rowCount || 0,
+        undetermined: classifyUndetermined.rowCount || 0,
+      },
+      suppressed: suppressResult.rowCount || 0,
+      message: 'Bounces classified and permanent bounces added to suppression list',
+    });
+  } catch (err) {
     next(err);
   }
 }

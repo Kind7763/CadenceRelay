@@ -7,6 +7,7 @@ import {
   BounceStats,
 } from '../api/contacts.api';
 import { listCampaigns } from '../api/campaigns.api';
+import { classifyAndImportBounces } from '../api/settings.api';
 import apiClient from '../api/client';
 
 const bounceTypeColors: Record<string, string> = {
@@ -132,8 +133,32 @@ export default function BounceManagement() {
 
   return (
     <div className="p-6">
-      <h1 className="text-2xl font-bold">Bounce Management</h1>
-      <p className="mt-1 text-sm text-gray-500">Monitor and manage bounced emails across all campaigns</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Bounce Management</h1>
+          <p className="mt-1 text-sm text-gray-500">Monitor and manage bounced emails across all campaigns</p>
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={async () => {
+              try {
+                toast.loading('Classifying bounces...', { id: 'classify' });
+                const result = await classifyAndImportBounces();
+                toast.success(
+                  `Classified ${result.classified.permanent} permanent, ${result.classified.transient} transient, ${result.classified.undetermined} undetermined. ${result.suppressed} added to suppression list.`,
+                  { id: 'classify', duration: 8000 }
+                );
+                fetchData();
+              } catch {
+                toast.error('Failed to classify bounces', { id: 'classify' });
+              }
+            }}
+            className="rounded-lg bg-primary-600 px-4 py-2 text-sm text-white hover:bg-primary-700"
+          >
+            Classify & Import Bounces
+          </button>
+        </div>
+      </div>
 
       {/* Stats Cards */}
       <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">

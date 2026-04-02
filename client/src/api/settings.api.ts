@@ -168,6 +168,15 @@ export async function getSesStats(): Promise<SesStatsData> {
   return res.data;
 }
 
+export async function classifyAndImportBounces(): Promise<{
+  classified: { permanent: number; transient: number; undetermined: number };
+  suppressed: number;
+  message: string;
+}> {
+  const res = await apiClient.post('/settings/classify-bounces');
+  return res.data;
+}
+
 // ─── Bounced Emails Not in Suppression ───────────────────────────────────────
 
 export interface BouncedEmail {
