@@ -1087,7 +1087,8 @@ export async function listBouncedEmails(req: Request, res: Response, next: NextF
     const { page, limit, offset } = parsePagination(req.query as { page?: string; limit?: string });
     const { bounceType, campaignId, search, dateFrom, dateTo } = req.query;
 
-    let whereClause = "WHERE cr.status IN ('bounced', 'failed') AND cr.bounce_type IS NOT NULL";
+    // Include ALL records with a bounce_type set (not just status=bounced/failed — transient bounces may have status=sent)
+    let whereClause = "WHERE cr.bounce_type IS NOT NULL";
     const params: unknown[] = [];
     let paramIndex = 1;
 
@@ -1125,7 +1126,7 @@ export async function listBouncedEmails(req: Request, res: Response, next: NextF
         COUNT(*) FILTER (WHERE cr.bounce_type = 'transient') as transient,
         COUNT(*) FILTER (WHERE cr.bounce_type = 'undetermined') as undetermined
        FROM campaign_recipients cr
-       WHERE cr.status IN ('bounced', 'failed') AND cr.bounce_type IS NOT NULL`
+       WHERE cr.bounce_type IS NOT NULL`
     );
     const suppressionCountResult = await pool.query('SELECT COUNT(*) FROM suppression_list');
 

@@ -975,16 +975,31 @@ export async function classifyAndImportBounces(_req: Request, res: Response, nex
         },
       });
 
-      // Fetch bounced emails from SES suppression list (paginated)
+      // Fetch bounced emails from SES suppression list (paginated with retry)
       const sesBounced: Array<{ email: string; reason: string }> = [];
       let nextToken: string | undefined;
+      const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
       do {
-        const cmd = new ListSuppressedDestinationsCommand({
-          NextToken: nextToken,
-          PageSize: 100,
-        });
-        const resp = await sesV2.send(cmd);
+        let resp;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            const cmd = new ListSuppressedDestinationsCommand({
+              NextToken: nextToken,
+              PageSize: 100,
+            });
+            resp = await sesV2.send(cmd);
+            break;
+          } catch (retryErr) {
+            const re = retryErr as { name?: string; message?: string };
+            if (re.message?.includes('Rate exceeded') && attempt < 2) {
+              await sleep(2000 * (attempt + 1)); // 2s, 4s retry delay
+              continue;
+            }
+            throw retryErr;
+          }
+        }
+        if (!resp) break;
 
         for (const dest of resp.SuppressedDestinationSummaries || []) {
           if (dest.EmailAddress) {
