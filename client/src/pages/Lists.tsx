@@ -4,8 +4,12 @@ import { SmartFilterCriteria, ContactList } from '../api/lists.api';
 import { useListsList, useCreateList, useCreateSmartList, useDeleteList } from '../hooks/useLists';
 import { useContactFilters } from '../hooks/useFilters';
 import { useProjectsList } from '../hooks/useProjects';
-import { GridCardSkeleton } from '../components/ui/Skeleton';
+import { GridCardSkeleton, TableSkeleton } from '../components/ui/Skeleton';
 import ErrorBoundary from '../components/ErrorBoundary';
+import { ViewToggle, ViewMode } from '../components/ui/ViewToggle';
+import { SortableHeader, SortState, sortItems, toggleSort } from '../components/ui/SortableHeader';
+
+type ListWithProject = ContactList & { project_id?: string };
 
 function ListsContent() {
   const [showCreate, setShowCreate] = useState(false);
@@ -13,19 +17,30 @@ function ListsContent() {
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
   const [projectFilter, setProjectFilter] = useState('');
+  const [viewMode, setViewMode] = useState<ViewMode>(() => (localStorage.getItem('lists-view') as ViewMode) || 'grid');
+  const [sort, setSort] = useState<SortState | null>(null);
   const navigate = useNavigate();
 
   const { data: allLists = [], isLoading, isError } = useListsList();
   const { data: projects = [] } = useProjectsList();
 
-  // Client-side project filter
   const lists = projectFilter
-    ? allLists.filter((l: ContactList & { project_id?: string }) =>
+    ? allLists.filter((l: ListWithProject) =>
         projectFilter === 'none' ? !l.project_id : l.project_id === projectFilter
       )
     : allLists;
+
   const createListMutation = useCreateList();
   const deleteListMutation = useDeleteList();
+
+  function handleViewChange(mode: ViewMode) {
+    setViewMode(mode);
+    localStorage.setItem('lists-view', mode);
+  }
+
+  function handleSort(field: string) {
+    setSort((prev) => toggleSort(prev, field));
+  }
 
   async function handleCreate() {
     try {
@@ -41,6 +56,94 @@ function ListsContent() {
   async function handleDelete(id: string) {
     if (!confirm('Delete this list? Contacts will not be deleted.')) return;
     deleteListMutation.mutate(id);
+  }
+
+  const getField = (l: ContactList, field: string): string | number | null => {
+    switch (field) {
+      case 'name': return l.name;
+      case 'type': return l.is_smart ? 'Smart' : 'Regular';
+      case 'contact_count': return l.contact_count;
+      case 'created_at': return l.created_at;
+      default: return null;
+    }
+  };
+
+  const sorted = sortItems(lists as ContactList[], sort, getField);
+
+  function renderCard(list: ContactList) {
+    return (
+      <div key={list.id} className="cursor-pointer rounded-xl bg-white p-5 shadow-sm hover:shadow-md transition-shadow" onClick={() => navigate(`/lists/${list.id}`)}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <h3 className="font-semibold text-gray-900">{list.name}</h3>
+            {list.is_smart && (
+              <span className="rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-700">Smart</span>
+            )}
+          </div>
+          <button onClick={(e) => { e.stopPropagation(); handleDelete(list.id); }} className="text-xs text-red-500 hover:text-red-700">Delete</button>
+        </div>
+        {list.description && <p className="mt-1 text-sm text-gray-500">{list.description}</p>}
+        {list.is_smart && list.filter_criteria && (
+          <div className="mt-2 flex flex-wrap gap-1">
+            {list.filter_criteria.state && list.filter_criteria.state.length > 0 && (
+              <span className="rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600">
+                {list.filter_criteria.state.join(', ')}
+              </span>
+            )}
+            {list.filter_criteria.category && list.filter_criteria.category.length > 0 && (
+              <span className="rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600">
+                {list.filter_criteria.category.length} categories
+              </span>
+            )}
+            {list.filter_criteria.management && list.filter_criteria.management.length > 0 && (
+              <span className="rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600">
+                {list.filter_criteria.management.length} management types
+              </span>
+            )}
+          </div>
+        )}
+        <div className="mt-3 flex items-center gap-1 text-sm text-gray-600">
+          <span className="font-medium">{list.contact_count?.toLocaleString()}</span> contacts
+          {list.is_smart && <span className="text-xs text-purple-500">(dynamic)</span>}
+        </div>
+      </div>
+    );
+  }
+
+  function renderRow(list: ContactList) {
+    const project = projects.find((p) => p.id === (list as ListWithProject).project_id);
+    return (
+      <tr key={list.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => navigate(`/lists/${list.id}`)}>
+        <td className="px-3 py-2.5">
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-gray-900">{list.name}</span>
+          </div>
+        </td>
+        <td className="px-3 py-2.5">
+          {list.is_smart ? (
+            <span className="rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-700">Smart</span>
+          ) : (
+            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">Regular</span>
+          )}
+        </td>
+        <td className="px-3 py-2.5 text-gray-500">{list.contact_count?.toLocaleString()}</td>
+        <td className="px-3 py-2.5 text-gray-500">
+          {project ? (
+            <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium" style={{ backgroundColor: `${project.color || '#6366f1'}15`, color: project.color || '#6366f1' }}>
+              {project.name}
+            </span>
+          ) : (
+            <span className="text-gray-400">{'\u2014'}</span>
+          )}
+        </td>
+        <td className="px-3 py-2.5 text-gray-500">
+          {new Date(list.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+        </td>
+        <td className="px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
+          <button onClick={() => handleDelete(list.id)} className="text-xs text-red-500 hover:text-red-700">Delete</button>
+        </td>
+      </tr>
+    );
   }
 
   return (
@@ -62,55 +165,47 @@ function ListsContent() {
         </div>
       </div>
 
-      <div className="mt-6">
+      <div className="mt-4 flex items-center gap-3">
+        <div className="ml-auto">
+          <ViewToggle mode={viewMode} onChange={handleViewChange} />
+        </div>
+      </div>
+
+      <div className="mt-4">
         {isLoading ? (
-          <GridCardSkeleton count={6} />
+          viewMode === 'grid' ? <GridCardSkeleton count={6} /> : <TableSkeleton rows={5} columns={6} />
         ) : isError ? (
           <div className="rounded-xl bg-red-50 p-6 text-center">
             <p className="text-red-700 font-medium">Failed to load lists</p>
             <p className="mt-1 text-sm text-red-500">Please try refreshing the page.</p>
           </div>
-        ) : (
+        ) : viewMode === 'grid' ? (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {lists.length === 0 ? (
+            {sorted.length === 0 ? (
               <p className="text-gray-400">No lists yet. Create your first list to organize contacts.</p>
-            ) : lists.map((list: ContactList) => (
-              <div key={list.id} className="cursor-pointer rounded-xl bg-white p-5 shadow-sm hover:shadow-md transition-shadow" onClick={() => navigate(`/lists/${list.id}`)}>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-semibold text-gray-900">{list.name}</h3>
-                    {list.is_smart && (
-                      <span className="rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-700">Smart</span>
-                    )}
-                  </div>
-                  <button onClick={(e) => { e.stopPropagation(); handleDelete(list.id); }} className="text-xs text-red-500 hover:text-red-700">Delete</button>
-                </div>
-                {list.description && <p className="mt-1 text-sm text-gray-500">{list.description}</p>}
-                {list.is_smart && list.filter_criteria && (
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {list.filter_criteria.state && list.filter_criteria.state.length > 0 && (
-                      <span className="rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600">
-                        {list.filter_criteria.state.join(', ')}
-                      </span>
-                    )}
-                    {list.filter_criteria.category && list.filter_criteria.category.length > 0 && (
-                      <span className="rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600">
-                        {list.filter_criteria.category.length} categories
-                      </span>
-                    )}
-                    {list.filter_criteria.management && list.filter_criteria.management.length > 0 && (
-                      <span className="rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600">
-                        {list.filter_criteria.management.length} management types
-                      </span>
-                    )}
-                  </div>
-                )}
-                <div className="mt-3 flex items-center gap-1 text-sm text-gray-600">
-                  <span className="font-medium">{list.contact_count?.toLocaleString()}</span> contacts
-                  {list.is_smart && <span className="text-xs text-purple-500">(dynamic)</span>}
-                </div>
-              </div>
-            ))}
+            ) : sorted.map(renderCard)}
+          </div>
+        ) : (
+          <div className="rounded-xl bg-white shadow-sm">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <SortableHeader label="Name" field="name" currentSort={sort} onSort={handleSort} />
+                    <SortableHeader label="Type" field="type" currentSort={sort} onSort={handleSort} />
+                    <SortableHeader label="Contacts" field="contact_count" currentSort={sort} onSort={handleSort} />
+                    <th className="px-3 py-2 text-left font-medium text-gray-600">Project</th>
+                    <SortableHeader label="Created" field="created_at" currentSort={sort} onSort={handleSort} />
+                    <th className="px-3 py-2 text-left font-medium text-gray-600 w-16">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {sorted.length === 0 ? (
+                    <tr><td colSpan={6} className="px-3 py-8 text-center text-gray-400">No lists found</td></tr>
+                  ) : sorted.map(renderRow)}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </div>
@@ -169,7 +264,6 @@ function SmartListModal({ onClose, onCreated }: { onClose: () => void; onCreated
       } else {
         (next as Record<string, string[]>)[field] = value ? [value] : [];
       }
-      // Cascade: clear district when state changes
       if (field === 'state') {
         next.district = [];
         next.block = [];
@@ -184,7 +278,6 @@ function SmartListModal({ onClose, onCreated }: { onClose: () => void; onCreated
   async function handleCreate() {
     if (!name.trim()) return;
     try {
-      // Clean up empty arrays
       const cleanCriteria: SmartFilterCriteria = {};
       if (criteria.state && criteria.state.length > 0) cleanCriteria.state = criteria.state;
       if (criteria.district && criteria.district.length > 0) cleanCriteria.district = criteria.district;

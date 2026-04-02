@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Campaign } from '../api/campaigns.api';
 import {
@@ -12,10 +12,13 @@ import {
   useCampaignLabels,
 } from '../hooks/useCampaigns';
 import { useProjectsList, useMoveItems } from '../hooks/useProjects';
-import { TableSkeleton } from '../components/ui/Skeleton';
+import { TableSkeleton, GridCardSkeleton } from '../components/ui/Skeleton';
 import ErrorBoundary from '../components/ErrorBoundary';
 import AdminPasswordModal from '../components/ui/AdminPasswordModal';
 import LabelPicker from '../components/ui/LabelPicker';
+import { ViewToggle, ViewMode } from '../components/ui/ViewToggle';
+import { SortableHeader, SortState, sortItems, toggleSort } from '../components/ui/SortableHeader';
+import { GroupBy, groupByDate, groupByProject } from '../utils/grouping';
 
 const statusColors: Record<string, string> = {
   draft: 'bg-gray-100 text-gray-700',
@@ -32,6 +35,8 @@ function formatDate(dateStr: string): string {
   const d = new Date(dateStr);
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
+
+/* ─── Fixed-position ActionsDropdown ─── */
 
 function ActionsDropdown({
   campaign,
@@ -53,7 +58,7 @@ function ActionsDropdown({
   projects: Array<{ id: string; name: string; icon?: string | null }>;
 }) {
   const [open, setOpen] = useState(false);
-  const [dropUp, setDropUp] = useState(false);
+  const [dropdownStyle, setDropdownStyle] = useState<CSSProperties>({});
   const ref = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
 
@@ -67,9 +72,19 @@ function ActionsDropdown({
 
   function handleToggle(e: React.MouseEvent) {
     e.stopPropagation();
-    if (!open && btnRef.current) {
-      const rect = btnRef.current.getBoundingClientRect();
-      setDropUp(rect.bottom > window.innerHeight * 0.6);
+    if (!open) {
+      const rect = btnRef.current?.getBoundingClientRect();
+      if (rect) {
+        const spaceBelow = window.innerHeight - rect.bottom;
+        const dropdownHeight = 300;
+        setDropdownStyle({
+          position: 'fixed' as const,
+          top: spaceBelow > dropdownHeight ? rect.bottom + 4 : undefined,
+          bottom: spaceBelow > dropdownHeight ? undefined : window.innerHeight - rect.top + 4,
+          right: window.innerWidth - rect.right,
+          zIndex: 9999,
+        });
+      }
     }
     setOpen(!open);
   }
@@ -88,7 +103,7 @@ function ActionsDropdown({
         </svg>
       </button>
       {open && (
-        <div className={`absolute right-0 z-40 w-44 rounded-lg border border-gray-200 bg-white py-1 shadow-lg ${dropUp ? 'bottom-full mb-1' : 'top-full mt-1'}`}>
+        <div style={dropdownStyle} className="w-44 rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
           <button
             onClick={(e) => { e.stopPropagation(); onDuplicate(); setOpen(false); }}
             className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
@@ -144,6 +159,20 @@ function ActionsDropdown({
   );
 }
 
+/* ─── Group section header ─── */
+
+function GroupHeader({ label, color, count }: { label: string; color?: string | null; count: number }) {
+  return (
+    <div className="flex items-center gap-2 py-2">
+      {color && <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} />}
+      <span className="text-sm font-semibold text-gray-700">{label}</span>
+      <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500">{count}</span>
+    </div>
+  );
+}
+
+/* ─── Main page ─── */
+
 function CampaignsContent() {
   const [statusFilter, setStatusFilter] = useState('');
   const [search, setSearch] = useState('');
@@ -154,6 +183,9 @@ function CampaignsContent() {
   const [labelPickerCampaignId, setLabelPickerCampaignId] = useState<string | null>(null);
   const [labelFilter, setLabelFilter] = useState<string | null>(null);
   const [projectFilter, setProjectFilter] = useState('');
+  const [viewMode, setViewMode] = useState<ViewMode>(() => (localStorage.getItem('campaigns-view') as ViewMode) || 'list');
+  const [sort, setSort] = useState<SortState | null>(null);
+  const [groupBy, setGroupBy] = useState<GroupBy>('none');
   const navigate = useNavigate();
 
   const { data: projects = [] } = useProjectsList();
@@ -178,7 +210,6 @@ function CampaignsContent() {
 
   const allCampaigns: Campaign[] = data?.data || [];
 
-  // Client-side filtering for view tab and label filter
   const campaigns = allCampaigns.filter((c) => {
     if (viewTab === 'archived' && !c.is_archived) return false;
     if (viewTab === 'active' && c.is_archived) return false;
@@ -190,7 +221,6 @@ function CampaignsContent() {
   const total = data?.pagination?.total || 0;
   const totalPages = Math.ceil(total / 20);
 
-  // Collect unique labels from campaigns for filter chips
   const uniqueLabels: { name: string; color: string }[] = [];
   const seenColors = new Set<string>();
   for (const c of allCampaigns) {
@@ -199,7 +229,6 @@ function CampaignsContent() {
       uniqueLabels.push({ name: c.label_name, color: c.label_color });
     }
   }
-  // Also merge in any labels from the labels API
   if (labelsData) {
     for (const l of labelsData) {
       if (!seenColors.has(l.color)) {
@@ -210,6 +239,15 @@ function CampaignsContent() {
   }
 
   useEffect(() => { setSelectedIds(new Set()); }, [page, statusFilter, search, viewTab]);
+
+  function handleViewChange(mode: ViewMode) {
+    setViewMode(mode);
+    localStorage.setItem('campaigns-view', mode);
+  }
+
+  function handleSort(field: string) {
+    setSort((prev) => toggleSort(prev, field));
+  }
 
   function toggleSelect(id: string) {
     setSelectedIds((prev) => {
@@ -230,7 +268,6 @@ function CampaignsContent() {
 
   async function handleDeleteConfirm(password: string) {
     if (!deleteModal) return;
-
     if (deleteModal.type === 'single' && deleteModal.id) {
       await deleteMutation.mutateAsync({ id: deleteModal.id, adminPassword: password });
     } else if (deleteModal.type === 'bulk') {
@@ -238,7 +275,6 @@ function CampaignsContent() {
       await bulkDeleteMutation.mutateAsync({ ids, adminPassword: password });
       setSelectedIds(new Set());
     }
-
     setDeleteModal(null);
   }
 
@@ -259,12 +295,252 @@ function CampaignsContent() {
     setLabelPickerCampaignId(null);
   }
 
+  const getField = (c: Campaign, field: string): string | number | null => {
+    switch (field) {
+      case 'name': return c.name;
+      case 'status': return c.status;
+      case 'created_at': return c.created_at;
+      case 'total_recipients': return c.total_recipients;
+      case 'open_rate': {
+        const sent = Number(c.sent_count) || 0;
+        const opens = Number(c.open_count) || 0;
+        return sent > 0 ? opens / sent : 0;
+      }
+      case 'click_rate': {
+        const sentC = Number(c.sent_count) || 0;
+        const clicks = Number(c.click_count) || 0;
+        return sentC > 0 ? clicks / sentC : 0;
+      }
+      default: return null;
+    }
+  };
+
+  const sorted = sortItems(campaigns, sort, getField);
+
   const tabClasses = (tab: ViewTab) =>
     `px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
       viewTab === tab
         ? 'bg-primary-100 text-primary-700'
         : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
     }`;
+
+  /* ─── Shared action props builder ─── */
+  function actionProps(c: Campaign) {
+    return {
+      campaign: c,
+      onDuplicate: () => handleDuplicate(c.id),
+      onToggleStar: () => starMutation.mutate(c.id),
+      onToggleArchive: () => archiveMutation.mutate(c.id),
+      onDelete: () => setDeleteModal({ type: 'single', id: c.id }),
+      onLabelOpen: () => setLabelPickerCampaignId(c.id),
+      onMoveToProject: (projectId: string) => moveMutation.mutate({ projectId, items: { campaignIds: [c.id] } }),
+      projects,
+    };
+  }
+
+  /* ─── Grid card ─── */
+  function renderCard(c: Campaign) {
+    const sentCount = Number(c.sent_count) || 0;
+    const openCount = Number(c.open_count) || 0;
+    const openRate = sentCount > 0 ? ((openCount / sentCount) * 100).toFixed(1) : '0.0';
+    const project = projects.find((p) => p.id === (c as Campaign & { project_id?: string }).project_id);
+
+    return (
+      <div
+        key={c.id}
+        className={`cursor-pointer rounded-xl bg-white p-5 shadow-sm hover:shadow-md transition-shadow ${c.is_archived ? 'opacity-60' : ''}`}
+        onClick={() => navigate(`/campaigns/${c.id}`)}
+      >
+        <div className="flex items-start justify-between">
+          <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusColors[c.status] || ''}`}>{c.status}</span>
+          <div onClick={(e) => e.stopPropagation()}>
+            <ActionsDropdown {...actionProps(c)} />
+            {labelPickerCampaignId === c.id && (
+              <LabelPicker
+                currentColor={c.label_color}
+                currentName={c.label_name}
+                onSelect={(label) => handleLabelSelect(c.id, label)}
+                onClose={() => setLabelPickerCampaignId(null)}
+              />
+            )}
+          </div>
+        </div>
+        <div className="mt-2">
+          <div className="flex items-center gap-2">
+            {c.label_color && (
+              <span className="h-2.5 w-2.5 flex-shrink-0 rounded-full" style={{ backgroundColor: c.label_color }} title={c.label_name || ''} />
+            )}
+            <h3 className="font-semibold text-gray-900 truncate">{c.name}</h3>
+          </div>
+          <p className="mt-1 text-sm text-gray-500">
+            {c.total_recipients.toLocaleString()} recipients{' '}
+            {sentCount > 0 && <span className="text-gray-400">/ {openRate}% opens</span>}
+          </p>
+        </div>
+        <div className="mt-3 flex items-center justify-between text-xs text-gray-400">
+          <div className="flex items-center gap-2">
+            {c.is_starred && <span className="text-yellow-400">{'\u2605'}</span>}
+            <span>{formatDate(c.created_at)}</span>
+          </div>
+          {project && (
+            <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium" style={{ backgroundColor: `${project.color || '#6366f1'}15`, color: project.color || '#6366f1' }}>
+              {project.name}
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  /* ─── List table row ─── */
+  function renderRow(c: Campaign) {
+    const sentCount = Number(c.sent_count) || 0;
+    const openCount = Number(c.open_count) || 0;
+    const openRate = sentCount > 0 ? ((openCount / sentCount) * 100).toFixed(1) : '0.0';
+    const isArchived = !!c.is_archived;
+
+    return (
+      <tr
+        key={c.id}
+        className={`hover:bg-gray-50 cursor-pointer ${selectedIds.has(c.id) ? 'bg-primary-50' : ''} ${isArchived ? 'opacity-60' : ''}`}
+      >
+        <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+          <input
+            type="checkbox"
+            checked={selectedIds.has(c.id)}
+            onChange={() => toggleSelect(c.id)}
+            className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+        </td>
+        <td className="px-4 py-3" onClick={() => navigate(`/campaigns/${c.id}`)}>
+          <div className="flex items-center gap-2">
+            {c.label_color && (
+              <span
+                className="h-3 w-3 flex-shrink-0 rounded-full"
+                style={{ backgroundColor: c.label_color }}
+                title={c.label_name || ''}
+              />
+            )}
+            <span className="font-medium">{c.name}</span>
+            {c.label_name && (
+              <span className="text-xs text-gray-400">{c.label_name}</span>
+            )}
+          </div>
+        </td>
+        <td className="px-4 py-3" onClick={() => navigate(`/campaigns/${c.id}`)}>
+          <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusColors[c.status] || ''}`}>{c.status}</span>
+        </td>
+        <td className="px-4 py-3 text-gray-500" onClick={() => navigate(`/campaigns/${c.id}`)}>
+          {formatDate(c.created_at)}
+        </td>
+        <td className="px-4 py-3" onClick={() => navigate(`/campaigns/${c.id}`)}>
+          {c.total_recipients}
+        </td>
+        <td className="px-4 py-3" onClick={() => navigate(`/campaigns/${c.id}`)}>
+          {openRate}%
+        </td>
+        <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
+          <button
+            onClick={() => starMutation.mutate(c.id)}
+            className="text-lg leading-none transition-colors"
+            title={c.is_starred ? 'Unstar' : 'Star'}
+          >
+            {c.is_starred
+              ? <span className="text-yellow-400">{'\u2605'}</span>
+              : <span className="text-gray-300 hover:text-yellow-400">{'\u2606'}</span>
+            }
+          </button>
+        </td>
+        <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+          <div className="relative">
+            <ActionsDropdown {...actionProps(c)} />
+            {labelPickerCampaignId === c.id && (
+              <LabelPicker
+                currentColor={c.label_color}
+                currentName={c.label_name}
+                onSelect={(label) => handleLabelSelect(c.id, label)}
+                onClose={() => setLabelPickerCampaignId(null)}
+              />
+            )}
+          </div>
+        </td>
+      </tr>
+    );
+  }
+
+  function renderGridItems(items: Campaign[]) {
+    return (
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {items.map(renderCard)}
+      </div>
+    );
+  }
+
+  function renderListItems(items: Campaign[]) {
+    return (
+      <div className="rounded-xl bg-white shadow-sm">
+        <div className="overflow-x-auto overflow-y-visible">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="w-10 px-4 py-3">
+                  <input
+                    type="checkbox"
+                    checked={campaigns.length > 0 && selectedIds.size === campaigns.length}
+                    onChange={toggleSelectAll}
+                    className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                  />
+                </th>
+                <SortableHeader label="Name" field="name" currentSort={sort} onSort={handleSort} className="px-4" />
+                <SortableHeader label="Status" field="status" currentSort={sort} onSort={handleSort} className="px-4" />
+                <SortableHeader label="Date" field="created_at" currentSort={sort} onSort={handleSort} className="px-4" />
+                <SortableHeader label="Recipients" field="total_recipients" currentSort={sort} onSort={handleSort} className="px-4" />
+                <SortableHeader label="Open Rate" field="open_rate" currentSort={sort} onSort={handleSort} className="px-4" />
+                <th className="w-10 px-4 py-3 text-center font-medium text-gray-600">
+                  <span title="Star">{'\u2606'}</span>
+                </th>
+                <th className="w-10 px-4 py-3 text-center font-medium text-gray-600">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {items.length === 0 ? (
+                <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400">No campaigns found</td></tr>
+              ) : items.map(renderRow)}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
+
+  function renderGrouped(items: Campaign[]) {
+    if (groupBy === 'date') {
+      const groups = groupByDate(items, (c) => c.created_at);
+      return Array.from(groups.entries()).map(([label, groupItems]) => (
+        <div key={label}>
+          <GroupHeader label={label} count={groupItems.length} />
+          {viewMode === 'grid' ? renderGridItems(groupItems) : renderListItems(groupItems)}
+        </div>
+      ));
+    }
+    if (groupBy === 'project') {
+      const groups = groupByProject(
+        items,
+        (c) => (c as Campaign & { project_id?: string }).project_id,
+        projects,
+      );
+      return Array.from(groups.entries()).map(([label, { color, items: groupItems }]) => (
+        <div key={label}>
+          <GroupHeader label={label} color={color} count={groupItems.length} />
+          {viewMode === 'grid' ? renderGridItems(groupItems) : renderListItems(groupItems)}
+        </div>
+      ));
+    }
+    if (items.length === 0) {
+      return <p className="text-gray-400">No campaigns found</p>;
+    }
+    return viewMode === 'grid' ? renderGridItems(items) : renderListItems(items);
+  }
 
   return (
     <div className="p-6">
@@ -316,7 +592,7 @@ function CampaignsContent() {
         </button>
       </div>
 
-      {/* Search, status filter, label chips */}
+      {/* Search, filters, view toggle */}
       <div className="mt-3 flex flex-wrap items-center gap-3">
         <input
           type="text"
@@ -341,40 +617,50 @@ function CampaignsContent() {
             <option key={p.id} value={p.id}>{p.icon ? `${p.icon} ` : ''}{p.name}</option>
           ))}
         </select>
+        <select
+          value={groupBy}
+          onChange={(e) => setGroupBy(e.target.value as GroupBy)}
+          className="rounded-lg border px-3 py-2 text-sm"
+        >
+          <option value="none">No Grouping</option>
+          <option value="date">Group by Date</option>
+          <option value="project">Group by Project</option>
+        </select>
 
-        {/* Label filter chips */}
-        {uniqueLabels.length > 0 && (
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-gray-400">Labels:</span>
-            {uniqueLabels.map((l) => (
-              <button
-                key={l.color}
-                onClick={() => setLabelFilter(labelFilter === l.color ? null : l.color)}
-                className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
-                  labelFilter === l.color
-                    ? 'border-gray-400 bg-gray-100 text-gray-800'
-                    : 'border-gray-200 text-gray-500 hover:bg-gray-50'
-                }`}
-              >
-                <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: l.color }} />
-                {l.name}
-              </button>
-            ))}
-            {labelFilter && (
-              <button
-                onClick={() => setLabelFilter(null)}
-                className="text-xs text-gray-400 hover:text-gray-600"
-              >
-                Clear
-              </button>
-            )}
-          </div>
-        )}
+        <div className="ml-auto">
+          <ViewToggle mode={viewMode} onChange={handleViewChange} />
+        </div>
       </div>
+
+      {/* Label filter chips */}
+      {uniqueLabels.length > 0 && (
+        <div className="mt-2 flex items-center gap-1.5">
+          <span className="text-xs text-gray-400">Labels:</span>
+          {uniqueLabels.map((l) => (
+            <button
+              key={l.color}
+              onClick={() => setLabelFilter(labelFilter === l.color ? null : l.color)}
+              className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
+                labelFilter === l.color
+                  ? 'border-gray-400 bg-gray-100 text-gray-800'
+                  : 'border-gray-200 text-gray-500 hover:bg-gray-50'
+              }`}
+            >
+              <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: l.color }} />
+              {l.name}
+            </button>
+          ))}
+          {labelFilter && (
+            <button onClick={() => setLabelFilter(null)} className="text-xs text-gray-400 hover:text-gray-600">
+              Clear
+            </button>
+          )}
+        </div>
+      )}
 
       {isLoading ? (
         <div className="mt-4">
-          <TableSkeleton rows={5} columns={9} />
+          {viewMode === 'grid' ? <GridCardSkeleton count={6} /> : <TableSkeleton rows={5} columns={8} />}
         </div>
       ) : isError ? (
         <div className="mt-4 rounded-xl bg-red-50 p-6 text-center">
@@ -383,119 +669,8 @@ function CampaignsContent() {
         </div>
       ) : (
         <>
-          <div className="mt-4 rounded-xl bg-white shadow-sm">
-            <div className="overflow-x-auto overflow-y-visible">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="w-10 px-4 py-3">
-                    <input
-                      type="checkbox"
-                      checked={campaigns.length > 0 && selectedIds.size === campaigns.length}
-                      onChange={toggleSelectAll}
-                      className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-                    />
-                  </th>
-                  <th className="px-4 py-3 text-left font-medium text-gray-600">Name</th>
-                  <th className="px-4 py-3 text-left font-medium text-gray-600">Status</th>
-                  <th className="px-4 py-3 text-left font-medium text-gray-600">Date</th>
-                  <th className="px-4 py-3 text-left font-medium text-gray-600">Recipients</th>
-                  <th className="px-4 py-3 text-left font-medium text-gray-600">Open Rate</th>
-                  <th className="w-10 px-4 py-3 text-center font-medium text-gray-600">
-                    <span title="Star">{'\u2606'}</span>
-                  </th>
-                  <th className="w-10 px-4 py-3 text-center font-medium text-gray-600">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {campaigns.length === 0 ? (
-                  <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400">No campaigns found</td></tr>
-                ) : campaigns.map((c) => {
-                  const sentCount = Number(c.sent_count) || 0;
-                  const openCount = Number(c.open_count) || 0;
-                  const openRate = sentCount > 0 ? ((openCount / sentCount) * 100).toFixed(1) : '0.0';
-                  const isArchived = !!c.is_archived;
-
-                  return (
-                    <tr
-                      key={c.id}
-                      className={`hover:bg-gray-50 cursor-pointer ${selectedIds.has(c.id) ? 'bg-primary-50' : ''} ${isArchived ? 'opacity-60' : ''}`}
-                    >
-                      <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                        <input
-                          type="checkbox"
-                          checked={selectedIds.has(c.id)}
-                          onChange={() => toggleSelect(c.id)}
-                          className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-                        />
-                      </td>
-                      <td className="px-4 py-3" onClick={() => navigate(`/campaigns/${c.id}`)}>
-                        <div className="flex items-center gap-2">
-                          {c.label_color && (
-                            <span
-                              className="h-3 w-3 flex-shrink-0 rounded-full"
-                              style={{ backgroundColor: c.label_color }}
-                              title={c.label_name || ''}
-                            />
-                          )}
-                          <span className="font-medium">{c.name}</span>
-                          {c.label_name && (
-                            <span className="text-xs text-gray-400">{c.label_name}</span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3" onClick={() => navigate(`/campaigns/${c.id}`)}>
-                        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusColors[c.status] || ''}`}>{c.status}</span>
-                      </td>
-                      <td className="px-4 py-3 text-gray-500" onClick={() => navigate(`/campaigns/${c.id}`)}>
-                        {formatDate(c.created_at)}
-                      </td>
-                      <td className="px-4 py-3" onClick={() => navigate(`/campaigns/${c.id}`)}>
-                        {c.total_recipients}
-                      </td>
-                      <td className="px-4 py-3" onClick={() => navigate(`/campaigns/${c.id}`)}>
-                        {openRate}%
-                      </td>
-                      <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
-                        <button
-                          onClick={() => starMutation.mutate(c.id)}
-                          className="text-lg leading-none transition-colors"
-                          title={c.is_starred ? 'Unstar' : 'Star'}
-                        >
-                          {c.is_starred
-                            ? <span className="text-yellow-400">{'\u2605'}</span>
-                            : <span className="text-gray-300 hover:text-yellow-400">{'\u2606'}</span>
-                          }
-                        </button>
-                      </td>
-                      <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                        <div className="relative">
-                          <ActionsDropdown
-                            campaign={c}
-                            onDuplicate={() => handleDuplicate(c.id)}
-                            onToggleStar={() => starMutation.mutate(c.id)}
-                            onToggleArchive={() => archiveMutation.mutate(c.id)}
-                            onDelete={() => setDeleteModal({ type: 'single', id: c.id })}
-                            onLabelOpen={() => setLabelPickerCampaignId(c.id)}
-                            onMoveToProject={(projectId) => moveMutation.mutate({ projectId, items: { campaignIds: [c.id] } })}
-                            projects={projects}
-                          />
-                          {labelPickerCampaignId === c.id && (
-                            <LabelPicker
-                              currentColor={c.label_color}
-                              currentName={c.label_name}
-                              onSelect={(label) => handleLabelSelect(c.id, label)}
-                              onClose={() => setLabelPickerCampaignId(null)}
-                            />
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            </div>
+          <div className="mt-4 space-y-4">
+            {renderGrouped(sorted)}
           </div>
 
           {totalPages > 1 && (

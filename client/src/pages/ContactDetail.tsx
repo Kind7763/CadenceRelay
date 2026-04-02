@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { getContact, updateContact, deleteContact, Contact } from '../api/contacts.api';
 import { getContactAnalytics } from '../api/analytics.api';
 import { useCustomVariables } from '../hooks/useCustomVariables';
+import { SortableHeader, SortState, sortItems, toggleSort } from '../components/ui/SortableHeader';
 
 interface SendHistoryItem {
   campaign_id: string;
@@ -64,6 +65,7 @@ export default function ContactDetail() {
   const [editStatus, setEditStatus] = useState('');
   const [editMetadata, setEditMetadata] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [historySort, setHistorySort] = useState<SortState | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deletePassword, setDeletePassword] = useState('');
   const [deleting, setDeleting] = useState(false);
@@ -368,17 +370,27 @@ export default function ContactDetail() {
               <table className="mt-4 w-full text-sm">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-3 py-2 text-left font-medium text-gray-600">Campaign</th>
-                    <th className="px-3 py-2 text-left font-medium text-gray-600">Status</th>
-                    <th className="px-3 py-2 text-left font-medium text-gray-600">Sent</th>
-                    <th className="px-3 py-2 text-center font-medium text-gray-600">Opens</th>
-                    <th className="px-3 py-2 text-center font-medium text-gray-600">Clicks</th>
-                    <th className="px-3 py-2 text-left font-medium text-gray-600">Last Opened</th>
+                    <SortableHeader label="Campaign" field="campaign_name" currentSort={historySort} onSort={(f) => setHistorySort(toggleSort(historySort, f))} />
+                    <SortableHeader label="Status" field="status" currentSort={historySort} onSort={(f) => setHistorySort(toggleSort(historySort, f))} />
+                    <SortableHeader label="Sent" field="sent_at" currentSort={historySort} onSort={(f) => setHistorySort(toggleSort(historySort, f))} />
+                    <SortableHeader label="Opens" field="open_count" currentSort={historySort} onSort={(f) => setHistorySort(toggleSort(historySort, f))} className="text-center" />
+                    <SortableHeader label="Clicks" field="click_count" currentSort={historySort} onSort={(f) => setHistorySort(toggleSort(historySort, f))} className="text-center" />
+                    <SortableHeader label="Last Opened" field="last_opened_at" currentSort={historySort} onSort={(f) => setHistorySort(toggleSort(historySort, f))} />
                     <th className="px-3 py-2 text-left font-medium text-gray-600">Error</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {analytics.campaigns.map((c) => (
+                  {sortItems(analytics.campaigns, historySort, (c, field) => {
+                    switch (field) {
+                      case 'campaign_name': return c.campaign_name;
+                      case 'status': return c.status;
+                      case 'sent_at': return c.sent_at || '';
+                      case 'open_count': return c.open_count;
+                      case 'click_count': return c.click_count;
+                      case 'last_opened_at': return c.last_opened_at || '';
+                      default: return null;
+                    }
+                  }).map((c) => (
                     <tr key={c.recipient_id} className="hover:bg-gray-50 cursor-pointer" onClick={() => navigate(`/campaigns/${c.campaign_id}`)}>
                       <td className="px-3 py-2 font-medium text-primary-600">{c.campaign_name}</td>
                       <td className="px-3 py-2">
@@ -415,15 +427,24 @@ export default function ContactDetail() {
               <table className="mt-4 w-full text-sm">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-4 py-2 text-left font-medium text-gray-600">Campaign</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-600">Status</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-600">Sent</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-600">Opened</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-600">Clicked</th>
+                    <SortableHeader label="Campaign" field="campaign_name" currentSort={historySort} onSort={(f) => setHistorySort(toggleSort(historySort, f))} className="px-4" />
+                    <SortableHeader label="Status" field="status" currentSort={historySort} onSort={(f) => setHistorySort(toggleSort(historySort, f))} className="px-4" />
+                    <SortableHeader label="Sent" field="sent_at" currentSort={historySort} onSort={(f) => setHistorySort(toggleSort(historySort, f))} className="px-4" />
+                    <SortableHeader label="Opened" field="opened_at" currentSort={historySort} onSort={(f) => setHistorySort(toggleSort(historySort, f))} className="px-4" />
+                    <SortableHeader label="Clicked" field="clicked_at" currentSort={historySort} onSort={(f) => setHistorySort(toggleSort(historySort, f))} className="px-4" />
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {history.map((h, i) => (
+                  {sortItems(history, historySort, (h, field) => {
+                    switch (field) {
+                      case 'campaign_name': return h.campaign_name;
+                      case 'status': return h.status;
+                      case 'sent_at': return h.sent_at || '';
+                      case 'opened_at': return h.opened_at || '';
+                      case 'clicked_at': return h.clicked_at || '';
+                      default: return null;
+                    }
+                  }).map((h, i) => (
                     <tr key={i} className="hover:bg-gray-50">
                       <td className="px-4 py-2">{h.campaign_name}</td>
                       <td className="px-4 py-2">{h.status}</td>

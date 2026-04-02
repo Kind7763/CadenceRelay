@@ -18,6 +18,7 @@ import {
 import { getRecipientEvents } from '../api/analytics.api';
 import { listContacts, Contact } from '../api/contacts.api';
 import LabelPicker from '../components/ui/LabelPicker';
+import { SortableHeader, SortState, sortItems, toggleSort } from '../components/ui/SortableHeader';
 
 const statusColors: Record<string, string> = {
   draft: 'bg-gray-100 text-gray-700',
@@ -70,6 +71,7 @@ export default function CampaignDetail() {
   const [previewAttachment, setPreviewAttachment] = useState<{ url: string; filename: string } | null>(null);
   const [previewContacts, setPreviewContacts] = useState<Contact[]>([]);
   const [selectedPreviewContact, setSelectedPreviewContact] = useState<Contact | null>(null);
+  const [recipientSort, setRecipientSort] = useState<SortState | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
@@ -883,19 +885,29 @@ export default function CampaignDetail() {
           <table className="mt-4 w-full text-sm">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-3 py-2 text-left font-medium text-gray-600">Email</th>
-                <th className="px-3 py-2 text-left font-medium text-gray-600">Status</th>
-                <th className="px-3 py-2 text-left font-medium text-gray-600">Sent</th>
-                <th className="px-3 py-2 text-center font-medium text-gray-600">Opens</th>
-                <th className="px-3 py-2 text-center font-medium text-gray-600">Clicks</th>
-                <th className="px-3 py-2 text-left font-medium text-gray-600">Last Opened</th>
+                <SortableHeader label="Email" field="email" currentSort={recipientSort} onSort={(f) => setRecipientSort(toggleSort(recipientSort, f))} />
+                <SortableHeader label="Status" field="status" currentSort={recipientSort} onSort={(f) => setRecipientSort(toggleSort(recipientSort, f))} />
+                <SortableHeader label="Sent" field="sent_at" currentSort={recipientSort} onSort={(f) => setRecipientSort(toggleSort(recipientSort, f))} />
+                <SortableHeader label="Opens" field="open_count" currentSort={recipientSort} onSort={(f) => setRecipientSort(toggleSort(recipientSort, f))} className="text-center" />
+                <SortableHeader label="Clicks" field="click_count" currentSort={recipientSort} onSort={(f) => setRecipientSort(toggleSort(recipientSort, f))} className="text-center" />
+                <SortableHeader label="Last Opened" field="last_opened_at" currentSort={recipientSort} onSort={(f) => setRecipientSort(toggleSort(recipientSort, f))} />
                 <th className="px-3 py-2 text-left font-medium text-gray-600">Error</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {recipients.length === 0 ? (
                 <tr><td colSpan={7} className="px-3 py-4 text-center text-gray-400">No recipients</td></tr>
-              ) : recipients.map((r) => (
+              ) : sortItems(recipients, recipientSort, (r: Recipient, field: string) => {
+                switch (field) {
+                  case 'email': return r.email;
+                  case 'status': return r.status;
+                  case 'sent_at': return r.sent_at || '';
+                  case 'open_count': return r.open_count || 0;
+                  case 'click_count': return r.click_count || 0;
+                  case 'last_opened_at': return r.last_opened_at || '';
+                  default: return null;
+                }
+              }).map((r) => (
                 <React.Fragment key={r.id}>
                   <tr
                     className="hover:bg-gray-50 cursor-pointer"

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, CSSProperties } from 'react';
 
 export interface MenuItem {
   label: string;
@@ -17,7 +17,7 @@ export interface ItemCardMenuProps {
 
 export default function ItemCardMenu({ sections }: ItemCardMenuProps) {
   const [open, setOpen] = useState(false);
-  const [dropUp, setDropUp] = useState(false);
+  const [dropdownStyle, setDropdownStyle] = useState<CSSProperties>({});
   const ref = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
 
@@ -31,9 +31,19 @@ export default function ItemCardMenu({ sections }: ItemCardMenuProps) {
 
   function handleToggle(e: React.MouseEvent) {
     e.stopPropagation();
-    if (!open && btnRef.current) {
-      const rect = btnRef.current.getBoundingClientRect();
-      setDropUp(rect.bottom > window.innerHeight * 0.6);
+    if (!open) {
+      const rect = btnRef.current?.getBoundingClientRect();
+      if (rect) {
+        const spaceBelow = window.innerHeight - rect.bottom;
+        const dropdownHeight = 250;
+        setDropdownStyle({
+          position: 'fixed' as const,
+          top: spaceBelow > dropdownHeight ? rect.bottom + 4 : undefined,
+          bottom: spaceBelow > dropdownHeight ? undefined : window.innerHeight - rect.top + 4,
+          right: window.innerWidth - rect.right,
+          zIndex: 9999,
+        });
+      }
     }
     setOpen(!open);
   }
@@ -52,7 +62,10 @@ export default function ItemCardMenu({ sections }: ItemCardMenuProps) {
         </svg>
       </button>
       {open && (
-        <div className={`absolute right-0 z-40 w-48 rounded-lg border border-gray-200 bg-white py-1 shadow-lg ${dropUp ? 'bottom-full mb-1' : 'top-full mt-1'}`}>
+        <div
+          style={dropdownStyle}
+          className="w-48 rounded-lg border border-gray-200 bg-white py-1 shadow-lg"
+        >
           {sections.map((section, sIdx) => (
             <div key={sIdx}>
               {sIdx > 0 && <hr className="my-1 border-gray-100" />}
