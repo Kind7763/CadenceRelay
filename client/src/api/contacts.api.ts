@@ -88,6 +88,11 @@ export async function bulkDeleteContacts(ids: string[], adminPassword: string) {
   return res.data;
 }
 
+export async function deleteSuppressedContacts(adminPassword: string) {
+  const res = await apiClient.delete('/contacts/suppressed', { data: { adminPassword } });
+  return res.data;
+}
+
 export async function importContacts(file: File, listId?: string) {
   const formData = new FormData();
   formData.append('file', file);

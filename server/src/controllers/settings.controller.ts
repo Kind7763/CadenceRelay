@@ -826,3 +826,144 @@ export async function getSnsStatus(_req: Request, res: Response, next: NextFunct
     next(err);
   }
 }
+
+// ─── SES Account Statistics Endpoint ─────────────────────────────────────────
+
+export async function getSesStats(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { client } = await loadSesClient();
+
+    const [quotaResp, statsResp] = await Promise.all([
+      client.send(new GetSendQuotaCommand({})),
+      client.send(new GetSendStatisticsCommand({})),
+    ]);
+
+    const dataPoints = (statsResp.SendDataPoints || [])
+      .sort((a, b) => {
+        const ta = a.Timestamp?.getTime() || 0;
+        const tb = b.Timestamp?.getTime() || 0;
+        return ta - tb;
+      })
+      .map(dp => ({
+        timestamp: dp.Timestamp?.toISOString(),
+        deliveryAttempts: dp.DeliveryAttempts || 0,
+        bounces: dp.Bounces || 0,
+        complaints: dp.Complaints || 0,
+        rejects: dp.Rejects || 0,
+      }));
+
+    // Aggregate totals from all data points
+    let totalDeliveryAttempts = 0;
+    let totalBounces = 0;
+    let totalComplaints = 0;
+    let totalRejects = 0;
+    for (const dp of dataPoints) {
+      totalDeliveryAttempts += dp.deliveryAttempts;
+      totalBounces += dp.bounces;
+      totalComplaints += dp.complaints;
+      totalRejects += dp.rejects;
+    }
+
+    const delivered = totalDeliveryAttempts - totalBounces - totalRejects;
+    const deliveryRate = totalDeliveryAttempts > 0
+      ? Math.round((delivered / totalDeliveryAttempts) * 1000) / 10
+      : 0;
+    const bounceRate = totalDeliveryAttempts > 0
+      ? Math.round((totalBounces / totalDeliveryAttempts) * 1000) / 10
+      : 0;
+    const complaintRate = totalDeliveryAttempts > 0
+      ? Math.round((totalComplaints / totalDeliveryAttempts) * 10000) / 100
+      : 0;
+
+    // Get open/click counts from our own database for correlation
+    const ownStatsResult = await pool.query(
+      `SELECT
+        COALESCE(SUM(c.open_count), 0) as total_opens,
+        COALESCE(SUM(c.click_count), 0) as total_clicks
+       FROM campaigns c`
+    );
+    const totalOpens = Number(ownStatsResult.rows[0]?.total_opens || 0);
+    const totalClicks = Number(ownStatsResult.rows[0]?.total_clicks || 0);
+    const openRate = delivered > 0
+      ? Math.round((totalOpens / delivered) * 1000) / 10
+      : 0;
+    const clickRate = delivered > 0
+      ? Math.round((totalClicks / delivered) * 1000) / 10
+      : 0;
+
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.json({
+      sent: totalDeliveryAttempts,
+      delivered,
+      bounces: totalBounces,
+      complaints: totalComplaints,
+      rejects: totalRejects,
+      opens: totalOpens,
+      clicks: totalClicks,
+      deliveryRate,
+      bounceRate,
+      complaintRate,
+      openRate,
+      clickRate,
+      quota: {
+        max24HourSend: quotaResp.Max24HourSend || 0,
+        sentLast24Hours: quotaResp.SentLast24Hours || 0,
+        maxSendRate: quotaResp.MaxSendRate || 0,
+      },
+      dataPoints,
+    });
+  } catch (err) {
+    const error = err as { name?: string; message?: string };
+    if (error.name === 'AccessDeniedException' || error.name === 'AccessDenied') {
+      next(new AppError('Missing IAM permission: ses:GetSendStatistics. Please add this permission to your IAM user.', 403));
+      return;
+    }
+    next(err);
+  }
+}
+
+// ─── Bounced Emails Not in Suppression List ──────────────────────────────────
+
+export async function getBouncedEmails(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 50));
+    const offset = (page - 1) * limit;
+
+    // Count total bounced emails NOT in suppression list
+    const countResult = await pool.query(
+      `SELECT COUNT(DISTINCT cr.email) as count
+       FROM campaign_recipients cr
+       WHERE cr.status = 'bounced'
+       AND LOWER(cr.email) NOT IN (SELECT LOWER(email) FROM suppression_list)`
+    );
+    const total = parseInt(countResult.rows[0].count, 10);
+
+    // Fetch paginated bounced emails with most recent bounce info
+    const result = await pool.query(
+      `SELECT cr.email, MAX(cr.bounced_at) as bounced_at, MAX(cr.error_message) as error_message,
+              COUNT(*) as bounce_count
+       FROM campaign_recipients cr
+       WHERE cr.status = 'bounced'
+       AND LOWER(cr.email) NOT IN (SELECT LOWER(email) FROM suppression_list)
+       GROUP BY cr.email
+       ORDER BY MAX(cr.bounced_at) DESC NULLS LAST
+       LIMIT $1 OFFSET $2`,
+      [limit, offset]
+    );
+
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.json({
+      data: result.rows,
+      total,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+}

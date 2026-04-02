@@ -451,6 +451,55 @@ export async function bulkDeleteContacts(req: Request, res: Response, next: Next
   }
 }
 
+/**
+ * Delete all contacts whose email is on the suppression list.
+ * Requires admin password confirmation.
+ */
+export async function deleteSuppressedContacts(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { adminPassword } = req.body;
+    await verifyAdminPassword(adminPassword);
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Find contacts whose email is in the suppression list
+      const suppressed = await client.query(
+        `SELECT c.id FROM contacts c
+         WHERE LOWER(c.email) IN (SELECT LOWER(email) FROM suppression_list)`
+      );
+
+      const ids = suppressed.rows.map((r: { id: string }) => r.id);
+
+      if (ids.length === 0) {
+        await client.query('COMMIT');
+        res.json({ message: 'No suppressed contacts found to delete', deleted: 0 });
+        return;
+      }
+
+      // Nullify contact_id in campaign_recipients so historical data is preserved
+      await client.query(
+        'UPDATE campaign_recipients SET contact_id = NULL WHERE contact_id = ANY($1)',
+        [ids]
+      );
+
+      // contact_list_members has ON DELETE CASCADE
+      const result = await client.query('DELETE FROM contacts WHERE id = ANY($1)', [ids]);
+
+      await client.query('COMMIT');
+      res.json({ message: `${result.rowCount} suppressed contact(s) deleted`, deleted: result.rowCount });
+    } catch (txErr) {
+      await client.query('ROLLBACK');
+      throw txErr;
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    next(err);
+  }
+}
+
 // FIX: Proper CSV field parsing that handles quoted fields
 function parseCSVLine(line: string): string[] {
   const fields: string[] = [];

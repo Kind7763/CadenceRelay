@@ -128,3 +128,62 @@ export async function setupSns(): Promise<SnsSetupResult> {
   const res = await apiClient.post('/settings/setup-sns');
   return res.data;
 }
+
+// ─── SES Account Statistics ──────────────────────────────────────────────────
+
+export interface SesStatsData {
+  sent: number;
+  delivered: number;
+  bounces: number;
+  complaints: number;
+  rejects: number;
+  opens: number;
+  clicks: number;
+  deliveryRate: number;
+  bounceRate: number;
+  complaintRate: number;
+  openRate: number;
+  clickRate: number;
+  quota: {
+    max24HourSend: number;
+    sentLast24Hours: number;
+    maxSendRate: number;
+  };
+  dataPoints: Array<{
+    timestamp: string;
+    deliveryAttempts: number;
+    bounces: number;
+    complaints: number;
+    rejects: number;
+  }>;
+}
+
+export async function getSesStats(): Promise<SesStatsData> {
+  const res = await apiClient.get('/settings/ses-stats');
+  return res.data;
+}
+
+// ─── Bounced Emails Not in Suppression ───────────────────────────────────────
+
+export interface BouncedEmail {
+  email: string;
+  bounced_at: string | null;
+  error_message: string | null;
+  bounce_count: number;
+}
+
+export interface BouncedEmailsResponse {
+  data: BouncedEmail[];
+  total: number;
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+}
+
+export async function getBouncedEmails(params?: { page?: number; limit?: number }): Promise<BouncedEmailsResponse> {
+  const res = await apiClient.get('/settings/ses-bounced-emails', { params });
+  return res.data;
+}

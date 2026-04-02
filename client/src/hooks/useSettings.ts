@@ -17,6 +17,10 @@ import {
   SnsStatusData,
   setupSns,
   SnsSetupResult,
+  getSesStats,
+  SesStatsData,
+  getBouncedEmails,
+  BouncedEmailsResponse,
 } from '../api/settings.api';
 
 export function useSettings() {
@@ -173,5 +177,28 @@ export function useSetupSns() {
       const message = (err as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Failed to set up SNS notifications';
       toast.error(message);
     },
+  });
+}
+
+// ─── SES Account Statistics ──────────────────────────────────────────────────
+
+export function useSesStats(enabled = false) {
+  return useQuery<SesStatsData>({
+    queryKey: ['ses-stats'],
+    queryFn: getSesStats,
+    enabled,
+    staleTime: 5 * 60 * 1000,
+    retry: 1,
+  });
+}
+
+// ─── Bounced Emails Not in Suppression ───────────────────────────────────────
+
+export function useBouncedEmails(params: { page?: number; limit?: number } = {}, enabled = true) {
+  return useQuery<BouncedEmailsResponse>({
+    queryKey: ['bounced-emails', params],
+    queryFn: () => getBouncedEmails(params),
+    enabled,
+    staleTime: 30 * 1000,
   });
 }

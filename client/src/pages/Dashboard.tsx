@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell, Legend } from 'recharts';
 import { useDashboard } from '../hooks/useDashboard';
-import { useSesQuota } from '../hooks/useSettings';
+import { useSesQuota, useSesStats } from '../hooks/useSettings';
 import { DashboardSkeleton } from '../components/ui/Skeleton';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { exportAnalytics } from '../api/analytics.api';
@@ -40,6 +40,8 @@ const DATE_PRESETS = [
 function DashboardContent() {
   const navigate = useNavigate();
   const { data: sesQuotaData } = useSesQuota(true);
+  const [sesStatsEnabled, setSesStatsEnabled] = useState(false);
+  const { data: sesStatsData, isLoading: sesStatsLoading } = useSesStats(sesStatsEnabled);
   const [datePreset, setDatePreset] = useState(30);
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
@@ -434,6 +436,51 @@ function DashboardContent() {
           )}
         </div>
       )}
+
+      {/* AWS SES Account Statistics */}
+      <div className="mt-6 rounded-xl bg-white p-5 shadow-sm">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="font-semibold text-gray-900">AWS SES Account Statistics</h3>
+            <p className="text-xs text-gray-500 mt-0.5">Aggregated send statistics from your AWS SES account (all time, 15-min intervals)</p>
+          </div>
+          {!sesStatsEnabled && (
+            <button
+              onClick={() => setSesStatsEnabled(true)}
+              className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+            >
+              Load SES Stats
+            </button>
+          )}
+        </div>
+        {sesStatsLoading && <p className="mt-3 text-sm text-gray-400">Loading SES statistics...</p>}
+        {sesStatsData && (
+          <div className="mt-4">
+            <div className="grid grid-cols-3 gap-3 sm:grid-cols-6">
+              {[
+                { label: 'Sent', value: num(sesStatsData.sent), color: 'text-blue-600' },
+                { label: 'Delivered', value: num(sesStatsData.delivered), sub: `${rate(sesStatsData.deliveryRate)}%`, color: 'text-green-600' },
+                { label: 'Bounces', value: num(sesStatsData.bounces), sub: `${rate(sesStatsData.bounceRate)}%`, color: 'text-red-600' },
+                { label: 'Complaints', value: num(sesStatsData.complaints), sub: `${rate(sesStatsData.complaintRate)}%`, color: 'text-orange-600' },
+                { label: 'Opens', value: num(sesStatsData.opens), sub: `${rate(sesStatsData.openRate)}%`, color: 'text-emerald-600' },
+                { label: 'Clicks', value: num(sesStatsData.clicks), sub: `${rate(sesStatsData.clickRate)}%`, color: 'text-purple-600' },
+              ].map((s) => (
+                <div key={s.label} className="rounded-lg border border-gray-200 p-3 text-center">
+                  <span className="text-xs text-gray-500">{s.label}</span>
+                  <p className={`text-lg font-bold ${s.color}`}>{s.value}</p>
+                  {s.sub && <span className="text-xs text-gray-400">{s.sub}</span>}
+                </div>
+              ))}
+            </div>
+            {sesStatsData.quota && (
+              <div className="mt-3 flex items-center gap-4 text-xs text-gray-500">
+                <span>24h quota: {num(sesStatsData.quota.sentLast24Hours)} / {num(sesStatsData.quota.max24HourSend)}</span>
+                <span>Max rate: {sesStatsData.quota.maxSendRate}/sec</span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Charts row 1 */}
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">

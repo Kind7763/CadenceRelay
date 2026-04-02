@@ -16,9 +16,12 @@ import {
   useSesQuota,
   useSnsStatus,
   useSetupSns,
+  useBouncedEmails,
 } from '../hooks/useSettings';
 import type { DnsCheck } from '../api/settings.api';
 import { getSesQuota } from '../api/settings.api';
+import { deleteSuppressedContacts } from '../api/contacts.api';
+import { bulkAddToSuppression as bulkAddToSuppressionApi } from '../api/suppression.api';
 import {
   useSuppressionList,
   useSuppressionCount,
@@ -124,6 +127,48 @@ function SettingsContent() {
   async function handleSetupSns() {
     await setupSnsMutation.mutateAsync();
     refetchSnsStatus();
+  }
+
+  // Bounced emails (not yet suppressed) state
+  const [bouncedPage, setBouncedPage] = useState(1);
+  const { data: bouncedData, refetch: refetchBounced } = useBouncedEmails({ page: bouncedPage, limit: 50 });
+  const [bouncedSyncing, setBouncedSyncing] = useState(false);
+  const [deleteBouncedModal, setDeleteBouncedModal] = useState(false);
+
+  async function handleAddAllBouncedToSuppression() {
+    if (!bouncedData || bouncedData.total === 0) return;
+    setBouncedSyncing(true);
+    try {
+      // Fetch all bounced emails (paginated) and add them to suppression
+      let page = 1;
+      let totalAdded = 0;
+      while (true) {
+        const resp = await import('../api/settings.api').then(m => m.getBouncedEmails({ page, limit: 100 }));
+        if (resp.data.length === 0) break;
+        const emails = resp.data.map((b: { email: string }) => b.email);
+        const result = await bulkAddToSuppressionApi(emails, 'auto-bounce-sync');
+        totalAdded += result.added;
+        if (page >= resp.pagination.totalPages) break;
+        page++;
+      }
+      toast.success(`${totalAdded} bounced emails added to suppression list`);
+      refetchBounced();
+    } catch {
+      toast.error('Failed to add bounced emails to suppression list');
+    } finally {
+      setBouncedSyncing(false);
+    }
+  }
+
+  async function handleDeleteSuppressedContacts(adminPassword: string) {
+    try {
+      const result = await deleteSuppressedContacts(adminPassword);
+      toast.success(result.message || `${result.deleted} contacts deleted`);
+      setDeleteBouncedModal(false);
+      refetchBounced();
+    } catch {
+      toast.error('Failed to delete suppressed contacts');
+    }
   }
 
   // Suppression list state
@@ -816,6 +861,109 @@ function SettingsContent() {
           </button>
         )}
       </div>
+
+      {/* Bounced Emails Not Yet Suppressed */}
+      <div className="mt-6 rounded-xl bg-white p-6 shadow-sm">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">
+              Bounced Emails Not Yet Suppressed
+              {bouncedData?.total != null && bouncedData.total > 0 && (
+                <span className="ml-2 inline-flex items-center rounded-full bg-orange-100 px-2.5 py-0.5 text-xs font-medium text-orange-700">
+                  {bouncedData.total.toLocaleString()}
+                </span>
+              )}
+            </h2>
+            <p className="mt-1 text-sm text-gray-500">
+              Emails that bounced in campaigns but are not yet on your suppression list.
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={handleAddAllBouncedToSuppression}
+              disabled={bouncedSyncing || !bouncedData || bouncedData.total === 0}
+              className="rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-orange-700 disabled:opacity-50 transition-colors"
+            >
+              {bouncedSyncing ? 'Syncing...' : 'Add All to Suppression List'}
+            </button>
+            <button
+              onClick={() => setDeleteBouncedModal(true)}
+              disabled={!bouncedData || bouncedData.total === 0}
+              className="rounded-lg border border-red-300 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 transition-colors"
+            >
+              Delete All Bounced Contacts
+            </button>
+          </div>
+        </div>
+
+        {bouncedData && bouncedData.data.length > 0 ? (
+          <>
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium text-gray-600">Email</th>
+                    <th className="px-3 py-2 text-left font-medium text-gray-600">Bounced At</th>
+                    <th className="px-3 py-2 text-left font-medium text-gray-600">Error</th>
+                    <th className="px-3 py-2 text-right font-medium text-gray-600">Times Bounced</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {bouncedData.data.map((entry) => (
+                    <tr key={entry.email} className="hover:bg-gray-50">
+                      <td className="px-3 py-2 font-mono text-xs">{entry.email}</td>
+                      <td className="px-3 py-2 text-gray-400 text-xs">
+                        {entry.bounced_at ? new Date(entry.bounced_at).toLocaleDateString() : '-'}
+                      </td>
+                      <td className="px-3 py-2 text-gray-500 text-xs truncate max-w-xs" title={entry.error_message || ''}>
+                        {entry.error_message || 'Permanent bounce'}
+                      </td>
+                      <td className="px-3 py-2 text-right text-gray-600 text-xs">{entry.bounce_count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {bouncedData.pagination && bouncedData.pagination.totalPages > 1 && (
+              <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
+                <span>
+                  Showing {Math.min(bouncedData.pagination.limit, bouncedData.data.length)} of {bouncedData.pagination.total.toLocaleString()}
+                </span>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setBouncedPage(Math.max(1, bouncedPage - 1))}
+                    disabled={bouncedPage <= 1}
+                    className="rounded border border-gray-300 px-2 py-1 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Previous
+                  </button>
+                  <button
+                    onClick={() => setBouncedPage(bouncedPage + 1)}
+                    disabled={bouncedPage >= bouncedData.pagination.totalPages}
+                    className="rounded border border-gray-300 px-2 py-1 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="mt-4 rounded-lg border-2 border-dashed border-gray-200 p-6 text-center">
+            <p className="text-sm text-gray-500">No bounced emails outside the suppression list.</p>
+          </div>
+        )}
+      </div>
+
+      {/* Admin password modal for deleting suppressed contacts */}
+      {deleteBouncedModal && (
+        <AdminPasswordModal
+          title="Delete All Suppressed Contacts"
+          description="This will permanently delete all contacts whose email is on the suppression list. Campaign history will be preserved but unlinked. This cannot be undone."
+          onConfirm={handleDeleteSuppressedContacts}
+          onCancel={() => setDeleteBouncedModal(false)}
+        />
+      )}
 
       {/* Suppression List */}
       <div className="mt-6 rounded-xl bg-white p-6 shadow-sm">

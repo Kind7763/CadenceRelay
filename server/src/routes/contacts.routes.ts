@@ -15,6 +15,7 @@ import {
   previewCSV,
   exportContacts,
   getContactFilters,
+  deleteSuppressedContacts,
 } from '../controllers/contacts.controller';
 import { validateBody } from '../middleware/validateRequest';
 import { z } from 'zod';
@@ -67,6 +68,7 @@ router.post('/', validateBody(createSchema), createContact);
 router.put('/:id', validateBody(updateSchema), updateContact);
 router.put('/bulk-update', bulkUpdateContacts);
 router.delete('/bulk', bulkDeleteContacts);
+router.delete('/suppressed', deleteSuppressedContacts);
 router.delete('/:id', deleteContact);
 router.post('/import', upload.single('file'), importContacts);
 router.post('/import-csv', upload.single('file'), importContactsCSV);
