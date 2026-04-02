@@ -306,14 +306,30 @@ async function handleDispatch(job: Job<DispatchJobData>) {
     return;
   }
 
-  const contacts = await loadContacts(campaign, campaignId);
-  logger.info(`Campaign ${campaignId}: ${contacts.length} recipients to process`);
+  let contacts = await loadContacts(campaign, campaignId);
 
-  // Update total recipients
-  await pool.query(
-    'UPDATE campaigns SET total_recipients = total_recipients + $1, updated_at = NOW() WHERE id = $2',
-    [contacts.length, campaignId]
+  // Check for pre-created pending recipients (from "Resend to Non-Openers" or manual enrollment)
+  // These already exist in campaign_recipients but were never enqueued for sending
+  const preCreatedResult = await pool.query(
+    `SELECT cr.id as recipient_id, cr.contact_id, cr.email, cr.tracking_token,
+       c.name, c.state, c.district, c.block, c.classes, c.category, c.management, c.address, c.metadata
+     FROM campaign_recipients cr
+     LEFT JOIN contacts c ON c.id = cr.contact_id
+     WHERE cr.campaign_id = $1 AND cr.status = 'pending'`,
+    [campaignId]
   );
+  const preCreatedContacts = preCreatedResult.rows;
+  const hasPreCreated = preCreatedContacts.length > 0 && contacts.length === 0;
+
+  logger.info(`Campaign ${campaignId}: ${contacts.length} new recipients + ${preCreatedContacts.length} pre-created pending`);
+
+  // Update total recipients (only for newly loaded contacts, not pre-created ones)
+  if (contacts.length > 0) {
+    await pool.query(
+      'UPDATE campaigns SET total_recipients = total_recipients + $1, updated_at = NOW() WHERE id = $2',
+      [contacts.length, campaignId]
+    );
+  }
 
   const dynamicVarDefs: DynVarDef[] = Array.isArray(campaign.dynamic_variables)
     ? campaign.dynamic_variables
@@ -473,6 +489,47 @@ async function handleDispatch(job: Job<DispatchJobData>) {
     }
 
     logger.info(`Campaign ${campaignId}: ${contacts.length} send jobs enqueued`);
+  }
+
+  // Handle pre-created pending recipients (from "Resend to Non-Openers")
+  if (hasPreCreated) {
+    logger.info(`Campaign ${campaignId}: dispatching ${preCreatedContacts.length} pre-created recipients`);
+
+    for (let index = 0; index < preCreatedContacts.length; index++) {
+      const pc = preCreatedContacts[index];
+      const variables = buildContactVariables({
+        name: pc.name, email: pc.email, state: pc.state, district: pc.district,
+        block: pc.block, classes: pc.classes, category: pc.category,
+        management: pc.management, address: pc.address, metadata: pc.metadata,
+      });
+
+      const renderedHtml = renderTemplate(template.html_body, variables);
+      const renderedSubject = renderTemplate(template.subject, variables);
+      const renderedText = template.text_body ? renderTemplate(template.text_body, variables) : null;
+
+      // Update recipient status to queued
+      await pool.query(
+        "UPDATE campaign_recipients SET status = 'queued' WHERE id = $1",
+        [pc.recipient_id]
+      );
+
+      await emailSendQueue.add('send', {
+        campaignRecipientId: pc.recipient_id,
+        campaignId,
+        email: pc.email,
+        subject: renderedSubject,
+        html: renderedHtml,
+        text: renderedText,
+        provider: campaign.provider as string,
+        providerConfig: providerConfig as Record<string, unknown>,
+        trackingToken: pc.tracking_token,
+        trackingDomain,
+        attachments: campaignAttachments,
+        replyTo,
+      } as SendJobData, { delay: 0 });
+    }
+
+    logger.info(`Campaign ${campaignId}: ${preCreatedContacts.length} pre-created send jobs enqueued`);
   }
 }
 
