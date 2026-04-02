@@ -282,3 +282,65 @@ export async function getContactFilters(params: Record<string, string> = {}): Pr
   const res = await apiClient.get('/contacts/filters', { params });
   return res.data;
 }
+
+// ── Bounce Management ──
+
+export interface BouncedEmail {
+  id: string;
+  email: string;
+  status: string;
+  bounce_type: string;
+  error_message: string | null;
+  bounced_at: string | null;
+  contact_id: string | null;
+  contact_name: string | null;
+  contact_status: string | null;
+  campaign_id: string | null;
+  campaign_name: string | null;
+}
+
+export interface BounceStats {
+  total: number;
+  permanent: number;
+  transient: number;
+  undetermined: number;
+  suppressed: number;
+}
+
+export async function listBouncedEmails(params: Record<string, string> = {}) {
+  const res = await apiClient.get('/contacts/bounced', { params });
+  return res.data as {
+    data: BouncedEmail[];
+    stats: BounceStats;
+    pagination: { page: number; limit: number; total: number; totalPages: number };
+  };
+}
+
+// ── Email Verification ──
+
+export interface EmailVerificationResult {
+  email: string;
+  valid: boolean;
+  checks: {
+    syntax: 'pass' | 'fail';
+    mx: 'pass' | 'fail' | 'unknown';
+    disposable: 'pass' | 'fail';
+    roleBased: 'pass' | 'warning';
+    previouslyBounced: 'pass' | 'fail';
+  };
+  risk: 'low' | 'medium' | 'high';
+  suggestion: string | null;
+}
+
+export async function verifyEmails(emails: string[]): Promise<{ results: EmailVerificationResult[] }> {
+  const res = await apiClient.post('/contacts/verify-emails', { emails });
+  return res.data;
+}
+
+export async function verifyListEmails(listId: string) {
+  const res = await apiClient.post(`/contacts/verify-list/${listId}`);
+  return res.data as {
+    results: EmailVerificationResult[];
+    summary: { total: number; valid: number; invalid: number; risky: number };
+  };
+}

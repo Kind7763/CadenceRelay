@@ -12,6 +12,7 @@ import {
   XMarkIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline';
 import { useProjectsList } from '../../hooks/useProjects';
 
@@ -21,6 +22,7 @@ const navigation = [
   { name: 'Campaigns', href: '/campaigns', icon: PaperAirplaneIcon },
   { name: 'Automations', href: '/automations', icon: BoltIcon },
   { name: 'Contacts', href: '/contacts', icon: UsersIcon },
+  { name: 'Bounces', href: '/bounces', icon: ExclamationTriangleIcon },
   { name: 'Import', href: '/import', icon: ArrowUpTrayIcon },
   { name: 'Lists', href: '/lists', icon: QueueListIcon },
   { name: 'Templates', href: '/templates', icon: DocumentTextIcon },

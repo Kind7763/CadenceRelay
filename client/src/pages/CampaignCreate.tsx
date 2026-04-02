@@ -8,7 +8,8 @@ import {
 } from '../api/campaigns.api';
 import { listTemplates, Template, checkSpamScore, SpamCheckResult } from '../api/templates.api';
 import { listLists, ContactList } from '../api/lists.api';
-import { listContacts, Contact } from '../api/contacts.api';
+import { listContacts, Contact, verifyEmails as apiVerifyEmails } from '../api/contacts.api';
+import EmailVerifyModal from '../components/EmailVerifyModal';
 import { sendTestEmail } from '../api/settings.api';
 import UploadProgress, { FileUploadProgress } from '../components/ui/UploadProgress';
 import { UploadState, INITIAL_UPLOAD_STATE, formatFileSize, validateFileSize, getFileTypeIcon } from '../lib/uploadHelper';
@@ -215,6 +216,12 @@ export default function CampaignCreate() {
   const [spamChecking, setSpamChecking] = useState(false);
   const [showSpamModal, setShowSpamModal] = useState(false);
 
+  // Email verification
+  const [verifyResult, setVerifyResult] = useState<{ valid: number; risky: number; invalid: number } | null>(null);
+  const [verifyChecking, setVerifyChecking] = useState(false);
+  const [verifyEmails, setVerifyEmails] = useState<string[]>([]);
+  const [showVerifyModal, setShowVerifyModal] = useState(false);
+
   // Feature 3: Dynamic variables
   interface DynVar {
     key: string;
@@ -385,6 +392,30 @@ export default function CampaignCreate() {
         .finally(() => setSpamChecking(false));
     }
   }, [step, selectedTemplate]);
+
+  async function handleVerifyEmailList() {
+    if (!listId) return;
+    setVerifyChecking(true);
+    try {
+      const contactsRes = await listContacts({ listId, limit: '100' });
+      const emails = (contactsRes.data || []).map((c: Contact) => c.email);
+      if (emails.length === 0) {
+        toast.error('No emails found in the selected list');
+        setVerifyChecking(false);
+        return;
+      }
+      setVerifyEmails(emails);
+      const res = await apiVerifyEmails(emails);
+      const valid = res.results.filter((r) => r.risk === 'low').length;
+      const risky = res.results.filter((r) => r.risk === 'medium').length;
+      const invalid = res.results.filter((r) => r.risk === 'high' || !r.valid).length;
+      setVerifyResult({ valid, risky, invalid });
+    } catch {
+      toast.error('Failed to verify emails');
+    } finally {
+      setVerifyChecking(false);
+    }
+  }
 
   const handleAddFiles = useCallback((files: File[]) => {
     const errors: string[] = [];
@@ -1234,6 +1265,33 @@ export default function CampaignCreate() {
             )}
           </div>
 
+          {/* Email List Verification */}
+          <div className="rounded-lg border border-gray-200 p-3 flex items-center justify-between">
+            {verifyChecking ? (
+              <span className="text-sm text-gray-500">Verifying email list...</span>
+            ) : verifyResult ? (
+              <>
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="font-medium text-green-600">{verifyResult.valid} valid</span>
+                  {verifyResult.risky > 0 && <span className="font-medium text-yellow-600">{verifyResult.risky} at risk</span>}
+                  {verifyResult.invalid > 0 && <span className="font-medium text-red-600">{verifyResult.invalid} invalid</span>}
+                </div>
+                <button onClick={() => setShowVerifyModal(true)} className="text-sm text-primary-600 hover:text-primary-800 font-medium">View Details</button>
+              </>
+            ) : (
+              <>
+                <span className="text-sm text-gray-500">Verify your email list before sending</span>
+                <button
+                  onClick={handleVerifyEmailList}
+                  disabled={!listId}
+                  className="rounded-lg bg-primary-600 px-3 py-1.5 text-sm text-white hover:bg-primary-700 disabled:opacity-50"
+                >
+                  Verify Email List
+                </button>
+              </>
+            )}
+          </div>
+
           {/* Attachments in review */}
           {renderReviewAttachments()}
 
@@ -1647,6 +1705,10 @@ export default function CampaignCreate() {
       {/* Spam Score Modal */}
       {showSpamModal && spamResult && (
         <SpamScoreModal result={spamResult} onClose={() => setShowSpamModal(false)} />
+      )}
+
+      {showVerifyModal && verifyEmails.length > 0 && (
+        <EmailVerifyModal emails={verifyEmails} onClose={() => setShowVerifyModal(false)} />
       )}
 
       {/* Confirmation Dialog */}

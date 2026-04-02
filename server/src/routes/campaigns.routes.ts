@@ -6,6 +6,7 @@ import {
   getCampaignRecipients, addAttachments, removeAttachment, downloadAttachment,
   duplicateCampaign, toggleStar, toggleArchive, updateLabel,
   updateDynamicVariables, previewDynamicVariables, resendToNonOpeners,
+  createCampaignFromEmails, resendTransientBounced, suppressPermanentBounces,
 } from '../controllers/campaigns.controller';
 import { validateBody } from '../middleware/validateRequest';
 import { z } from 'zod';
@@ -42,6 +43,7 @@ const scheduleSchema = z.object({
 });
 
 router.get('/', listCampaigns);
+router.post('/from-emails', createCampaignFromEmails);
 router.get('/:id', getCampaign);
 // Create campaign with optional attachments (multipart form)
 router.post('/', upload.array('attachments', 10), (req, _res, next) => {
@@ -61,6 +63,8 @@ router.get('/:id/recipients', getCampaignRecipients);
 // Campaign management actions
 router.post('/:id/duplicate', duplicateCampaign);
 router.post('/:id/resend-non-openers', resendToNonOpeners);
+router.post('/:id/resend-transient-bounced', resendTransientBounced);
+router.post('/:id/suppress-permanent-bounces', suppressPermanentBounces);
 router.put('/:id/star', toggleStar);
 router.put('/:id/archive', toggleArchive);
 router.put('/:id/label', updateLabel);

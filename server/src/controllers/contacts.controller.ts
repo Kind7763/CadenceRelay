@@ -1077,3 +1077,157 @@ export async function getContactFilters(req: Request, res: Response, next: NextF
     next(err);
   }
 }
+
+/**
+ * List all bounced emails across campaigns with full context.
+ * Supports filters: bounceType, campaignId, search, dateFrom, dateTo.
+ */
+export async function listBouncedEmails(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { page, limit, offset } = parsePagination(req.query as { page?: string; limit?: string });
+    const { bounceType, campaignId, search, dateFrom, dateTo } = req.query;
+
+    let whereClause = "WHERE cr.status IN ('bounced', 'failed') AND cr.bounce_type IS NOT NULL";
+    const params: unknown[] = [];
+    let paramIndex = 1;
+
+    if (bounceType && typeof bounceType === 'string') {
+      whereClause += ` AND cr.bounce_type = $${paramIndex}`;
+      params.push(bounceType);
+      paramIndex++;
+    }
+    if (campaignId && typeof campaignId === 'string') {
+      whereClause += ` AND cr.campaign_id = $${paramIndex}`;
+      params.push(campaignId);
+      paramIndex++;
+    }
+    if (search && typeof search === 'string') {
+      whereClause += ` AND (cr.email ILIKE $${paramIndex} OR c.name ILIKE $${paramIndex})`;
+      params.push(`%${search}%`);
+      paramIndex++;
+    }
+    if (dateFrom && typeof dateFrom === 'string') {
+      whereClause += ` AND cr.bounced_at >= $${paramIndex}`;
+      params.push(dateFrom);
+      paramIndex++;
+    }
+    if (dateTo && typeof dateTo === 'string') {
+      whereClause += ` AND cr.bounced_at <= $${paramIndex}`;
+      params.push(dateTo);
+      paramIndex++;
+    }
+
+    // Stats query
+    const statsResult = await pool.query(
+      `SELECT
+        COUNT(*) FILTER (WHERE cr.bounce_type IS NOT NULL) as total,
+        COUNT(*) FILTER (WHERE cr.bounce_type = 'permanent') as permanent,
+        COUNT(*) FILTER (WHERE cr.bounce_type = 'transient') as transient,
+        COUNT(*) FILTER (WHERE cr.bounce_type = 'undetermined') as undetermined
+       FROM campaign_recipients cr
+       WHERE cr.status IN ('bounced', 'failed') AND cr.bounce_type IS NOT NULL`
+    );
+    const suppressionCountResult = await pool.query('SELECT COUNT(*) FROM suppression_list');
+
+    const stats = {
+      total: parseInt(statsResult.rows[0].total, 10),
+      permanent: parseInt(statsResult.rows[0].permanent, 10),
+      transient: parseInt(statsResult.rows[0].transient, 10),
+      undetermined: parseInt(statsResult.rows[0].undetermined, 10),
+      suppressed: parseInt(suppressionCountResult.rows[0].count, 10),
+    };
+
+    // Count query
+    const countResult = await pool.query(
+      `SELECT COUNT(DISTINCT cr.email) FROM campaign_recipients cr
+       LEFT JOIN contacts c ON c.id = cr.contact_id
+       ${whereClause}`,
+      params
+    );
+    const total = parseInt(countResult.rows[0].count, 10);
+
+    // Main data query — latest bounce per email
+    const dataResult = await pool.query(
+      `SELECT DISTINCT ON (cr.email)
+        cr.id, cr.email, cr.status, cr.bounce_type, cr.error_message, cr.bounced_at,
+        c.id as contact_id, c.name as contact_name, c.status as contact_status,
+        cam.id as campaign_id, cam.name as campaign_name
+       FROM campaign_recipients cr
+       LEFT JOIN contacts c ON c.id = cr.contact_id
+       LEFT JOIN campaigns cam ON cam.id = cr.campaign_id
+       ${whereClause}
+       ORDER BY cr.email, cr.bounced_at DESC`,
+      params
+    );
+
+    // Apply pagination in-memory since DISTINCT ON + LIMIT/OFFSET conflicts with order
+    const paginatedData = dataResult.rows.slice(offset, offset + limit);
+
+    res.json({
+      data: paginatedData,
+      stats,
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Verify a batch of emails (max 100). Checks syntax, MX, disposable, role-based, suppression.
+ */
+export async function verifyEmails(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { emails } = req.body;
+    if (!Array.isArray(emails) || emails.length === 0) {
+      throw new AppError('emails array is required', 400);
+    }
+    if (emails.length > 100) {
+      throw new AppError('Maximum 100 emails per request', 400);
+    }
+
+    const { verifyEmailBatch } = await import('../utils/emailVerifier');
+    const results = await verifyEmailBatch(emails);
+    res.json({ results });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Verify all emails in a contact list.
+ */
+export async function verifyListEmails(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { listId } = req.params;
+    validateUUID(listId, 'list ID');
+
+    // Load contacts from the list
+    const contactsResult = await pool.query(
+      `SELECT c.email FROM contacts c
+       JOIN contact_list_members clm ON clm.contact_id = c.id
+       WHERE clm.list_id = $1 AND c.status = 'active'`,
+      [listId]
+    );
+
+    const emails = contactsResult.rows.map(r => r.email);
+    if (emails.length === 0) {
+      res.json({ results: [], summary: { total: 0, valid: 0, invalid: 0, risky: 0 } });
+      return;
+    }
+
+    const { verifyEmailBatch } = await import('../utils/emailVerifier');
+    const results = await verifyEmailBatch(emails);
+
+    const summary = {
+      total: results.length,
+      valid: results.filter(r => r.risk === 'low').length,
+      invalid: results.filter(r => !r.valid).length,
+      risky: results.filter(r => r.risk === 'medium' || r.risk === 'high').length,
+    };
+
+    res.json({ results, summary });
+  } catch (err) {
+    next(err);
+  }
+}

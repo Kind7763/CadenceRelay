@@ -924,3 +924,194 @@ export async function resendToNonOpeners(req: Request, res: Response, next: Next
     next(err);
   }
 }
+
+/**
+ * Create a campaign pre-populated with specific email addresses.
+ */
+export async function createCampaignFromEmails(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { name, emails, templateId, provider } = req.body;
+
+    if (!name || typeof name !== 'string') throw new AppError('name is required', 400);
+    if (!Array.isArray(emails) || emails.length === 0) throw new AppError('emails array is required', 400);
+
+    const finalTemplateId = templateId && UUID_RE.test(templateId) ? templateId : null;
+
+    // Create the campaign as draft
+    const campaignResult = await pool.query(
+      `INSERT INTO campaigns (name, template_id, provider, status, description)
+       VALUES ($1, $2, $3, 'draft', $4) RETURNING *`,
+      [name, finalTemplateId, provider || 'ses', `Campaign targeting ${emails.length} specific emails`]
+    );
+    const campaign = campaignResult.rows[0];
+
+    // Create campaign_recipients for each email
+    let created = 0;
+    for (const rawEmail of emails) {
+      const email = String(rawEmail).trim().toLowerCase();
+      if (!email || !email.includes('@')) continue;
+
+      // Look up contact_id
+      const contactResult = await pool.query(
+        'SELECT id FROM contacts WHERE LOWER(email) = $1',
+        [email]
+      );
+      const contactId = contactResult.rows[0]?.id || null;
+
+      await pool.query(
+        `INSERT INTO campaign_recipients (campaign_id, contact_id, email, tracking_token)
+         VALUES ($1, $2, $3, encode(gen_random_bytes(16), 'hex'))`,
+        [campaign.id, contactId, email]
+      );
+      created++;
+    }
+
+    // Update total recipients
+    await pool.query(
+      'UPDATE campaigns SET total_recipients = $1, updated_at = NOW() WHERE id = $2',
+      [created, campaign.id]
+    );
+
+    const finalResult = await pool.query(
+      `SELECT c.*, t.name as template_name FROM campaigns c
+       LEFT JOIN templates t ON t.id = c.template_id
+       WHERE c.id = $1`,
+      [campaign.id]
+    );
+
+    res.status(201).json({ campaign: finalResult.rows[0] });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Resend to recipients who had transient bounces.
+ * Same pattern as resendToNonOpeners but targets transient bounced recipients.
+ */
+export async function resendTransientBounced(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { id } = req.params;
+    validateUUID(id, 'campaign ID');
+
+    // Load original campaign
+    const existing = await pool.query('SELECT * FROM campaigns WHERE id = $1', [id]);
+    if (existing.rows.length === 0) throw new AppError('Campaign not found', 404);
+    const source = existing.rows[0];
+
+    if (source.status !== 'completed') {
+      throw new AppError('Can only resend transient bounced for completed campaigns', 400);
+    }
+
+    // Count transient bounced recipients
+    const countResult = await pool.query(
+      `SELECT COUNT(*) FROM campaign_recipients
+       WHERE campaign_id = $1 AND bounce_type = 'transient' AND status IN ('bounced', 'failed')`,
+      [id]
+    );
+    const transientCount = parseInt(countResult.rows[0].count);
+
+    if (transientCount === 0) {
+      throw new AppError('No transient bounced recipients found for this campaign', 400);
+    }
+
+    // Copy attachment files on disk
+    const sourceAttachments: Array<{ filename: string; storagePath: string; size: number; contentType: string }> = source.attachments || [];
+    const newAttachments = sourceAttachments.map((att: { filename: string; storagePath: string; size: number; contentType: string }) => {
+      if (att.storagePath && fs.existsSync(att.storagePath)) {
+        const ext = path.extname(att.storagePath);
+        const newName = `${Date.now()}-${Math.random().toString(36).substring(2)}${ext}`;
+        const newPath = path.join(UPLOAD_DIR, newName);
+        fs.copyFileSync(att.storagePath, newPath);
+        return { ...att, storagePath: newPath };
+      }
+      return att;
+    });
+
+    // Create new campaign
+    const campaignResult = await pool.query(
+      `INSERT INTO campaigns (
+        name, template_id, list_id, provider, status,
+        throttle_per_second, throttle_per_hour, description,
+        label_name, label_color, attachments, project_id, dynamic_variables
+      ) VALUES ($1, $2, $3, $4, 'draft', $5, $6, $7, $8, $9, $10, $11, $12)
+      RETURNING *`,
+      [
+        `Retry: ${source.name}`,
+        source.template_id,
+        source.list_id,
+        source.provider,
+        source.throttle_per_second,
+        source.throttle_per_hour,
+        `Retry transient bounced from "${source.name}"`,
+        source.label_name,
+        source.label_color,
+        JSON.stringify(newAttachments),
+        source.project_id || null,
+        source.dynamic_variables ? JSON.stringify(source.dynamic_variables) : '[]',
+      ]
+    );
+    const newCampaign = campaignResult.rows[0];
+
+    // Create campaign_recipients from transient bounced
+    const insertResult = await pool.query(
+      `INSERT INTO campaign_recipients (campaign_id, contact_id, email, tracking_token)
+       SELECT $1, cr.contact_id, cr.email, encode(gen_random_bytes(16), 'hex')
+       FROM campaign_recipients cr
+       WHERE cr.campaign_id = $2
+         AND cr.bounce_type = 'transient'
+         AND cr.status IN ('bounced', 'failed')
+         AND cr.contact_id IS NOT NULL`,
+      [newCampaign.id, id]
+    );
+
+    const recipientCount = insertResult.rowCount ?? 0;
+
+    await pool.query(
+      'UPDATE campaigns SET total_recipients = $1, updated_at = NOW() WHERE id = $2',
+      [recipientCount, newCampaign.id]
+    );
+
+    const finalResult = await pool.query(
+      `SELECT c.*, t.name as template_name, t.subject as template_subject, cl.name as list_name
+       FROM campaigns c
+       LEFT JOIN templates t ON t.id = c.template_id
+       LEFT JOIN contact_lists cl ON cl.id = c.list_id
+       WHERE c.id = $1`,
+      [newCampaign.id]
+    );
+
+    res.status(201).json({ campaign: finalResult.rows[0] });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Suppress all permanent bounced contacts from a specific campaign.
+ */
+export async function suppressPermanentBounces(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { id } = req.params;
+    validateUUID(id, 'campaign ID');
+
+    const bounced = await pool.query(
+      `SELECT DISTINCT cr.email FROM campaign_recipients cr
+       WHERE cr.campaign_id = $1 AND cr.bounce_type = 'permanent' AND cr.status = 'bounced'`,
+      [id]
+    );
+
+    let added = 0;
+    for (const row of bounced.rows) {
+      const result = await pool.query(
+        "INSERT INTO suppression_list (email, reason, added_by) VALUES ($1, 'permanent_bounce', 'manual') ON CONFLICT (LOWER(email)) DO NOTHING RETURNING id",
+        [row.email.toLowerCase()]
+      );
+      if (result.rows.length > 0) added++;
+    }
+
+    res.json({ message: `${added} emails added to suppression list`, added, total: bounced.rows.length });
+  } catch (err) {
+    next(err);
+  }
+}

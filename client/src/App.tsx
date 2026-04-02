@@ -21,6 +21,7 @@ const Automations = lazy(() => import('./pages/Automations'));
 const AutomationBuilder = lazy(() => import('./pages/AutomationBuilder'));
 const AutomationDetail = lazy(() => import('./pages/AutomationDetail'));
 const Analytics = lazy(() => import('./pages/Analytics'));
+const BounceManagement = lazy(() => import('./pages/BounceManagement'));
 const Import = lazy(() => import('./pages/Import'));
 const Projects = lazy(() => import('./pages/Projects'));
 const ProjectDetail = lazy(() => import('./pages/ProjectDetail'));
@@ -65,6 +66,7 @@ export default function App() {
                       <Route path="/automations/:id/edit" element={<AutomationBuilder />} />
                       <Route path="/contacts" element={<Contacts />} />
                       <Route path="/contacts/:id" element={<ContactDetail />} />
+                      <Route path="/bounces" element={<BounceManagement />} />
                       <Route path="/import" element={<Import />} />
                       <Route path="/lists" element={<Lists />} />
                       <Route path="/lists/:id" element={<ListDetail />} />

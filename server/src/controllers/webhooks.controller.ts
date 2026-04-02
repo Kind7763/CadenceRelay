@@ -85,27 +85,31 @@ export async function processSnsEvent(notificationType: string, message: Record<
       const bounceType = bounce?.bounceType || 'unknown';
       const diagnosticCode = bounce?.bouncedRecipients?.[0]?.diagnosticCode || '';
 
-      // FIX: Use idempotent updates - only process if not already bounced
-      const updateResult = await pool.query(
-        "UPDATE campaign_recipients SET status = 'bounced', bounced_at = NOW(), error_message = $1 WHERE id = $2 AND status != 'bounced' RETURNING id",
-        [`${bounceType}: ${diagnosticCode}`, recipientId]
-      );
+      // Map SNS bounce type to our internal bounce_type column
+      const mappedBounceType = bounceType === 'Permanent' ? 'permanent'
+        : bounceType === 'Transient' ? 'transient'
+        : 'undetermined';
 
-      // Only insert event and increment counter if the status was actually changed
-      if (updateResult.rows.length > 0) {
-        await pool.query(
-          "INSERT INTO email_events (campaign_recipient_id, campaign_id, event_type, metadata) VALUES ($1, $2, 'bounced', $3)",
-          [recipientId, campaignId, JSON.stringify({ bounceType, diagnosticCode })]
-        );
-        await pool.query(
-          'UPDATE campaigns SET bounce_count = bounce_count + 1, updated_at = NOW() WHERE id = $1',
-          [campaignId]
+      if (bounceType === 'Permanent') {
+        // Permanent bounce: mark as bounced
+        const updateResult = await pool.query(
+          "UPDATE campaign_recipients SET status = 'bounced', bounce_type = $1, bounced_at = NOW(), error_message = $2 WHERE id = $3 AND status != 'bounced' RETURNING id",
+          [mappedBounceType, `${bounceType}: ${diagnosticCode}`, recipientId]
         );
 
-        // Mark contact as bounced on hard bounce
-        if (bounceType === 'Permanent') {
+        if (updateResult.rows.length > 0) {
           await pool.query(
-            "UPDATE contacts SET status = 'bounced', bounce_count = bounce_count + 1, updated_at = NOW() WHERE email = $1",
+            "INSERT INTO email_events (campaign_recipient_id, campaign_id, event_type, metadata) VALUES ($1, $2, 'bounced', $3)",
+            [recipientId, campaignId, JSON.stringify({ bounceType, diagnosticCode })]
+          );
+          await pool.query(
+            'UPDATE campaigns SET bounce_count = bounce_count + 1, updated_at = NOW() WHERE id = $1',
+            [campaignId]
+          );
+
+          // Mark contact as bounced on hard bounce
+          await pool.query(
+            "UPDATE contacts SET status = 'bounced', bounce_type = 'permanent', bounce_count = bounce_count + 1, updated_at = NOW() WHERE email = $1",
             [email]
           );
           // Auto-add to suppression list
@@ -115,9 +119,28 @@ export async function processSnsEvent(notificationType: string, message: Record<
           );
           // Update engagement score for permanent bounce
           updateEngagementScore(email, 'bounced');
+        } else {
+          logger.info('Duplicate bounce event ignored', { recipientId, messageId });
         }
       } else {
-        logger.info('Duplicate bounce event ignored', { recipientId, messageId });
+        // Transient or Undetermined bounce: save bounce_type on recipient but do NOT mark contact as bounced
+        const updateResult = await pool.query(
+          "UPDATE campaign_recipients SET status = 'bounced', bounce_type = $1, bounced_at = NOW(), error_message = $2 WHERE id = $3 AND status != 'bounced' RETURNING id",
+          [mappedBounceType, `${bounceType}: ${diagnosticCode}`, recipientId]
+        );
+
+        if (updateResult.rows.length > 0) {
+          await pool.query(
+            "INSERT INTO email_events (campaign_recipient_id, campaign_id, event_type, metadata) VALUES ($1, $2, 'bounced', $3)",
+            [recipientId, campaignId, JSON.stringify({ bounceType, diagnosticCode })]
+          );
+          await pool.query(
+            'UPDATE campaigns SET bounce_count = bounce_count + 1, updated_at = NOW() WHERE id = $1',
+            [campaignId]
+          );
+        } else {
+          logger.info('Duplicate bounce event ignored', { recipientId, messageId });
+        }
       }
       break;
     }

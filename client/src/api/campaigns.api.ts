@@ -256,3 +256,23 @@ export async function resendToNonOpeners(id: string, data?: { subject?: string }
   const res = await apiClient.post(`/campaigns/${id}/resend-non-openers`, data || {});
   return res.data.campaign as Campaign;
 }
+
+export async function resendTransientBounced(id: string): Promise<Campaign> {
+  const res = await apiClient.post(`/campaigns/${id}/resend-transient-bounced`);
+  return res.data.campaign as Campaign;
+}
+
+export async function suppressPermanentBounces(id: string): Promise<{ added: number; total: number }> {
+  const res = await apiClient.post(`/campaigns/${id}/suppress-permanent-bounces`);
+  return res.data;
+}
+
+export async function createCampaignFromEmails(data: {
+  name: string;
+  emails: string[];
+  templateId?: string;
+  provider?: string;
+}): Promise<Campaign> {
+  const res = await apiClient.post('/campaigns/from-emails', data);
+  return res.data.campaign as Campaign;
+}

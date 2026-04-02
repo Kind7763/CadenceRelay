@@ -858,7 +858,7 @@ export function startEmailSendWorker(): Worker {
       logger.warn(`Permanent bounce for ${email}: ${err.message}`);
 
       await pool.query(
-        "UPDATE campaign_recipients SET status = 'bounced', bounced_at = NOW(), error_message = $1 WHERE id = $2 AND status != 'bounced'",
+        "UPDATE campaign_recipients SET status = 'bounced', bounce_type = 'permanent', bounced_at = NOW(), error_message = $1 WHERE id = $2 AND status != 'bounced'",
         [err.message, campaignRecipientId]
       );
       await pool.query(
@@ -876,7 +876,7 @@ export function startEmailSendWorker(): Worker {
       );
       // Mark contact as bounced
       await pool.query(
-        "UPDATE contacts SET status = 'bounced', bounce_count = bounce_count + 1, updated_at = NOW() WHERE email = $1",
+        "UPDATE contacts SET status = 'bounced', bounce_type = 'permanent', bounce_count = bounce_count + 1, updated_at = NOW() WHERE email = $1",
         [email]
       );
     } else if (isAuthError) {
@@ -897,7 +897,7 @@ export function startEmailSendWorker(): Worker {
 
       if (isFinalAttempt) {
         await pool.query(
-          "UPDATE campaign_recipients SET status = 'failed', error_message = $1 WHERE id = $2",
+          "UPDATE campaign_recipients SET status = 'failed', bounce_type = 'transient', error_message = $1 WHERE id = $2",
           [`Rate limited after ${job.attemptsMade} attempts: ${err.message}`, campaignRecipientId]
         );
         await pool.query(
@@ -906,21 +906,35 @@ export function startEmailSendWorker(): Worker {
         );
       }
     } else if (isFinalAttempt) {
-      // Other errors on final attempt
+      // Other errors on final attempt — classify bounce type based on error
       logger.error(`Email send failed permanently for ${email}: ${err.message}`);
 
+      // Determine bounce type: SMTP 5xx / MessageRejected = permanent, 4xx / connection / timeout = transient
+      const errMsg = err.message || '';
+      const isSmtp5xx = /^5\d{2}\b/.test(errMsg) || /\b5\d{2}\b/.test(errMsg);
+      const isMessageRejected = errMsg.includes('MessageRejected');
+      const workerBounceType = (isSmtp5xx || isMessageRejected) ? 'permanent' : 'transient';
+
       await pool.query(
-        "UPDATE campaign_recipients SET status = 'failed', error_message = $1 WHERE id = $2",
-        [err.message, campaignRecipientId]
+        "UPDATE campaign_recipients SET status = 'failed', bounce_type = $1, error_message = $2 WHERE id = $3",
+        [workerBounceType, errMsg, campaignRecipientId]
       );
       await pool.query(
         "INSERT INTO email_events (campaign_recipient_id, campaign_id, event_type, metadata) VALUES ($1, $2, 'failed', $3)",
-        [campaignRecipientId, campaignId, JSON.stringify({ error: err.message, provider: job.data.provider })]
+        [campaignRecipientId, campaignId, JSON.stringify({ error: errMsg, provider: job.data.provider, bounceType: workerBounceType })]
       );
       await pool.query(
         'UPDATE campaigns SET failed_count = failed_count + 1, updated_at = NOW() WHERE id = $1',
         [campaignId]
       );
+
+      // For permanent SMTP failures, also mark the contact
+      if (workerBounceType === 'permanent') {
+        await pool.query(
+          "UPDATE contacts SET status = 'bounced', bounce_type = 'permanent', bounce_count = bounce_count + 1, updated_at = NOW() WHERE email = $1",
+          [email]
+        );
+      }
     } else {
       // Temporary error, will retry
       logger.warn(`Temporary failure for ${email}, attempt ${job.attemptsMade}/${job.opts.attempts}: ${err.message}`);

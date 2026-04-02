@@ -16,6 +16,9 @@ import {
   exportContacts,
   getContactFilters,
   deleteSuppressedContacts,
+  listBouncedEmails,
+  verifyEmails,
+  verifyListEmails,
 } from '../controllers/contacts.controller';
 import { validateBody } from '../middleware/validateRequest';
 import { z } from 'zod';
@@ -61,6 +64,7 @@ const updateSchema = z.object({
 });
 
 router.get('/', listContacts);
+router.get('/bounced', listBouncedEmails);
 router.get('/export', exportContacts);
 router.get('/filters', getContactFilters);
 router.get('/:id', getContact);
@@ -73,5 +77,7 @@ router.delete('/:id', deleteContact);
 router.post('/import', upload.single('file'), importContacts);
 router.post('/import-csv', upload.single('file'), importContactsCSV);
 router.post('/preview-csv', upload.single('file'), previewCSV);
+router.post('/verify-emails', verifyEmails);
+router.post('/verify-list/:listId', verifyListEmails);
 
 export default router;

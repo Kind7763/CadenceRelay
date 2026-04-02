@@ -331,3 +331,8 @@ CREATE TABLE IF NOT EXISTS automation_enrollments (
 CREATE INDEX IF NOT EXISTS auto_enroll_automation_idx ON automation_enrollments(automation_id);
 CREATE INDEX IF NOT EXISTS auto_enroll_next_step_idx ON automation_enrollments(next_step_at) WHERE status = 'active';
 CREATE UNIQUE INDEX IF NOT EXISTS auto_enroll_unique_idx ON automation_enrollments(automation_id, contact_id);
+
+-- Bounce type differentiation (permanent / transient / undetermined)
+ALTER TABLE campaign_recipients ADD COLUMN IF NOT EXISTS bounce_type varchar(20);
+ALTER TABLE contacts ADD COLUMN IF NOT EXISTS bounce_type varchar(20);
+CREATE INDEX IF NOT EXISTS cr_bounce_type_idx ON campaign_recipients(bounce_type) WHERE bounce_type IS NOT NULL;

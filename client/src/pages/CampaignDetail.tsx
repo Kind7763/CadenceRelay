@@ -13,6 +13,8 @@ import {
   toggleArchive,
   updateCampaignLabel,
   resendToNonOpeners,
+  resendTransientBounced,
+  suppressPermanentBounces,
   Campaign,
 } from '../api/campaigns.api';
 import { getRecipientEvents } from '../api/analytics.api';
@@ -33,6 +35,7 @@ interface Recipient {
   id: string;
   email: string;
   status: string;
+  bounce_type?: string | null;
   sent_at: string | null;
   opened_at: string | null;
   clicked_at: string | null;
@@ -117,10 +120,17 @@ export default function CampaignDetail() {
   const [showLabelPicker, setShowLabelPicker] = useState(false);
   const [duplicating, setDuplicating] = useState(false);
 
+  // Bounce type filter
+  const [bounceTypeFilter, setBounceTypeFilter] = useState('');
+
   // Resend to Non-Openers state
   const [showResendModal, setShowResendModal] = useState(false);
   const [resendSubject, setResendSubject] = useState('');
   const [resending, setResending] = useState(false);
+
+  // Bounce action states
+  const [resendingTransient, setResendingTransient] = useState(false);
+  const [suppressingPermanent, setSuppressingPermanent] = useState(false);
 
   async function handleReschedule() {
     if (!id || !newScheduledAt) return;
@@ -171,12 +181,13 @@ export default function CampaignDetail() {
     if (!id) return;
     const params: Record<string, string> = { page: String(recipientPage), limit: '50' };
     if (recipientFilter) params.status = recipientFilter;
+    if (bounceTypeFilter) params.bounceType = bounceTypeFilter;
     try {
       const res = await getCampaignRecipients(id, params);
       setRecipients(res.data);
       setRecipientTotal(res.pagination.total);
     } catch { /* ignore */ }
-  }, [id, recipientPage, recipientFilter]);
+  }, [id, recipientPage, recipientFilter, bounceTypeFilter]);
 
   useEffect(() => { fetchCampaign(); }, [fetchCampaign]);
   useEffect(() => { fetchRecipients(); }, [fetchRecipients]);
@@ -445,12 +456,46 @@ export default function CampaignDetail() {
           {campaign.status === 'sending' && <button onClick={handlePause} className="rounded-lg border border-orange-300 px-4 py-2 text-sm text-orange-600">Pause</button>}
           {campaign.status === 'paused' && <button onClick={handleResume} className="rounded-lg bg-primary-600 px-4 py-2 text-sm text-white">Resume</button>}
           {campaign.status === 'completed' && (
-            <button
-              onClick={() => { setResendSubject(`Re: ${campaign.template_subject || campaign.name}`); setShowResendModal(true); }}
-              className="rounded-lg border border-green-300 px-4 py-2 text-sm text-green-700 hover:bg-green-50"
-            >
-              Resend to Non-Openers
-            </button>
+            <>
+              <button
+                onClick={() => { setResendSubject(`Re: ${campaign.template_subject || campaign.name}`); setShowResendModal(true); }}
+                className="rounded-lg border border-green-300 px-4 py-2 text-sm text-green-700 hover:bg-green-50"
+              >
+                Resend to Non-Openers
+              </button>
+              <button
+                onClick={async () => {
+                  if (!id) return;
+                  setResendingTransient(true);
+                  try {
+                    const newCamp = await resendTransientBounced(id);
+                    toast.success('Resend campaign created for transient bounces');
+                    if (newCamp?.id) navigate(`/campaigns/${newCamp.id}`);
+                  } catch { toast.error('Failed to create resend campaign'); }
+                  finally { setResendingTransient(false); }
+                }}
+                disabled={resendingTransient}
+                className="rounded-lg border border-orange-300 px-4 py-2 text-sm text-orange-700 hover:bg-orange-50 disabled:opacity-50"
+              >
+                {resendingTransient ? 'Creating...' : 'Resend Transient Bounced'}
+              </button>
+              <button
+                onClick={async () => {
+                  if (!id) return;
+                  setSuppressingPermanent(true);
+                  try {
+                    const res = await suppressPermanentBounces(id);
+                    toast.success(`${res.added} permanent bounces added to suppression list`);
+                    fetchCampaign();
+                  } catch { toast.error('Failed to suppress permanent bounces'); }
+                  finally { setSuppressingPermanent(false); }
+                }}
+                disabled={suppressingPermanent}
+                className="rounded-lg border border-red-300 px-4 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50"
+              >
+                {suppressingPermanent ? 'Suppressing...' : 'Suppress Permanent Bounces'}
+              </button>
+            </>
           )}
           {(campaign.status === 'draft' || campaign.status === 'scheduled') && (
             <button onClick={() => navigate(`/campaigns/${id}/edit`)} className="rounded-lg bg-primary-600 px-4 py-2 text-sm text-white hover:bg-primary-700">
@@ -871,13 +916,19 @@ export default function CampaignDetail() {
           <div className="flex items-center gap-2">
             <button onClick={handleExportRecipients} className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50">Export Recipients</button>
             <select value={recipientFilter} onChange={(e) => { setRecipientFilter(e.target.value); setRecipientPage(1); }} className="rounded border px-2 py-1 text-sm">
-              <option value="">All</option>
+              <option value="">All Statuses</option>
               <option value="pending">Pending</option>
               <option value="sent">Sent</option>
               <option value="opened">Opened</option>
               <option value="clicked">Clicked</option>
               <option value="bounced">Bounced</option>
               <option value="failed">Failed</option>
+            </select>
+            <select value={bounceTypeFilter} onChange={(e) => { setBounceTypeFilter(e.target.value); setRecipientPage(1); }} className="rounded border px-2 py-1 text-sm">
+              <option value="">All Bounce Types</option>
+              <option value="permanent">Permanent</option>
+              <option value="transient">Transient</option>
+              <option value="undetermined">Undetermined</option>
             </select>
           </div>
         </div>
@@ -887,6 +938,7 @@ export default function CampaignDetail() {
               <tr>
                 <SortableHeader label="Email" field="email" currentSort={recipientSort} onSort={(f) => setRecipientSort(toggleSort(recipientSort, f))} />
                 <SortableHeader label="Status" field="status" currentSort={recipientSort} onSort={(f) => setRecipientSort(toggleSort(recipientSort, f))} />
+                <th className="px-3 py-2 text-left font-medium text-gray-600">Bounce Type</th>
                 <SortableHeader label="Sent" field="sent_at" currentSort={recipientSort} onSort={(f) => setRecipientSort(toggleSort(recipientSort, f))} />
                 <SortableHeader label="Opens" field="open_count" currentSort={recipientSort} onSort={(f) => setRecipientSort(toggleSort(recipientSort, f))} className="text-center" />
                 <SortableHeader label="Clicks" field="click_count" currentSort={recipientSort} onSort={(f) => setRecipientSort(toggleSort(recipientSort, f))} className="text-center" />
@@ -896,7 +948,7 @@ export default function CampaignDetail() {
             </thead>
             <tbody className="divide-y divide-gray-100">
               {recipients.length === 0 ? (
-                <tr><td colSpan={7} className="px-3 py-4 text-center text-gray-400">No recipients</td></tr>
+                <tr><td colSpan={8} className="px-3 py-4 text-center text-gray-400">No recipients</td></tr>
               ) : sortItems(recipients, recipientSort, (r: Recipient, field: string) => {
                 switch (field) {
                   case 'email': return r.email;
@@ -918,6 +970,15 @@ export default function CampaignDetail() {
                       {r.email}
                     </td>
                     <td className="px-3 py-2"><span className={`rounded-full px-2 py-0.5 text-xs ${statusColors[r.status] || 'bg-gray-100'}`}>{r.status}</span></td>
+                    <td className="px-3 py-2">
+                      {r.bounce_type ? (
+                        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                          r.bounce_type === 'permanent' ? 'bg-red-100 text-red-700' :
+                          r.bounce_type === 'transient' ? 'bg-orange-100 text-orange-700' :
+                          'bg-gray-100 text-gray-600'
+                        }`}>{r.bounce_type}</span>
+                      ) : <span className="text-xs text-gray-400">-</span>}
+                    </td>
                     <td className="px-3 py-2 text-xs">{r.sent_at ? new Date(r.sent_at).toLocaleString() : '-'}</td>
                     <td className="px-3 py-2 text-center">
                       {(r.open_count || 0) > 0 ? (
@@ -934,7 +995,7 @@ export default function CampaignDetail() {
                   </tr>
                   {expandedRecipient === r.id && (
                     <tr>
-                      <td colSpan={7} className="bg-gray-50 px-6 py-3">
+                      <td colSpan={8} className="bg-gray-50 px-6 py-3">
                         {eventsLoading ? (
                           <p className="text-sm text-gray-400">Loading events...</p>
                         ) : recipientEvents.length === 0 ? (
