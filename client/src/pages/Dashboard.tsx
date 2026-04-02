@@ -461,8 +461,8 @@ function DashboardContent() {
                 { label: 'Sent', value: num(sesStatsData.sent), color: 'text-blue-600' },
                 { label: 'Delivered', value: num(sesStatsData.delivered), sub: `${rate(sesStatsData.deliveryRate)}%`, color: 'text-green-600' },
                 { label: 'Complaints', value: num(sesStatsData.complaints), sub: `${rate(sesStatsData.complaintRate)}%`, color: 'text-orange-600' },
-                { label: 'Transient Bounces', value: num(sesStatsData.transientBounces || 0), sub: `${rate(sesStatsData.transientBounceRate || 0)}%`, color: 'text-amber-600' },
-                { label: 'Permanent Bounces', value: num(sesStatsData.permanentBounces || 0), sub: `${rate(sesStatsData.permanentBounceRate || 0)}%`, color: 'text-red-600' },
+                { label: 'Transient Bounces', value: sesStatsData.transientBounces ? num(sesStatsData.transientBounces) : '—', sub: sesStatsData.transientBounces ? `${rate(sesStatsData.transientBounceRate)}%` : 'Classify to see', color: 'text-amber-600' },
+                { label: 'Permanent Bounces', value: sesStatsData.permanentBounces ? num(sesStatsData.permanentBounces) : '—', sub: sesStatsData.permanentBounces ? `${rate(sesStatsData.permanentBounceRate)}%` : 'Classify to see', color: 'text-red-600' },
                 { label: 'Opens', value: num(sesStatsData.opens), sub: `${rate(sesStatsData.openRate)}%`, color: 'text-emerald-600' },
                 { label: 'Clicks', value: num(sesStatsData.clicks), sub: `${rate(sesStatsData.clickRate)}%`, color: 'text-purple-600' },
                 { label: 'Total Bounces', value: num(sesStatsData.bounces), sub: `${rate(sesStatsData.bounceRate)}%`, color: 'text-red-500' },
@@ -481,9 +481,16 @@ function DashboardContent() {
                   <span>Max rate: {sesStatsData.quota.maxSendRate}/sec</span>
                 </div>
               )}
-              <a href="/bounces" className="text-xs text-primary-600 hover:text-primary-800">
-                Manage Bounced Contacts →
-              </a>
+              <div className="flex items-center gap-3">
+                {sesStatsData.bounces > 0 && !sesStatsData.permanentBounces && !sesStatsData.transientBounces && (
+                  <a href="/bounces" className="text-xs text-amber-600 hover:text-amber-800 font-medium">
+                    ⚠ {num(sesStatsData.bounces)} unclassified bounces — Click "Classify & Import" on Bounces page
+                  </a>
+                )}
+                <a href="/bounces" className="text-xs text-primary-600 hover:text-primary-800">
+                  Manage Bounced Contacts →
+                </a>
+              </div>
             </div>
           </div>
         )}
