@@ -9,6 +9,7 @@ import { syncSesQuotaToSettings } from '../utils/dailyLimits';
 import { checkGmailBounces } from './gmailBounceChecker';
 import { runEngagementDecay } from './engagementDecay';
 import { processAutomationSteps } from './automationProcessor';
+import { runAutoSuppression } from './autoSuppression';
 
 async function startWorker(): Promise<void> {
   logger.info(`Starting worker in ${config.nodeEnv} mode`);
@@ -105,6 +106,26 @@ async function startWorker(): Promise<void> {
 
   logger.info('Automation processor started (5 min interval)');
 
+  // Start auto-suppression worker (every 10 minutes)
+  const autoSuppressionInterval = setInterval(async () => {
+    try {
+      await runAutoSuppression();
+    } catch (err) {
+      logger.error('Auto-suppression error', { error: (err as Error).message });
+    }
+  }, 10 * 60 * 1000);
+
+  // Run auto-suppression once after 2 minutes
+  setTimeout(async () => {
+    try {
+      await runAutoSuppression();
+    } catch (err) {
+      logger.error('Initial auto-suppression error', { error: (err as Error).message });
+    }
+  }, 2 * 60 * 1000);
+
+  logger.info('Auto-suppression worker started (10 min interval)');
+
   // Graceful shutdown
   const shutdown = async (signal: string) => {
     logger.info(`${signal} received. Shutting down workers...`);
@@ -112,6 +133,7 @@ async function startWorker(): Promise<void> {
     clearInterval(bounceCheckInterval);
     clearInterval(engagementDecayInterval);
     clearInterval(automationInterval);
+    clearInterval(autoSuppressionInterval);
     await dispatchWorker.close();
     await sendWorker.close();
     await eventWorker.close();
