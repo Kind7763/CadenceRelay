@@ -328,7 +328,9 @@ function AutomationBuilderContent() {
                 <div className="relative flex items-center gap-2 py-3 pl-8">
                   <div className="absolute left-2.5 h-2 w-2 rounded-full border-2 border-gray-300 bg-white" />
                   <span className="text-xs font-medium text-gray-400">
-                    {idx === 0 ? 'Immediately' : `Wait ${formatDelay(step.delayDays, step.delayHours, step.delayMinutes)}`}
+                    {step.delayDays === 0 && step.delayHours === 0 && step.delayMinutes === 0
+                      ? 'Immediately'
+                      : `Wait ${formatDelay(step.delayDays, step.delayHours, step.delayMinutes)}`}
                   </span>
                 </div>
 
@@ -381,9 +383,11 @@ function AutomationBuilderContent() {
                     </div>
                   </div>
 
-                  {idx > 0 && (
-                    <div className="mt-3">
-                      <label className="mb-1 block text-xs font-medium text-gray-600">Delay before sending</label>
+                  <div className="mt-3">
+                      <label className="mb-1 block text-xs font-medium text-gray-600">
+                        {idx === 0 ? 'Delay after trigger' : 'Delay before sending'}
+                        {idx === 0 && <span className="text-gray-400 font-normal"> (0 = send immediately)</span>}
+                      </label>
                       <div className="flex items-center gap-2">
                         <div className="flex items-center gap-1">
                           <input
@@ -419,7 +423,6 @@ function AutomationBuilderContent() {
                         </div>
                       </div>
                     </div>
-                  )}
                 </div>
               </div>
             ))}
