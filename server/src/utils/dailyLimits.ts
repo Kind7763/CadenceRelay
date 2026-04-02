@@ -56,8 +56,53 @@ export async function getDailyLimit(provider: string): Promise<number> {
   return provider === 'gmail' ? 500 : 50000;
 }
 
+/**
+ * Get real SES sent count from AWS (cached 60s in Redis to avoid hammering the API)
+ */
+async function getSesSentFromAWS(): Promise<number | null> {
+  const cacheKey = 'ses-sent-24h-cache';
+  try {
+    const cached = await redis.get(cacheKey);
+    if (cached !== null) return parseInt(cached, 10);
+
+    const sesResult = await pool.query("SELECT value FROM settings WHERE key = 'ses_config'");
+    const sesConfig = sesResult.rows[0]?.value;
+    if (!sesConfig) return null;
+
+    const parsed = typeof sesConfig === 'string' ? JSON.parse(sesConfig) : sesConfig;
+    if (!parsed.region || !parsed.accessKeyId || !parsed.secretAccessKey) return null;
+
+    const client = new SESClient({
+      region: parsed.region,
+      credentials: {
+        accessKeyId: maybeDecryptValue(parsed.accessKeyId),
+        secretAccessKey: maybeDecryptValue(parsed.secretAccessKey),
+      },
+    });
+
+    const quota = await client.send(new GetSendQuotaCommand({}));
+    const sent = Math.floor(quota.SentLast24Hours || 0);
+    // Cache for 60 seconds
+    await redis.set(cacheKey, String(sent), 'EX', 60);
+    return sent;
+  } catch {
+    return null; // AWS call failed — fall back to local counter
+  }
+}
+
 export async function checkDailyLimit(provider: string): Promise<{ allowed: boolean; current: number; limit: number }> {
-  const [current, limit] = await Promise.all([getDailyCount(provider), getDailyLimit(provider)]);
+  const limit = await getDailyLimit(provider);
+
+  // For SES: try to get real sent count from AWS first
+  if (provider === 'ses') {
+    const awsSent = await getSesSentFromAWS();
+    if (awsSent !== null) {
+      return { allowed: awsSent < limit, current: awsSent, limit };
+    }
+  }
+
+  // Fallback: use local Redis counter
+  const current = await getDailyCount(provider);
   return { allowed: current < limit, current, limit };
 }
 

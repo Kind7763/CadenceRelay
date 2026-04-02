@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { pool } from '../config/database';
 import { AppError } from '../middleware/errorHandler';
-import { getDailyCount, getDailyLimit } from '../utils/dailyLimits';
+import { checkDailyLimit } from '../utils/dailyLimits';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function validateUUID(id: string, label = 'ID'): void {
@@ -226,11 +226,9 @@ export async function getDashboard(req: Request, res: Response, next: NextFuncti
     );
 
     // Daily send usage for both providers
-    const [gmailCount, gmailLimit, sesCount, sesLimit] = await Promise.all([
-      getDailyCount('gmail'),
-      getDailyLimit('gmail'),
-      getDailyCount('ses'),
-      getDailyLimit('ses'),
+    const [gmailUsage, sesUsage] = await Promise.all([
+      checkDailyLimit('gmail'),
+      checkDailyLimit('ses'),
     ]);
 
     res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
@@ -254,8 +252,8 @@ export async function getDashboard(req: Request, res: Response, next: NextFuncti
       statusBreakdown: statusBreakdown.rows,
       engagementTiers: engagementTiers.rows,
       dailyUsage: {
-        gmail: { current: gmailCount, limit: gmailLimit },
-        ses: { current: sesCount, limit: sesLimit },
+        gmail: { current: gmailUsage.current, limit: gmailUsage.limit },
+        ses: { current: sesUsage.current, limit: sesUsage.limit },
       },
     });
   } catch (err) {
