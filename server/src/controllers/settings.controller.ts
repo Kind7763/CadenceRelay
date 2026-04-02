@@ -955,11 +955,20 @@ export async function getSesStats(_req: Request, res: Response, next: NextFuncti
  */
 export async function classifyAndImportBounces(_req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
+    const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
     let importedFromSes = 0;
-    let permanentFromSes = 0;
-    let transientFromSes = 0;
+    let permanentCount = 0;
+    let transientCount = 0;
 
-    // ── Step 1: Pull actual bounced emails from SES Account Suppression List ──
+    // ── Step 0: Reset previous incorrect classifications to start fresh ──
+    await pool.query(
+      `UPDATE campaign_recipients SET bounce_type = NULL
+       WHERE bounce_type IS NOT NULL AND status = 'sent'`
+    );
+    logger.info('Reset previous bounce classifications on sent records');
+
+    // ── Step 1: Pull permanent bounces from SES Account Suppression List ──
+    const sesEmails: string[] = [];
     try {
       const { SESv2Client, ListSuppressedDestinationsCommand } = await import('@aws-sdk/client-sesv2');
 
@@ -975,25 +984,21 @@ export async function classifyAndImportBounces(_req: Request, res: Response, nex
         },
       });
 
-      // Fetch bounced emails from SES suppression list (paginated with retry)
-      const sesBounced: Array<{ email: string; reason: string }> = [];
       let nextToken: string | undefined;
-      const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
-
       do {
         let resp;
-        for (let attempt = 0; attempt < 3; attempt++) {
+        for (let attempt = 0; attempt < 5; attempt++) {
           try {
-            const cmd = new ListSuppressedDestinationsCommand({
+            resp = await sesV2.send(new ListSuppressedDestinationsCommand({
               NextToken: nextToken,
               PageSize: 100,
-            });
-            resp = await sesV2.send(cmd);
+            }));
             break;
           } catch (retryErr) {
-            const re = retryErr as { name?: string; message?: string };
-            if (re.message?.includes('Rate exceeded') && attempt < 2) {
-              await sleep(2000 * (attempt + 1)); // 2s, 4s retry delay
+            const re = retryErr as { message?: string };
+            if (re.message?.includes('Rate exceeded') && attempt < 4) {
+              logger.info(`SES rate limited, retry ${attempt + 1}/5 after ${(attempt + 1) * 3}s`);
+              await sleep(3000 * (attempt + 1));
               continue;
             }
             throw retryErr;
@@ -1002,117 +1007,97 @@ export async function classifyAndImportBounces(_req: Request, res: Response, nex
         if (!resp) break;
 
         for (const dest of resp.SuppressedDestinationSummaries || []) {
-          if (dest.EmailAddress) {
-            const reason = dest.Reason === 'COMPLAINT' ? 'complaint' : 'bounce';
-            sesBounced.push({ email: dest.EmailAddress, reason });
-          }
+          if (dest.EmailAddress) sesEmails.push(dest.EmailAddress.toLowerCase());
         }
         nextToken = resp.NextToken;
-      } while (nextToken && sesBounced.length < 10000); // Cap at 10K for safety
+        // Small delay between pages to avoid rate limiting
+        if (nextToken) await sleep(500);
+      } while (nextToken && sesEmails.length < 20000);
 
-      logger.info(`Fetched ${sesBounced.length} suppressed emails from SES`);
+      logger.info(`Fetched ${sesEmails.length} suppressed emails from SES`);
 
-      // Insert into our suppression list
-      for (let i = 0; i < sesBounced.length; i += 100) {
-        const batch = sesBounced.slice(i, i + 100);
-        const values: string[] = [];
-        const params: unknown[] = [];
-        let idx = 1;
-        for (const b of batch) {
-          values.push(`($${idx}, $${idx + 1}, 'ses_import')`);
-          params.push(b.email, `ses_${b.reason}`);
-          idx += 2;
+      // Mark these as permanent bounces in campaign_recipients
+      if (sesEmails.length > 0) {
+        // Process in batches of 500
+        for (let i = 0; i < sesEmails.length; i += 500) {
+          const batch = sesEmails.slice(i, i + 500);
+          const r = await pool.query(
+            `UPDATE campaign_recipients SET bounce_type = 'permanent', status = 'bounced', bounced_at = COALESCE(bounced_at, NOW())
+             WHERE LOWER(email) = ANY($1) AND bounce_type IS NULL`,
+            [batch]
+          );
+          permanentCount += r.rowCount || 0;
         }
-        if (values.length > 0) {
+
+        // Add to suppression list
+        for (let i = 0; i < sesEmails.length; i += 100) {
+          const batch = sesEmails.slice(i, i + 100);
+          const values: string[] = [];
+          const params: unknown[] = [];
+          let idx = 1;
+          for (const email of batch) {
+            values.push(`($${idx}, 'ses_permanent_bounce', 'ses_import')`);
+            params.push(email);
+            idx++;
+          }
           const r = await pool.query(
             `INSERT INTO suppression_list (email, reason, added_by) VALUES ${values.join(', ')} ON CONFLICT DO NOTHING`,
             params
           );
           importedFromSes += r.rowCount || 0;
         }
-      }
-
-      // Mark matching campaign_recipients as bounced with proper bounce_type
-      const bounceEmails = sesBounced.filter(b => b.reason === 'bounce').map(b => b.email);
-      if (bounceEmails.length > 0) {
-        // Mark as permanent bounce in campaign_recipients
-        const r1 = await pool.query(
-          `UPDATE campaign_recipients SET status = 'bounced', bounce_type = 'permanent', bounced_at = COALESCE(bounced_at, NOW())
-           WHERE email = ANY($1) AND status = 'sent' AND bounce_type IS NULL`,
-          [bounceEmails]
-        );
-        permanentFromSes += r1.rowCount || 0;
 
         // Mark contacts as bounced
-        await pool.query(
-          `UPDATE contacts SET status = 'bounced', bounce_type = 'permanent', bounce_count = bounce_count + 1, updated_at = NOW()
-           WHERE LOWER(email) = ANY($1) AND status = 'active'`,
-          [bounceEmails.map(e => e.toLowerCase())]
-        );
-      }
-
-      // Mark complaint emails
-      const complaintEmails = sesBounced.filter(b => b.reason === 'complaint').map(b => b.email);
-      if (complaintEmails.length > 0) {
-        await pool.query(
-          `UPDATE contacts SET status = 'complained', updated_at = NOW()
-           WHERE LOWER(email) = ANY($1) AND status = 'active'`,
-          [complaintEmails.map(e => e.toLowerCase())]
-        );
+        for (let i = 0; i < sesEmails.length; i += 500) {
+          const batch = sesEmails.slice(i, i + 500);
+          await pool.query(
+            `UPDATE contacts SET status = 'bounced', bounce_type = 'permanent', bounce_count = bounce_count + 1, updated_at = NOW()
+             WHERE LOWER(email) = ANY($1) AND (status = 'active' OR bounce_type IS NULL)`,
+            [batch]
+          );
+        }
       }
     } catch (sesErr) {
       const e = sesErr as { name?: string; message?: string };
-      logger.warn('Could not fetch SES suppression list (may need ses:ListSuppressedDestinations permission)', { error: e.message });
-      // Continue with local classification even if SES fetch fails
+      logger.warn('Could not fetch SES suppression list', { error: e.message });
     }
 
-    // ── Step 2: Classify remaining unclassified bounced/failed recipients from error messages ──
-    const classifyPermanent = await pool.query(
+    // ── Step 2: Classify bounced/failed records from error messages ──
+    const cp = await pool.query(
       `UPDATE campaign_recipients SET bounce_type = 'permanent'
-       WHERE (status = 'bounced' OR status = 'failed') AND bounce_type IS NULL
-       AND error_message IS NOT NULL
-       AND error_message ~* '(5[0-9]{2}|does not exist|not found|invalid|rejected|no such user|mailbox not found|address rejected|user unknown|MessageRejected|permanently)'
-       RETURNING email`
+       WHERE (status = 'bounced' OR status = 'failed') AND bounce_type IS NULL AND error_message IS NOT NULL
+       AND error_message ~* '(5[0-9]{2}|does not exist|not found|invalid|rejected|no such user|mailbox not found|address rejected|user unknown|MessageRejected|permanently)'`
     );
+    permanentCount += cp.rowCount || 0;
 
-    const classifyTransient = await pool.query(
+    const ct = await pool.query(
       `UPDATE campaign_recipients SET bounce_type = 'transient'
-       WHERE (status = 'bounced' OR status = 'failed') AND bounce_type IS NULL
-       AND error_message IS NOT NULL
-       AND error_message ~* '(4[0-9]{2}|timeout|temporarily|try again|rate limit|connection|throttl|too many|mailbox full|over quota|service unavailable)'
-       RETURNING email`
+       WHERE (status = 'bounced' OR status = 'failed') AND bounce_type IS NULL AND error_message IS NOT NULL
+       AND error_message ~* '(4[0-9]{2}|timeout|temporarily|try again|rate limit|connection|throttl|too many|mailbox full|over quota|service unavailable)'`
     );
+    transientCount += ct.rowCount || 0;
 
-    const classifyUndetermined = await pool.query(
+    await pool.query(
       `UPDATE campaign_recipients SET bounce_type = 'undetermined'
-       WHERE (status = 'bounced' OR status = 'failed') AND bounce_type IS NULL
-       RETURNING email`
+       WHERE (status = 'bounced' OR status = 'failed') AND bounce_type IS NULL`
     );
 
-    // ── Step 3: Now mark all campaign_recipients that match SES-sent emails but got no response ──
-    // These are the "transient bounces" — SES said it sent them but they weren't delivered
-    // Find emails we sent that are NOT in the SES suppression list (permanent) and NOT opened/clicked
-    // These are likely transient bounces
-    const markTransient = await pool.query(
+    // ── Step 3: Mark sent-but-not-delivered as transient ──
+    // "Delivered" means: opened, clicked, or not in SES suppression list and sent recently
+    // "Transient bounce" means: sent > 24h ago, not opened/clicked, not permanently bounced
+    const mt = await pool.query(
       `UPDATE campaign_recipients SET bounce_type = 'transient'
        WHERE status = 'sent' AND bounce_type IS NULL
        AND opened_at IS NULL AND clicked_at IS NULL
-       AND email NOT IN (SELECT email FROM suppression_list)
-       AND sent_at < NOW() - INTERVAL '24 hours'
-       RETURNING id`
+       AND sent_at < NOW() - INTERVAL '48 hours'
+       AND LOWER(email) NOT IN (SELECT LOWER(email) FROM suppression_list)`
     );
-    transientFromSes = markTransient.rowCount || 0;
+    transientCount += mt.rowCount || 0;
 
-    // ── Step 4: Update contacts and add permanent to suppression ──
-    await pool.query(
-      `UPDATE contacts SET bounce_type = 'permanent', status = 'bounced', updated_at = NOW()
-       WHERE email IN (SELECT DISTINCT email FROM campaign_recipients WHERE bounce_type = 'permanent')
-       AND (bounce_type IS NULL OR bounce_type != 'permanent')`
-    );
-
-    const suppressResult = await pool.query(
+    // ── Step 4: Add any new permanent bounces to suppression ──
+    const sp = await pool.query(
       `INSERT INTO suppression_list (email, reason, added_by)
-       SELECT DISTINCT email, 'permanent_bounce_classify', 'auto_classify'
+       SELECT DISTINCT email, 'permanent_bounce', 'auto_classify'
        FROM campaign_recipients WHERE bounce_type = 'permanent'
        ON CONFLICT DO NOTHING`
     );
@@ -1120,20 +1105,21 @@ export async function classifyAndImportBounces(_req: Request, res: Response, nex
     // ── Step 5: Update campaign bounce counts ──
     await pool.query(
       `UPDATE campaigns SET bounce_count = (
-        SELECT COUNT(*) FROM campaign_recipients cr WHERE cr.campaign_id = campaigns.id AND cr.bounce_type = 'permanent'
+        SELECT COUNT(*) FROM campaign_recipients cr
+        WHERE cr.campaign_id = campaigns.id AND cr.bounce_type = 'permanent'
       ), updated_at = NOW()
-       WHERE id IN (SELECT DISTINCT campaign_id FROM campaign_recipients WHERE bounce_type IS NOT NULL)`
+       WHERE id IN (SELECT DISTINCT campaign_id FROM campaign_recipients WHERE bounce_type = 'permanent')`
     );
 
     res.json({
       importedFromSes,
       classified: {
-        permanent: (classifyPermanent.rowCount || 0) + permanentFromSes,
-        transient: (classifyTransient.rowCount || 0) + transientFromSes,
-        undetermined: classifyUndetermined.rowCount || 0,
+        permanent: permanentCount,
+        transient: transientCount,
       },
-      suppressed: (suppressResult.rowCount || 0) + importedFromSes,
-      message: `Imported ${importedFromSes} from SES suppression list. Classified ${(classifyPermanent.rowCount || 0) + permanentFromSes} permanent, ${(classifyTransient.rowCount || 0) + transientFromSes} transient. ${(suppressResult.rowCount || 0) + importedFromSes} added to suppression.`,
+      suppressed: (sp.rowCount || 0) + importedFromSes,
+      sesEmailsFetched: sesEmails.length,
+      message: `Fetched ${sesEmails.length} from SES. ${permanentCount} permanent bounces, ${transientCount} transient bounces. ${(sp.rowCount || 0) + importedFromSes} added to suppression.`,
     });
   } catch (err) {
     next(err);
