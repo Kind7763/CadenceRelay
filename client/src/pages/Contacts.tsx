@@ -511,6 +511,7 @@ function SetVariableModal({
 /* ─── Main Contacts Content ─── */
 function ContactsContent() {
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [listFilter, setListFilter] = useState('');
@@ -550,6 +551,7 @@ function ContactsContent() {
   // React Query hooks
   const { data: contactsData, isLoading, isError } = useContactsList({
     page,
+    limit: pageSize,
     search: search || undefined,
     status: statusFilter || undefined,
     listId: listFilter || undefined,
@@ -580,7 +582,7 @@ function ContactsContent() {
 
   const contacts: Contact[] = contactsData?.data || [];
   const total = contactsData?.pagination?.total || 0;
-  const totalPages = Math.ceil(total / 50);
+  const totalPages = Math.ceil(total / pageSize);
 
   // Clear selection when page/filters change
   useEffect(() => { setSelectedIds(new Set()); }, [page, search, statusFilter, listFilter, stateFilter, districtFilter, blockFilter, categoryFilter, managementFilter]);
@@ -1110,16 +1112,35 @@ function ContactsContent() {
           </div>
 
           {/* Pagination */}
-          {totalPages > 1 && (
-            <div className="mt-4 flex items-center justify-between text-sm text-gray-600">
-              <span>{total.toLocaleString()} contacts total</span>
-              <div className="flex gap-2">
-                <button disabled={page <= 1} onClick={() => setPage(page - 1)} className="rounded border px-3 py-1 disabled:opacity-50 hover:bg-gray-50">Prev</button>
-                <span className="px-3 py-1">Page {page} of {totalPages}</span>
-                <button disabled={page >= totalPages} onClick={() => setPage(page + 1)} className="rounded border px-3 py-1 disabled:opacity-50 hover:bg-gray-50">Next</button>
+          <div className="mt-4 flex items-center justify-between text-sm text-gray-600">
+            <div className="flex items-center gap-3">
+              <span>{total.toLocaleString()} contacts found</span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-gray-400">Show</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
+                  className="rounded border border-gray-300 px-2 py-1 text-sm"
+                >
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                  <option value={250}>250</option>
+                  <option value={500}>500</option>
+                  {total <= 5000 && <option value={total}>All ({total.toLocaleString()})</option>}
+                </select>
+                <span className="text-gray-400">per page</span>
               </div>
             </div>
-          )}
+            {totalPages > 1 && (
+              <div className="flex items-center gap-2">
+                <button disabled={page <= 1} onClick={() => setPage(1)} className="rounded border px-2 py-1 disabled:opacity-50 hover:bg-gray-50">First</button>
+                <button disabled={page <= 1} onClick={() => setPage(page - 1)} className="rounded border px-3 py-1 disabled:opacity-50 hover:bg-gray-50">Prev</button>
+                <span className="px-2 py-1">Page {page} of {totalPages.toLocaleString()}</span>
+                <button disabled={page >= totalPages} onClick={() => setPage(page + 1)} className="rounded border px-3 py-1 disabled:opacity-50 hover:bg-gray-50">Next</button>
+                <button disabled={page >= totalPages} onClick={() => setPage(totalPages)} className="rounded border px-2 py-1 disabled:opacity-50 hover:bg-gray-50">Last</button>
+              </div>
+            )}
+          </div>
         </>
       )}
 
