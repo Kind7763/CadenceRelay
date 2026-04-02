@@ -153,7 +153,7 @@ INSERT INTO settings (key, value) VALUES
     ('gmail_config', '{"host":"smtp.gmail.com","port":587,"user":"","pass":""}'),
     ('ses_config', '{"region":"ap-south-1","accessKeyId":"","secretAccessKey":"","fromEmail":""}'),
     ('throttle_defaults', '{"perSecond":5,"perHour":5000}'),
-    ('tracking_domain', '"http://yeb.mail.intellimix.online"')
+    ('tracking_domain', '"https://yeb.mail.intellimix.online"')
 ON CONFLICT (key) DO NOTHING;
 
 -- School-specific columns on contacts

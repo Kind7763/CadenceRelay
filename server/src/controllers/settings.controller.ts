@@ -723,7 +723,9 @@ export async function setupSns(_req: Request, res: Response, next: NextFunction)
     }
 
     // 2. Subscribe our webhook endpoint (idempotent — SNS deduplicates same topic+protocol+endpoint)
-    const webhookUrl = `${trackingDomain}/api/v1/webhooks/sns`;
+    // Ensure HTTPS — SNS requires endpoint protocol to match subscription protocol
+    const baseUrl = trackingDomain.replace(/^http:\/\//i, 'https://');
+    const webhookUrl = `${baseUrl}/api/v1/webhooks/sns`;
     try {
       await snsClient.send(new SubscribeCommand({
         TopicArn: topicArn,
