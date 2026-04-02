@@ -53,7 +53,9 @@ function ActionsDropdown({
   projects: Array<{ id: string; name: string; icon?: string | null }>;
 }) {
   const [open, setOpen] = useState(false);
+  const [dropUp, setDropUp] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -63,10 +65,20 @@ function ActionsDropdown({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [open]);
 
+  function handleToggle(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (!open && btnRef.current) {
+      const rect = btnRef.current.getBoundingClientRect();
+      setDropUp(rect.bottom > window.innerHeight * 0.6);
+    }
+    setOpen(!open);
+  }
+
   return (
     <div ref={ref} className="relative">
       <button
-        onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
+        ref={btnRef}
+        onClick={handleToggle}
         className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
       >
         <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
@@ -76,7 +88,7 @@ function ActionsDropdown({
         </svg>
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-40 mt-1 w-44 rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+        <div className={`absolute right-0 z-40 w-44 rounded-lg border border-gray-200 bg-white py-1 shadow-lg ${dropUp ? 'bottom-full mb-1' : 'top-full mt-1'}`}>
           <button
             onClick={(e) => { e.stopPropagation(); onDuplicate(); setOpen(false); }}
             className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
@@ -371,8 +383,8 @@ function CampaignsContent() {
         </div>
       ) : (
         <>
-          <div className="mt-4 overflow-hidden rounded-xl bg-white shadow-sm">
-            <div className="overflow-x-auto">
+          <div className="mt-4 rounded-xl bg-white shadow-sm">
+            <div className="overflow-x-auto overflow-y-visible">
             <table className="w-full text-sm">
               <thead className="bg-gray-50">
                 <tr>

@@ -17,7 +17,9 @@ export interface ItemCardMenuProps {
 
 export default function ItemCardMenu({ sections }: ItemCardMenuProps) {
   const [open, setOpen] = useState(false);
+  const [dropUp, setDropUp] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -27,10 +29,20 @@ export default function ItemCardMenu({ sections }: ItemCardMenuProps) {
     return () => document.removeEventListener('mousedown', handleClick);
   }, [open]);
 
+  function handleToggle(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (!open && btnRef.current) {
+      const rect = btnRef.current.getBoundingClientRect();
+      setDropUp(rect.bottom > window.innerHeight * 0.6);
+    }
+    setOpen(!open);
+  }
+
   return (
     <div ref={ref} className="relative">
       <button
-        onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
+        ref={btnRef}
+        onClick={handleToggle}
         className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
       >
         <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
@@ -40,7 +52,7 @@ export default function ItemCardMenu({ sections }: ItemCardMenuProps) {
         </svg>
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-40 mt-1 w-48 rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+        <div className={`absolute right-0 z-40 w-48 rounded-lg border border-gray-200 bg-white py-1 shadow-lg ${dropUp ? 'bottom-full mb-1' : 'top-full mt-1'}`}>
           {sections.map((section, sIdx) => (
             <div key={sIdx}>
               {sIdx > 0 && <hr className="my-1 border-gray-100" />}
