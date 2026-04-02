@@ -957,6 +957,7 @@ export async function classifyAndImportBounces(_req: Request, res: Response, nex
     let importedFromSes = 0;
     let permanentCount = 0;
     let transientCount = 0;
+    let complaintEmails: string[] = [];
 
     // ── Step 0: Reset previous incorrect classifications to start fresh ──
     await pool.query(
@@ -982,12 +983,14 @@ export async function classifyAndImportBounces(_req: Request, res: Response, nex
         },
       });
 
+      // Fetch permanent bounces (Reason: BOUNCE)
       let nextToken: string | undefined;
       do {
         let resp;
         for (let attempt = 0; attempt < 5; attempt++) {
           try {
             resp = await sesV2.send(new ListSuppressedDestinationsCommand({
+              Reasons: ['BOUNCE'],
               NextToken: nextToken,
               PageSize: 100,
             }));
@@ -1012,7 +1015,56 @@ export async function classifyAndImportBounces(_req: Request, res: Response, nex
         if (nextToken) await sleep(500);
       } while (nextToken && sesEmails.length < 20000);
 
-      logger.info(`Fetched ${sesEmails.length} suppressed emails from SES`);
+      logger.info(`Fetched ${sesEmails.length} permanent bounces from SES`);
+
+      // Also fetch complaints
+      complaintEmails = [];
+      nextToken = undefined;
+      do {
+        let resp;
+        for (let attempt = 0; attempt < 5; attempt++) {
+          try {
+            resp = await sesV2.send(new ListSuppressedDestinationsCommand({
+              Reasons: ['COMPLAINT'],
+              NextToken: nextToken,
+              PageSize: 100,
+            }));
+            break;
+          } catch (retryErr) {
+            const re = retryErr as { message?: string };
+            if (re.message?.includes('Rate exceeded') && attempt < 4) {
+              await sleep(3000 * (attempt + 1));
+              continue;
+            }
+            throw retryErr;
+          }
+        }
+        if (!resp) break;
+        for (const dest of resp.SuppressedDestinationSummaries || []) {
+          if (dest.EmailAddress) complaintEmails.push(dest.EmailAddress.toLowerCase());
+        }
+        nextToken = resp.NextToken;
+        if (nextToken) await sleep(500);
+      } while (nextToken && complaintEmails.length < 5000);
+
+      logger.info(`Fetched ${complaintEmails.length} complaints from SES`);
+
+      // Mark complaint contacts
+      if (complaintEmails.length > 0) {
+        for (let i = 0; i < complaintEmails.length; i += 500) {
+          const batch = complaintEmails.slice(i, i + 500);
+          await pool.query(
+            `UPDATE contacts SET status = 'complained', updated_at = NOW() WHERE LOWER(email) = ANY($1) AND status != 'complained'`,
+            [batch]
+          );
+        }
+        // Add to suppression
+        for (let i = 0; i < complaintEmails.length; i += 100) {
+          const batch = complaintEmails.slice(i, i + 100);
+          const vals = batch.map((_, idx) => `($${idx + 1}, 'ses_complaint', 'ses_import')`).join(', ');
+          await pool.query(`INSERT INTO suppression_list (email, reason, added_by) VALUES ${vals} ON CONFLICT DO NOTHING`, batch);
+        }
+      }
 
       // Mark these as permanent bounces in campaign_recipients
       if (sesEmails.length > 0) {
@@ -1115,7 +1167,8 @@ export async function classifyAndImportBounces(_req: Request, res: Response, nex
       },
       suppressed: (sp.rowCount || 0) + importedFromSes,
       sesEmailsFetched: sesEmails.length,
-      message: `Fetched ${sesEmails.length} from SES. ${permanentCount} permanent bounces, ${transientCount} transient bounces. ${(sp.rowCount || 0) + importedFromSes} added to suppression.`,
+      sesComplaintsFetched: complaintEmails.length,
+      message: `Fetched ${sesEmails.length} permanent bounces + ${complaintEmails.length} complaints from SES. ${permanentCount} marked permanent, ${transientCount} classified transient. ${(sp.rowCount || 0) + importedFromSes} added to suppression.`,
     });
   } catch (err) {
     next(err);
