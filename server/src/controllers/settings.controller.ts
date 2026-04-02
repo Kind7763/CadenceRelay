@@ -895,14 +895,12 @@ export async function getSesStats(_req: Request, res: Response, next: NextFuncti
     const dbTransient = Number(bounceBreakdown.rows[0]?.transient_bounces || 0);
     const dbUndetermined = Number(bounceBreakdown.rows[0]?.undetermined_bounces || 0);
 
-    // If we have more SES bounces than our classified ones, the difference is unclassified (pre-SNS setup)
-    const totalClassified = dbPermanent + dbTransient + dbUndetermined;
-    const unclassifiedFromSes = Math.max(0, totalBounces - totalClassified);
-
-    // Use SES totals as source of truth, supplement with our breakdown
+    // Use SES aggregate as source of truth for transient bounces
+    // SES total bounces = permanent + transient (we know permanent from SES suppression list import)
+    // So transient = SES total bounces - permanent (from our DB)
     const permanentBounces = dbPermanent;
-    const transientBounces = dbTransient;
-    const undeterminedBounces = dbUndetermined + unclassifiedFromSes;
+    const transientBounces = Math.max(dbTransient, totalBounces - dbPermanent);
+    const undeterminedBounces = dbUndetermined;
 
     const totalOpens = Number(ownStatsResult.rows[0]?.total_opens || 0);
     const totalClicks = Number(ownStatsResult.rows[0]?.total_clicks || 0);
@@ -1082,17 +1080,15 @@ export async function classifyAndImportBounces(_req: Request, res: Response, nex
        WHERE (status = 'bounced' OR status = 'failed') AND bounce_type IS NULL`
     );
 
-    // ── Step 3: Mark sent-but-not-delivered as transient ──
-    // "Delivered" means: opened, clicked, or not in SES suppression list and sent recently
-    // "Transient bounce" means: sent > 24h ago, not opened/clicked, not permanently bounced
-    const mt = await pool.query(
-      `UPDATE campaign_recipients SET bounce_type = 'transient'
-       WHERE status = 'sent' AND bounce_type IS NULL
-       AND opened_at IS NULL AND clicked_at IS NULL
-       AND sent_at < NOW() - INTERVAL '48 hours'
-       AND LOWER(email) NOT IN (SELECT LOWER(email) FROM suppression_list)`
-    );
-    transientCount += mt.rowCount || 0;
+    // ── Step 3: Do NOT guess transient bounces from open rates ──
+    // We cannot determine per-email transient bounces — only SES knows which specific
+    // emails got 4xx responses. The transient bounce COUNT is calculated from:
+    // SES total bounces - permanent bounces = transient bounces
+    // This is shown in the SES stats section, not per-recipient.
+    //
+    // What we CAN mark as transient: records that our worker explicitly classified as
+    // transient during sending (SMTP 4xx, timeout, rate limit errors).
+    // Those are already handled in Step 2 above.
 
     // ── Step 4: Add any new permanent bounces to suppression ──
     const sp = await pool.query(
