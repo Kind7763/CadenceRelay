@@ -276,12 +276,12 @@ async function advanceToNextStep(
 export async function fireAutomationTrigger(
   triggerType: string,
   contactId: string | string[],
-  _context?: Record<string, string>
+  context?: Record<string, string>
 ): Promise<void> {
   try {
     // Find active automations matching this trigger type
     const automations = await pool.query(
-      "SELECT id FROM automations WHERE status = 'active' AND trigger_type = $1",
+      "SELECT id, trigger_config FROM automations WHERE status = 'active' AND trigger_type = $1",
       [triggerType]
     );
 
@@ -290,6 +290,15 @@ export async function fireAutomationTrigger(
     const contactIds = Array.isArray(contactId) ? contactId : [contactId];
 
     for (const auto of automations.rows) {
+      const config = auto.trigger_config || {};
+
+      // Filter by context: if automation has a specific campaignId/listId, only match that
+      if (config.campaignId && context?.campaignId && config.campaignId !== context.campaignId) {
+        continue; // This automation is for a different campaign
+      }
+      if (config.listId && context?.listId && config.listId !== context.listId) {
+        continue; // This automation is for a different list
+      }
       // Get step 0 delay
       const step0 = await pool.query(
         'SELECT delay_days, delay_hours, delay_minutes FROM automation_steps WHERE automation_id = $1 AND step_order = 0',

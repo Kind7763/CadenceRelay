@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useAutomation, useCreateAutomation, useUpdateAutomation, useActivateAutomation } from '../hooks/useAutomations';
 import { listTemplates, Template } from '../api/templates.api';
 import { listLists, ContactList } from '../api/lists.api';
+import { listCampaigns, Campaign } from '../api/campaigns.api';
 import { FormSkeleton } from '../components/ui/Skeleton';
 import ErrorBoundary from '../components/ErrorBoundary';
 
@@ -46,12 +47,14 @@ function AutomationBuilderContent() {
 
   const [templates, setTemplates] = useState<Template[]>([]);
   const [lists, setLists] = useState<ContactList[]>([]);
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [saving, setSaving] = useState(false);
 
-  // Load templates and lists
+  // Load templates, lists, and campaigns
   useEffect(() => {
     listTemplates().then(setTemplates).catch(() => {});
     listLists().then(setLists).catch(() => {});
+    listCampaigns({ limit: '100' }).then((res) => setCampaigns(res.data || [])).catch(() => {});
   }, []);
 
   // Populate form when editing
@@ -235,8 +238,8 @@ function AutomationBuilderContent() {
                 <option value="manual">Manual (enroll contacts manually)</option>
                 <option value="contact_added">When contact is added</option>
                 <option value="list_join">When contact joins a list</option>
-                <option value="email_opened" disabled>When email is opened (coming soon)</option>
-                <option value="link_clicked" disabled>When link is clicked (coming soon)</option>
+                <option value="email_opened">When email is opened</option>
+                <option value="email_clicked">When link is clicked</option>
               </select>
             </div>
             {triggerType === 'list_join' && (
@@ -258,6 +261,34 @@ function AutomationBuilderContent() {
                     </option>
                   ))}
                 </select>
+              </div>
+            )}
+            {(triggerType === 'email_opened' || triggerType === 'email_clicked') && (
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Filter by Campaign <span className="text-gray-400 font-normal">(optional — leave empty to trigger on any campaign)</span>
+                </label>
+                <select
+                  value={(triggerConfig.campaignId as string) || ''}
+                  onChange={(e) => {
+                    const campaignId = e.target.value;
+                    const campaignName = campaigns.find((c) => c.id === campaignId)?.name || '';
+                    setTriggerConfig(campaignId ? { campaignId, campaignName } : {});
+                  }}
+                  className="w-full rounded-lg border px-3 py-2 text-sm"
+                >
+                  <option value="">Any campaign</option>
+                  {campaigns.filter(c => c.status === 'completed' || c.status === 'sending').map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} ({c.status})
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-gray-400">
+                  {triggerType === 'email_opened'
+                    ? 'When a contact opens an email from the selected campaign, they will be enrolled in this automation.'
+                    : 'When a contact clicks a link in the selected campaign, they will be enrolled in this automation.'}
+                </p>
               </div>
             )}
           </div>
