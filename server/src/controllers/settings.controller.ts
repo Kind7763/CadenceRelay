@@ -864,24 +864,37 @@ export async function getSesStats(_req: Request, res: Response, next: NextFuncti
       totalRejects += dp.rejects;
     }
 
+    // SES DeliveryAttempts = total sent, Delivered = sent - bounces - rejects
+    const totalSent = totalDeliveryAttempts;
     const delivered = totalDeliveryAttempts - totalBounces - totalRejects;
-    const deliveryRate = totalDeliveryAttempts > 0
-      ? Math.round((delivered / totalDeliveryAttempts) * 1000) / 10
+    const deliveryRate = totalSent > 0
+      ? Math.round((delivered / totalSent) * 1000) / 10
       : 0;
-    const bounceRate = totalDeliveryAttempts > 0
-      ? Math.round((totalBounces / totalDeliveryAttempts) * 1000) / 10
+    const bounceRate = totalSent > 0
+      ? Math.round((totalBounces / totalSent) * 1000) / 10
       : 0;
-    const complaintRate = totalDeliveryAttempts > 0
-      ? Math.round((totalComplaints / totalDeliveryAttempts) * 10000) / 100
+    const complaintRate = totalSent > 0
+      ? Math.round((totalComplaints / totalSent) * 10000) / 100
       : 0;
 
-    // Get open/click counts from our own database for correlation
+    // Get bounce type breakdown + opens/clicks from our own database
     const ownStatsResult = await pool.query(
       `SELECT
         COALESCE(SUM(c.open_count), 0) as total_opens,
         COALESCE(SUM(c.click_count), 0) as total_clicks
        FROM campaigns c`
     );
+    const bounceBreakdown = await pool.query(
+      `SELECT
+        COUNT(*) FILTER (WHERE bounce_type = 'permanent') as permanent_bounces,
+        COUNT(*) FILTER (WHERE bounce_type = 'transient') as transient_bounces,
+        COUNT(*) FILTER (WHERE bounce_type = 'undetermined' OR (status IN ('bounced','failed') AND bounce_type IS NULL)) as undetermined_bounces
+       FROM campaign_recipients`
+    );
+    const permanentBounces = Number(bounceBreakdown.rows[0]?.permanent_bounces || 0);
+    const transientBounces = Number(bounceBreakdown.rows[0]?.transient_bounces || 0);
+    const undeterminedBounces = Number(bounceBreakdown.rows[0]?.undetermined_bounces || 0);
+
     const totalOpens = Number(ownStatsResult.rows[0]?.total_opens || 0);
     const totalClicks = Number(ownStatsResult.rows[0]?.total_clicks || 0);
     const openRate = delivered > 0
@@ -893,15 +906,20 @@ export async function getSesStats(_req: Request, res: Response, next: NextFuncti
 
     res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.json({
-      sent: totalDeliveryAttempts,
+      sent: totalSent,
       delivered,
       bounces: totalBounces,
+      permanentBounces,
+      transientBounces,
+      undeterminedBounces,
       complaints: totalComplaints,
       rejects: totalRejects,
       opens: totalOpens,
       clicks: totalClicks,
       deliveryRate,
       bounceRate,
+      permanentBounceRate: totalSent > 0 ? Math.round((permanentBounces / totalSent) * 1000) / 10 : 0,
+      transientBounceRate: totalSent > 0 ? Math.round((transientBounces / totalSent) * 1000) / 10 : 0,
       complaintRate,
       openRate,
       clickRate,

@@ -456,28 +456,35 @@ function DashboardContent() {
         {sesStatsLoading && <p className="mt-3 text-sm text-gray-400">Loading SES statistics...</p>}
         {sesStatsData && (
           <div className="mt-4">
-            <div className="grid grid-cols-3 gap-3 sm:grid-cols-6">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
               {[
                 { label: 'Sent', value: num(sesStatsData.sent), color: 'text-blue-600' },
                 { label: 'Delivered', value: num(sesStatsData.delivered), sub: `${rate(sesStatsData.deliveryRate)}%`, color: 'text-green-600' },
-                { label: 'Bounces', value: num(sesStatsData.bounces), sub: `${rate(sesStatsData.bounceRate)}%`, color: 'text-red-600' },
                 { label: 'Complaints', value: num(sesStatsData.complaints), sub: `${rate(sesStatsData.complaintRate)}%`, color: 'text-orange-600' },
+                { label: 'Transient Bounces', value: num(sesStatsData.transientBounces || 0), sub: `${rate(sesStatsData.transientBounceRate || 0)}%`, color: 'text-amber-600' },
+                { label: 'Permanent Bounces', value: num(sesStatsData.permanentBounces || 0), sub: `${rate(sesStatsData.permanentBounceRate || 0)}%`, color: 'text-red-600' },
                 { label: 'Opens', value: num(sesStatsData.opens), sub: `${rate(sesStatsData.openRate)}%`, color: 'text-emerald-600' },
                 { label: 'Clicks', value: num(sesStatsData.clicks), sub: `${rate(sesStatsData.clickRate)}%`, color: 'text-purple-600' },
+                { label: 'Total Bounces', value: num(sesStatsData.bounces), sub: `${rate(sesStatsData.bounceRate)}%`, color: 'text-red-500' },
               ].map((s) => (
                 <div key={s.label} className="rounded-lg border border-gray-200 p-3 text-center">
-                  <span className="text-xs text-gray-500">{s.label}</span>
+                  <span className="text-[10px] text-gray-500 leading-tight block">{s.label}</span>
                   <p className={`text-lg font-bold ${s.color}`}>{s.value}</p>
                   {s.sub && <span className="text-xs text-gray-400">{s.sub}</span>}
                 </div>
               ))}
             </div>
-            {sesStatsData.quota && (
-              <div className="mt-3 flex items-center gap-4 text-xs text-gray-500">
-                <span>24h quota: {num(sesStatsData.quota.sentLast24Hours)} / {num(sesStatsData.quota.max24HourSend)}</span>
-                <span>Max rate: {sesStatsData.quota.maxSendRate}/sec</span>
-              </div>
-            )}
+            <div className="mt-3 flex items-center justify-between">
+              {sesStatsData.quota && (
+                <div className="flex items-center gap-4 text-xs text-gray-500">
+                  <span>24h quota: {num(sesStatsData.quota.sentLast24Hours)} / {num(sesStatsData.quota.max24HourSend)}</span>
+                  <span>Max rate: {sesStatsData.quota.maxSendRate}/sec</span>
+                </div>
+              )}
+              <a href="/bounces" className="text-xs text-primary-600 hover:text-primary-800">
+                Manage Bounced Contacts →
+              </a>
+            </div>
           </div>
         )}
       </div>

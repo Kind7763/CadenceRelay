@@ -135,12 +135,17 @@ export interface SesStatsData {
   sent: number;
   delivered: number;
   bounces: number;
+  permanentBounces: number;
+  transientBounces: number;
+  undeterminedBounces: number;
   complaints: number;
   rejects: number;
   opens: number;
   clicks: number;
   deliveryRate: number;
   bounceRate: number;
+  permanentBounceRate: number;
+  transientBounceRate: number;
   complaintRate: number;
   openRate: number;
   clickRate: number;
