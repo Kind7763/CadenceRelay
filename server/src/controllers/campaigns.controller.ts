@@ -876,7 +876,38 @@ export async function resendToNonOpeners(req: Request, res: Response, next: Next
       return att;
     });
 
-    // Create new campaign (copy from original)
+    // Create a dedicated list for these non-openers
+    const listResult = await pool.query(
+      `INSERT INTO contact_lists (name, description, project_id)
+       VALUES ($1, $2, $3) RETURNING id`,
+      [
+        `Non-openers: ${source.name}`,
+        `Auto-created list of ${nonOpenerCount} contacts who did not open "${source.name}"`,
+        source.project_id || null,
+      ]
+    );
+    const newListId = listResult.rows[0].id;
+
+    // Add non-opener contacts to the new list
+    await pool.query(
+      `INSERT INTO contact_list_members (contact_id, list_id)
+       SELECT cr.contact_id, $1
+       FROM campaign_recipients cr
+       WHERE cr.campaign_id = $2
+         AND cr.opened_at IS NULL
+         AND cr.status IN ('sent', 'delivered')
+         AND cr.contact_id IS NOT NULL
+       ON CONFLICT DO NOTHING`,
+      [newListId, id]
+    );
+
+    // Update list contact count
+    await pool.query(
+      'UPDATE contact_lists SET contact_count = (SELECT COUNT(*) FROM contact_list_members WHERE list_id = $1) WHERE id = $1',
+      [newListId]
+    );
+
+    // Create new campaign linked to the new list
     const newName = subject ? `Re: ${source.name}` : `Re: ${source.name}`;
     const campaignResult = await pool.query(
       `INSERT INTO campaigns (
@@ -888,7 +919,7 @@ export async function resendToNonOpeners(req: Request, res: Response, next: Next
       [
         newName,
         source.template_id,
-        null, // list_id = NULL so dispatch worker uses pre-created recipients only
+        newListId,
         source.provider,
         source.throttle_per_second,
         source.throttle_per_hour,
@@ -902,7 +933,7 @@ export async function resendToNonOpeners(req: Request, res: Response, next: Next
     );
     const newCampaign = campaignResult.rows[0];
 
-    // Create campaign_recipients directly for the new campaign from non-openers
+    // Also pre-create campaign_recipients for immediate dispatch
     const insertResult = await pool.query(
       `INSERT INTO campaign_recipients (campaign_id, contact_id, email, tracking_token)
        SELECT $1, cr.contact_id, cr.email, encode(gen_random_bytes(16), 'hex')
@@ -1041,7 +1072,37 @@ export async function resendTransientBounced(req: Request, res: Response, next: 
       return att;
     });
 
-    // Create new campaign
+    // Create a dedicated list for transient bounced contacts
+    const listResult = await pool.query(
+      `INSERT INTO contact_lists (name, description, project_id)
+       VALUES ($1, $2, $3) RETURNING id`,
+      [
+        `Transient bounced: ${source.name}`,
+        `Auto-created list of ${transientCount} contacts with transient bounces from "${source.name}"`,
+        source.project_id || null,
+      ]
+    );
+    const newListId = listResult.rows[0].id;
+
+    // Add transient bounced contacts to the list
+    await pool.query(
+      `INSERT INTO contact_list_members (contact_id, list_id)
+       SELECT cr.contact_id, $1
+       FROM campaign_recipients cr
+       WHERE cr.campaign_id = $2
+         AND cr.bounce_type = 'transient'
+         AND cr.status IN ('bounced', 'failed')
+         AND cr.contact_id IS NOT NULL
+       ON CONFLICT DO NOTHING`,
+      [newListId, id]
+    );
+
+    await pool.query(
+      'UPDATE contact_lists SET contact_count = (SELECT COUNT(*) FROM contact_list_members WHERE list_id = $1) WHERE id = $1',
+      [newListId]
+    );
+
+    // Create new campaign linked to the list
     const campaignResult = await pool.query(
       `INSERT INTO campaigns (
         name, template_id, list_id, provider, status,
@@ -1052,7 +1113,7 @@ export async function resendTransientBounced(req: Request, res: Response, next: 
       [
         `Retry: ${source.name}`,
         source.template_id,
-        null, // list_id = NULL so dispatch worker uses pre-created recipients only
+        newListId,
         source.provider,
         source.throttle_per_second,
         source.throttle_per_hour,
