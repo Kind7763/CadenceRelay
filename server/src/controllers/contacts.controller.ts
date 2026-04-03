@@ -5,6 +5,8 @@ import { parsePagination, buildPaginatedResult } from '../utils/pagination';
 import { verifyAdminPassword } from '../utils/adminAuth';
 import { cacheThrough, cacheDel } from '../utils/cache';
 import { fireAutomationTrigger } from '../workers/automationProcessor';
+import { redis } from '../config/redis';
+import { logger } from '../utils/logger';
 import fs from 'fs';
 import readline from 'readline';
 
@@ -26,12 +28,13 @@ const SORT_COLUMN_MAP: Record<string, string> = {
   state: 'c.state',
   district: 'c.district',
   engagement_score: 'c.engagement_score',
+  health_status: 'c.health_status',
 };
 
 export async function listContacts(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { page, limit, offset } = parsePagination(req.query as { page?: string; limit?: string });
-    const { search, status, listId, minSendCount, maxSendCount, state, district, block, category, management, sortBy, sortDir, engagement_min, engagement_max } = req.query;
+    const { search, status, listId, minSendCount, maxSendCount, state, district, block, category, management, sortBy, sortDir, engagement_min, engagement_max, health_status } = req.query;
 
     let whereClause = 'WHERE 1=1';
     const params: unknown[] = [];
@@ -143,6 +146,11 @@ export async function listContacts(req: Request, res: Response, next: NextFuncti
     if (engagement_max) {
       whereClause += ` AND COALESCE(c.engagement_score, 50) <= $${paramIndex}`;
       params.push(parseInt(engagement_max as string));
+      paramIndex++;
+    }
+    if (health_status) {
+      whereClause += ` AND c.health_status = $${paramIndex}`;
+      params.push(health_status);
       paramIndex++;
     }
 
@@ -1228,6 +1236,72 @@ export async function verifyListEmails(req: Request, res: Response, next: NextFu
     };
 
     res.json({ results, summary });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ── Contact Health Check ──
+
+const REDIS_HEALTH_PROGRESS_KEY = 'contact-health-check-progress';
+
+export async function startHealthCheck(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    // Check if already running
+    const existing = await redis.get(REDIS_HEALTH_PROGRESS_KEY);
+    if (existing) {
+      const progress = JSON.parse(existing);
+      if (progress.status === 'running') {
+        res.json({ message: 'Health check already running', ...progress });
+        return;
+      }
+    }
+
+    // Count unchecked/stale contacts
+    const countResult = await pool.query(
+      `SELECT COUNT(*) FROM contacts
+       WHERE health_status = 'unchecked'
+          OR health_checked_at < NOW() - INTERVAL '30 days'
+          OR health_checked_at IS NULL`
+    );
+    const totalUnchecked = parseInt(countResult.rows[0].count);
+
+    // Fire and forget the health check worker
+    import('./contactHealthChecker.workerRunner').then(({ run }) => run()).catch((err) => {
+      logger.error('Contact health check worker failed', { error: (err as Error).message });
+    });
+
+    res.json({ message: 'Health check started', totalUnchecked });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getHealthCheckProgress(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const data = await redis.get(REDIS_HEALTH_PROGRESS_KEY);
+    if (!data) {
+      res.json({ total: 0, checked: 0, good: 0, risky: 0, invalid: 0, suppressed: 0, status: 'idle', startedAt: null });
+      return;
+    }
+    res.json(JSON.parse(data));
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getHealthStats(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const result = await pool.query(
+      `SELECT COALESCE(health_status, 'unchecked') as health_status, COUNT(*)::int as count
+       FROM contacts
+       GROUP BY health_status`
+    );
+    const stats: Record<string, number> = { good: 0, risky: 0, invalid: 0, suppressed: 0, unchecked: 0 };
+    for (const row of result.rows) {
+      stats[row.health_status] = row.count;
+    }
+    res.json(stats);
   } catch (err) {
     next(err);
   }

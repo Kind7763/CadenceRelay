@@ -19,6 +19,9 @@ import {
   listBouncedEmails,
   verifyEmails,
   verifyListEmails,
+  startHealthCheck,
+  getHealthCheckProgress,
+  getHealthStats,
 } from '../controllers/contacts.controller';
 import { validateBody } from '../middleware/validateRequest';
 import { z } from 'zod';
@@ -67,6 +70,9 @@ router.get('/', listContacts);
 router.get('/bounced', listBouncedEmails);
 router.get('/export', exportContacts);
 router.get('/filters', getContactFilters);
+router.post('/health-check', startHealthCheck);
+router.get('/health-check', getHealthCheckProgress);
+router.get('/health-stats', getHealthStats);
 router.get('/:id', getContact);
 router.post('/', validateBody(createSchema), createContact);
 router.put('/:id', validateBody(updateSchema), updateContact);

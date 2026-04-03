@@ -25,6 +25,7 @@ export interface ContactsParams {
   sortDir?: string;
   engagementMin?: string;
   engagementMax?: string;
+  healthStatus?: string;
 }
 
 export function useContactsList(params: ContactsParams) {
@@ -44,6 +45,7 @@ export function useContactsList(params: ContactsParams) {
   if (params.sortDir) queryParams.sortDir = params.sortDir;
   if (params.engagementMin) queryParams.engagement_min = params.engagementMin;
   if (params.engagementMax) queryParams.engagement_max = params.engagementMax;
+  if (params.healthStatus) queryParams.health_status = params.healthStatus;
 
   return useQuery({
     queryKey: ['contacts', queryParams],

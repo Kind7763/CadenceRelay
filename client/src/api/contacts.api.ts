@@ -19,6 +19,8 @@ export interface Contact {
   management: string | null;
   address: string | null;
   engagement_score?: number;
+  health_status?: string;
+  health_checked_at?: string | null;
   lists?: { id: string; name: string }[];
 }
 
@@ -343,4 +345,40 @@ export async function verifyListEmails(listId: string) {
     results: EmailVerificationResult[];
     summary: { total: number; valid: number; invalid: number; risky: number };
   };
+}
+
+// ── Contact Health Check ──
+
+export interface HealthCheckProgress {
+  total: number;
+  checked: number;
+  good: number;
+  risky: number;
+  invalid: number;
+  suppressed: number;
+  status: 'running' | 'completed' | 'idle';
+  startedAt: string | null;
+}
+
+export interface HealthStats {
+  good: number;
+  risky: number;
+  invalid: number;
+  suppressed: number;
+  unchecked: number;
+}
+
+export async function startHealthCheck(): Promise<{ message: string; totalUnchecked: number }> {
+  const res = await apiClient.post('/contacts/health-check');
+  return res.data;
+}
+
+export async function getHealthCheckProgress(): Promise<HealthCheckProgress> {
+  const res = await apiClient.get('/contacts/health-check');
+  return res.data;
+}
+
+export async function getHealthStats(): Promise<HealthStats> {
+  const res = await apiClient.get('/contacts/health-stats');
+  return res.data;
 }

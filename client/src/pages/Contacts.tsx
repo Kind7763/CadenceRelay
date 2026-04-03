@@ -5,6 +5,11 @@ import {
   exportContacts,
   Contact,
   updateContact,
+  startHealthCheck as apiStartHealthCheck,
+  getHealthCheckProgress,
+  getHealthStats,
+  HealthCheckProgress,
+  HealthStats,
 } from '../api/contacts.api';
 import { createSmartList, ContactList } from '../api/lists.api';
 import { useContactsList, useCreateContact, useDeleteContact, useBulkDeleteContacts, useBulkUpdateContacts, useUpdateContact } from '../hooks/useContacts';
@@ -527,6 +532,14 @@ function ContactsContent() {
   const [engagementMin, setEngagementMin] = useState('');
   const [engagementMax, setEngagementMax] = useState('');
 
+  // Health status filter
+  const [healthStatusFilter, setHealthStatusFilter] = useState('');
+
+  // Health check state
+  const [healthProgress, setHealthProgress] = useState<HealthCheckProgress | null>(null);
+  const [healthStats, setHealthStatsState] = useState<HealthStats | null>(null);
+  const [healthCheckRunning, setHealthCheckRunning] = useState(false);
+
   const [sortBy, setSortBy] = useState('');
   const [sortDir, setSortDir] = useState<'ASC' | 'DESC'>('DESC');
   const [showAddModal, setShowAddModal] = useState(false);
@@ -564,6 +577,7 @@ function ContactsContent() {
     sortDir: sortBy ? sortDir : undefined,
     engagementMin: engagementMin || undefined,
     engagementMax: engagementMax || undefined,
+    healthStatus: healthStatusFilter || undefined,
   });
 
   const { data: lists = [] } = useListsList();
@@ -590,6 +604,42 @@ function ContactsContent() {
   // Reset cascading filters
   useEffect(() => { setDistrictFilter(''); setBlockFilter(''); }, [stateFilter]);
   useEffect(() => { setBlockFilter(''); }, [districtFilter]);
+
+  // Fetch health stats on mount and after health check completes
+  useEffect(() => {
+    getHealthStats().then(setHealthStatsState).catch(() => {});
+  }, [healthCheckRunning]);
+
+  // Poll health check progress while running
+  useEffect(() => {
+    if (!healthCheckRunning) return;
+    const interval = setInterval(async () => {
+      try {
+        const progress = await getHealthCheckProgress();
+        setHealthProgress(progress);
+        if (progress.status === 'completed' || progress.status === 'idle') {
+          setHealthCheckRunning(false);
+          toast.success(
+            `Health check done: ${progress.checked.toLocaleString()} checked -- ${progress.good.toLocaleString()} good, ${progress.risky.toLocaleString()} risky, ${progress.invalid.toLocaleString()} invalid, ${progress.suppressed.toLocaleString()} suppressed`
+          );
+          getHealthStats().then(setHealthStatsState).catch(() => {});
+        }
+      } catch {
+        // ignore polling errors
+      }
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [healthCheckRunning]);
+
+  async function handleStartHealthCheck() {
+    try {
+      await apiStartHealthCheck();
+      setHealthCheckRunning(true);
+      toast.success('Health check started');
+    } catch {
+      toast.error('Failed to start health check');
+    }
+  }
 
   function toggleSelect(id: string) {
     setSelectedIds((prev) => {
@@ -768,6 +818,15 @@ function ContactsContent() {
               </button>
             </>
           )}
+          <button
+            onClick={handleStartHealthCheck}
+            disabled={healthCheckRunning}
+            className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+          >
+            {healthCheckRunning && healthProgress
+              ? `Checking... ${healthProgress.checked.toLocaleString()} / ${healthProgress.total.toLocaleString()} (${healthProgress.total > 0 ? Math.round((healthProgress.checked / healthProgress.total) * 100) : 0}%)`
+              : 'Run Health Check'}
+          </button>
           <button onClick={() => exportContacts(listFilter || undefined)} className="rounded-lg border border-gray-300 px-3 py-2 text-sm hover:bg-gray-50">Export CSV</button>
           <button onClick={() => navigate('/import')} className="rounded-lg border border-gray-300 px-3 py-2 text-sm hover:bg-gray-50">Import CSV</button>
           <button onClick={() => setShowAddModal(true)} className="rounded-lg bg-primary-600 px-4 py-2 text-sm text-white hover:bg-primary-700">Add Contact</button>
@@ -794,6 +853,18 @@ function ContactsContent() {
           <option value="bounced">Bounced</option>
           <option value="complained">Complained</option>
           <option value="unsubscribed">Unsubscribed</option>
+        </select>
+        <select
+          value={healthStatusFilter}
+          onChange={(e) => { setHealthStatusFilter(e.target.value); setPage(1); }}
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+        >
+          <option value="">All Health</option>
+          <option value="good">Good</option>
+          <option value="risky">Risky</option>
+          <option value="invalid">Invalid</option>
+          <option value="suppressed">Suppressed</option>
+          <option value="unchecked">Unchecked</option>
         </select>
         <select
           value={listFilter}
@@ -976,6 +1047,33 @@ function ContactsContent() {
         </div>
       )}
 
+      {/* Health Stats Summary */}
+      {healthStats && (
+        <div className="mt-3 flex items-center gap-3 rounded-lg bg-white px-4 py-2 shadow-sm text-xs">
+          <span className="font-medium text-gray-600">Health:</span>
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block h-2 w-2 rounded-full bg-green-500"></span>
+            Good: {healthStats.good.toLocaleString()}
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block h-2 w-2 rounded-full bg-yellow-500"></span>
+            Risky: {healthStats.risky.toLocaleString()}
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block h-2 w-2 rounded-full bg-red-500"></span>
+            Invalid: {healthStats.invalid.toLocaleString()}
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block h-2 w-2 rounded-full bg-gray-400"></span>
+            Suppressed: {healthStats.suppressed.toLocaleString()}
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block h-2 w-2 rounded-full bg-gray-200"></span>
+            Unchecked: {healthStats.unchecked.toLocaleString()}
+          </span>
+        </div>
+      )}
+
       {/* Contact count summary */}
       <div className="mt-3 text-sm text-gray-500">
         {total.toLocaleString()} contact{total !== 1 ? 's' : ''} found
@@ -1028,13 +1126,14 @@ function ContactsContent() {
                     <th className="w-[8%] px-3 py-3 text-center font-medium text-gray-600 cursor-pointer select-none hover:text-gray-900" onClick={() => handleSort('engagement_score')}>
                       Score<SortIndicator column="engagement_score" />
                     </th>
+                    <th className="w-[8%] px-3 py-3 text-center font-medium text-gray-600">Health</th>
                     <th className="w-[10%] px-3 py-3 text-right font-medium text-gray-600">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {contacts.length === 0 ? (
                     <tr>
-                      <td colSpan={10} className="px-4 py-12 text-center">
+                      <td colSpan={11} className="px-4 py-12 text-center">
                         <div className="text-gray-400">
                           <p className="text-lg font-medium">No contacts found</p>
                           <p className="mt-1 text-sm">
@@ -1085,6 +1184,16 @@ function ContactsContent() {
                           if (score >= 70) return <span className="inline-block rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">Hot</span>;
                           if (score >= 40) return <span className="inline-block rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-700">Warm</span>;
                           return <span className="inline-block rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">Cold</span>;
+                        })()}
+                      </td>
+                      <td className="px-3 py-3 text-center cursor-pointer" onClick={() => navigate(`/contacts/${c.id}`)}>
+                        {(() => {
+                          const hs = c.health_status || 'unchecked';
+                          if (hs === 'good') return <span className="inline-block rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">good</span>;
+                          if (hs === 'risky') return <span className="inline-block rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-700">risky</span>;
+                          if (hs === 'invalid') return <span className="inline-block rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">invalid</span>;
+                          if (hs === 'suppressed') return <span className="inline-block rounded-full bg-gray-200 px-2 py-0.5 text-xs font-medium text-gray-600">suppressed</span>;
+                          return <span className="inline-block rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-400">unchecked</span>;
                         })()}
                       </td>
                       <td className="px-3 py-3 text-right">
