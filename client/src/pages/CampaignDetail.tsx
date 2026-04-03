@@ -493,8 +493,8 @@ export default function CampaignDetail() {
                         toast.success('Resend campaign created for transient bounces');
                         if (newCamp?.id) navigate(`/campaigns/${newCamp.id}`);
                       } catch (err) {
-                        const axiosErr = err as { response?: { data?: { error?: string } } };
-                        const msg = axiosErr?.response?.data?.error || 'Failed to create resend campaign';
+                        const axiosErr = err as { response?: { data?: { error?: string; message?: string } } };
+                        const msg = axiosErr?.response?.data?.error || axiosErr?.response?.data?.message || 'Failed to create resend campaign';
                         if (msg.toLowerCase().includes('no transient')) {
                           toast('No transient bounced contacts found in this campaign', { icon: 'ℹ️' });
                         } else {
