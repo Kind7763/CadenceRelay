@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SmartFilterCriteria, ContactList } from '../api/lists.api';
+import { getFilteredContactCount } from '../api/contacts.api';
 import { useListsList, useCreateList, useCreateSmartList, useDeleteList } from '../hooks/useLists';
 import { useContactFilters } from '../hooks/useFilters';
 import { useProjectsList } from '../hooks/useProjects';
@@ -8,6 +9,7 @@ import { GridCardSkeleton, TableSkeleton } from '../components/ui/Skeleton';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { ViewToggle, ViewMode } from '../components/ui/ViewToggle';
 import { SortableHeader, SortState, sortItems, toggleSort } from '../components/ui/SortableHeader';
+import MultiSelectDropdown from '../components/ui/MultiSelectDropdown';
 
 type ListWithProject = ContactList & { project_id?: string };
 
@@ -248,42 +250,59 @@ function SmartListModal({ onClose, onCreated }: { onClose: () => void; onCreated
     category: [],
     management: [],
   });
+  const [matchCount, setMatchCount] = useState<number | null>(null);
+  const [countLoading, setCountLoading] = useState(false);
 
-  const { data: filters } = useContactFilters({
+  const { data: filters, isLoading: filtersLoading } = useContactFilters({
     state: criteria.state && criteria.state.length > 0 ? criteria.state.join(',') : undefined,
     district: criteria.district && criteria.district.length > 0 ? criteria.district.join(',') : undefined,
   });
 
   const createSmartListMutation = useCreateSmartList();
 
-  function toggleCriteriaValue(field: 'state' | 'district' | 'block' | 'category' | 'management', value: string) {
-    setCriteria((prev) => {
-      const next = { ...prev };
-      const current = (next[field] as string[]) || [];
-      if (current.includes(value)) {
-        (next as Record<string, string[]>)[field] = current.filter(v => v !== value);
-      } else {
-        (next as Record<string, string[]>)[field] = [...current, value];
-      }
-      if (field === 'state') {
-        next.district = [];
-        next.block = [];
-      }
-      if (field === 'district') {
-        next.block = [];
-      }
-      return next;
-    });
-  }
+  // Live count: debounce 500ms when criteria change
+  useEffect(() => {
+    const hasFilters =
+      (criteria.state && criteria.state.length > 0) ||
+      (criteria.district && criteria.district.length > 0) ||
+      (criteria.block && criteria.block.length > 0) ||
+      (criteria.category && criteria.category.length > 0) ||
+      (criteria.management && criteria.management.length > 0) ||
+      criteria.classes_min != null ||
+      criteria.classes_max != null;
 
-  function updateCriteria(field: keyof SmartFilterCriteria, value: string) {
-    setCriteria((prev) => {
-      const next = { ...prev };
-      if (field === 'classes_min' || field === 'classes_max') {
-        (next as Record<string, unknown>)[field] = value ? parseInt(value) : undefined;
-      } else {
-        (next as Record<string, string[]>)[field] = value ? [value] : [];
+    if (!hasFilters) {
+      setMatchCount(null);
+      return;
+    }
+
+    setCountLoading(true);
+    const timer = setTimeout(async () => {
+      try {
+        const cleanCriteria: Record<string, unknown> = {};
+        if (criteria.state && criteria.state.length > 0) cleanCriteria.state = criteria.state;
+        if (criteria.district && criteria.district.length > 0) cleanCriteria.district = criteria.district;
+        if (criteria.block && criteria.block.length > 0) cleanCriteria.block = criteria.block;
+        if (criteria.category && criteria.category.length > 0) cleanCriteria.category = criteria.category;
+        if (criteria.management && criteria.management.length > 0) cleanCriteria.management = criteria.management;
+        if (criteria.classes_min != null) cleanCriteria.classes_min = criteria.classes_min;
+        if (criteria.classes_max != null) cleanCriteria.classes_max = criteria.classes_max;
+
+        const count = await getFilteredContactCount(cleanCriteria);
+        setMatchCount(count);
+      } catch {
+        // ignore errors
+      } finally {
+        setCountLoading(false);
       }
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [criteria]);
+
+  function handleMultiSelectChange(field: 'state' | 'district' | 'block' | 'category' | 'management', values: string[]) {
+    setCriteria((prev) => {
+      const next = { ...prev, [field]: values };
+      // Reset dependent filters when parent changes
       if (field === 'state') {
         next.district = [];
         next.block = [];
@@ -318,13 +337,49 @@ function SmartListModal({ onClose, onCreated }: { onClose: () => void; onCreated
     }
   }
 
+  const countsMap: Record<string, Record<string, number> | undefined> = filters
+    ? {
+        state: filters.stateCounts,
+        district: filters.districtCounts,
+        block: filters.blockCounts,
+        category: filters.categoryCounts,
+        management: filters.managementCounts,
+      }
+    : {};
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
       <div className="w-full max-w-lg rounded-xl bg-white p-6 max-h-[90vh] overflow-y-auto">
-        <h3 className="text-lg font-semibold">Create Smart List</h3>
-        <p className="mt-1 text-sm text-gray-500">
-          Smart lists automatically include contacts matching your filter criteria. They update dynamically as new contacts are imported.
-        </p>
+        <div className="flex items-start justify-between">
+          <div>
+            <h3 className="text-lg font-semibold">Create Smart List</h3>
+            <p className="mt-1 text-sm text-gray-500">
+              Smart lists automatically include contacts matching your filter criteria.
+            </p>
+          </div>
+          {/* Live count badge */}
+          <div className="ml-4 flex-shrink-0 text-right">
+            {countLoading ? (
+              <div className="flex items-center gap-1.5 rounded-lg bg-gray-50 px-3 py-1.5">
+                <svg className="h-4 w-4 animate-spin text-gray-400" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                <span className="text-xs text-gray-400">Counting...</span>
+              </div>
+            ) : matchCount != null ? (
+              <div className="rounded-lg bg-green-50 px-3 py-1.5">
+                <span className="text-xs text-gray-500">Matching</span>
+                <p className="text-lg font-bold text-green-700 leading-tight">{matchCount.toLocaleString()}</p>
+                <span className="text-xs text-gray-500">contacts</span>
+              </div>
+            ) : (
+              <div className="rounded-lg bg-gray-50 px-3 py-1.5">
+                <span className="text-xs text-gray-400">Set filters to see count</span>
+              </div>
+            )}
+          </div>
+        </div>
 
         <div className="mt-4 space-y-3">
           <div>
@@ -351,88 +406,79 @@ function SmartListModal({ onClose, onCreated }: { onClose: () => void; onCreated
           <hr className="my-4" />
           <h4 className="text-sm font-semibold text-gray-700">Filter Criteria</h4>
 
-          {filters && (
-            <div className="space-y-3">
-              {/* Multi-select filter component */}
-              {([
-                { field: 'state' as const, label: 'States', options: filters.states as string[], placeholder: 'All States' },
-                { field: 'district' as const, label: 'Districts', options: filters.districts as string[], placeholder: 'All Districts' },
-                { field: 'block' as const, label: 'Blocks', options: filters.blocks as string[], placeholder: 'All Blocks' },
-                { field: 'category' as const, label: 'Categories', options: filters.categories as string[], placeholder: 'All Categories' },
-                { field: 'management' as const, label: 'Management', options: filters.managements as string[], placeholder: 'All Management Types' },
-              ]).map(({ field, label, options, placeholder }) => {
-                const selected = (criteria[field] as string[]) || [];
-                return (
-                  <div key={field}>
-                    <label className="block text-xs font-medium text-gray-500">
-                      {label} {selected.length > 0 && <span className="text-primary-600">({selected.length} selected)</span>}
-                    </label>
-                    {selected.length > 0 && (
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {selected.map(v => (
-                          <span key={v} className="inline-flex items-center gap-1 rounded-full bg-primary-100 px-2 py-0.5 text-xs text-primary-700">
-                            {v}
-                            <button onClick={() => toggleCriteriaValue(field, v)} className="text-primary-400 hover:text-primary-600">&times;</button>
-                          </span>
-                        ))}
-                        <button onClick={() => setCriteria(prev => ({ ...prev, [field]: [] }))} className="text-xs text-gray-400 hover:text-gray-600">Clear all</button>
-                      </div>
-                    )}
-                    <div className="mt-1 max-h-32 overflow-y-auto rounded-lg border px-1 py-1">
-                      {options.length === 0 ? (
-                        <p className="px-2 py-1 text-xs text-gray-400">{selected.length === 0 ? placeholder : 'No more options'}</p>
-                      ) : (
-                        options.map((opt: string) => (
-                          <label key={opt} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-gray-50">
-                            <input
-                              type="checkbox"
-                              checked={selected.includes(opt)}
-                              onChange={() => toggleCriteriaValue(field, opt)}
-                              className="h-3.5 w-3.5 rounded border-gray-300 text-primary-600"
-                            />
-                            <span className="truncate">{opt}</span>
-                          </label>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-gray-500">Classes Min</label>
-                  <input
-                    type="number"
-                    placeholder="e.g., 1"
-                    value={criteria.classes_min ?? ''}
-                    onChange={(e) => updateCriteria('classes_min', e.target.value)}
-                    className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-500">Classes Max</label>
-                  <input
-                    type="number"
-                    placeholder="e.g., 12"
-                    value={criteria.classes_max ?? ''}
-                    onChange={(e) => updateCriteria('classes_max', e.target.value)}
-                    className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
-                  />
-                </div>
+          <div className="space-y-3">
+            {([
+              { field: 'state' as const, label: 'States', options: (filters?.states as string[]) || [], placeholder: 'Select states...' },
+              { field: 'district' as const, label: 'Districts', options: (filters?.districts as string[]) || [], placeholder: 'Select districts...' },
+              { field: 'block' as const, label: 'Blocks', options: (filters?.blocks as string[]) || [], placeholder: 'Select blocks...' },
+              { field: 'category' as const, label: 'Categories', options: (filters?.categories as string[]) || [], placeholder: 'Select categories...' },
+              { field: 'management' as const, label: 'Management', options: (filters?.managements as string[]) || [], placeholder: 'Select management types...' },
+            ]).map(({ field, label, options, placeholder }) => (
+              <MultiSelectDropdown
+                key={field}
+                label={label}
+                options={options}
+                selected={(criteria[field] as string[]) || []}
+                onChange={(values) => handleMultiSelectChange(field, values)}
+                placeholder={placeholder}
+                loading={filtersLoading}
+                optionCounts={countsMap[field]}
+              />
+            ))}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-500">Classes Min</label>
+                <input
+                  type="number"
+                  placeholder="e.g., 1"
+                  value={criteria.classes_min ?? ''}
+                  onChange={(e) =>
+                    setCriteria((prev) => ({
+                      ...prev,
+                      classes_min: e.target.value ? parseInt(e.target.value) : undefined,
+                    }))
+                  }
+                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500">Classes Max</label>
+                <input
+                  type="number"
+                  placeholder="e.g., 12"
+                  value={criteria.classes_max ?? ''}
+                  onChange={(e) =>
+                    setCriteria((prev) => ({
+                      ...prev,
+                      classes_max: e.target.value ? parseInt(e.target.value) : undefined,
+                    }))
+                  }
+                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                />
               </div>
             </div>
-          )}
+          </div>
         </div>
 
-        <div className="mt-6 flex justify-end gap-2">
-          <button onClick={onClose} className="rounded-lg border px-4 py-2 text-sm">Cancel</button>
-          <button
-            onClick={handleCreate}
-            disabled={!name.trim() || createSmartListMutation.isPending}
-            className="rounded-lg bg-primary-600 px-4 py-2 text-sm text-white disabled:opacity-50"
-          >
-            {createSmartListMutation.isPending ? 'Creating...' : 'Create Smart List'}
-          </button>
+        <div className="mt-6 flex items-center justify-between">
+          {/* Bottom count display */}
+          <div className="text-sm text-gray-500">
+            {matchCount != null && !countLoading && (
+              <span>
+                Estimated: <strong className="text-green-700">{matchCount.toLocaleString()}</strong> contacts
+              </span>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="rounded-lg border px-4 py-2 text-sm">Cancel</button>
+            <button
+              onClick={handleCreate}
+              disabled={!name.trim() || createSmartListMutation.isPending}
+              className="rounded-lg bg-primary-600 px-4 py-2 text-sm text-white disabled:opacity-50"
+            >
+              {createSmartListMutation.isPending ? 'Creating...' : 'Create Smart List'}
+            </button>
+          </div>
         </div>
       </div>
     </div>

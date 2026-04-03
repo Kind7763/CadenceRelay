@@ -17,6 +17,7 @@ import {
   previewCSV,
   exportContacts,
   getContactFilters,
+  getFilteredContactCount,
   deleteSuppressedContacts,
   listBouncedEmails,
   verifyEmails,
@@ -72,6 +73,7 @@ router.get('/', listContacts);
 router.get('/bounced', listBouncedEmails);
 router.get('/export', exportContacts);
 router.get('/filters', getContactFilters);
+router.post('/count-filtered', getFilteredContactCount);
 router.post('/health-check', startHealthCheck);
 router.get('/health-check', getHealthCheckProgress);
 router.get('/health-stats', getHealthStats);

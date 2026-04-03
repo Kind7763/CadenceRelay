@@ -30,6 +30,11 @@ export interface ContactFilters {
   blocks: string[];
   categories: string[];
   managements: string[];
+  stateCounts?: Record<string, number>;
+  districtCounts?: Record<string, number>;
+  blockCounts?: Record<string, number>;
+  categoryCounts?: Record<string, number>;
+  managementCounts?: Record<string, number>;
 }
 
 export interface CSVPreviewResult {
@@ -283,6 +288,11 @@ export async function exportContacts(listId?: string) {
 export async function getContactFilters(params: Record<string, string> = {}): Promise<ContactFilters> {
   const res = await apiClient.get('/contacts/filters', { params });
   return res.data;
+}
+
+export async function getFilteredContactCount(criteria: Record<string, unknown>): Promise<number> {
+  const res = await apiClient.post('/contacts/count-filtered', criteria);
+  return res.data.count;
 }
 
 // ── Bounce Management ──

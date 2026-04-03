@@ -1176,61 +1176,83 @@ export async function exportContacts(req: Request, res: Response, next: NextFunc
 }
 
 // Filter facets endpoint: returns unique values for filter dropdowns
+// Also returns per-option counts (stateCounts, districtCounts, etc.) for the smart list UI
 export async function getContactFilters(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { state, district } = req.query;
-    const cacheKey = `contact-filters:${state || ''}:${district || ''}`;
+    const cacheKey = `contact-filters-v2:${state || ''}:${district || ''}`;
 
-    const result = await cacheThrough<Record<string, string[]>>(cacheKey, async () => {
-      const filters: Record<string, string[]> = {};
+    const result = await cacheThrough<Record<string, unknown>>(cacheKey, async () => {
+      const filters: Record<string, unknown> = {};
 
-      // Always return states
+      // States with counts
       const statesRes = await pool.query(
-        "SELECT DISTINCT state FROM contacts WHERE state IS NOT NULL AND state != '' ORDER BY state"
+        "SELECT state, COUNT(*) as count FROM contacts WHERE state IS NOT NULL AND state != '' AND status = 'active' GROUP BY state ORDER BY state"
       );
       filters.states = statesRes.rows.map((r) => r.state);
+      const stateCounts: Record<string, number> = {};
+      for (const r of statesRes.rows) stateCounts[r.state] = parseInt(r.count);
+      filters.stateCounts = stateCounts;
 
-      // Districts: optionally filtered by state
+      // Districts: optionally filtered by state, with counts
       if (state) {
         const states = (state as string).split(',').map(s => s.trim()).filter(Boolean);
         const distRes = await pool.query(
-          "SELECT DISTINCT district FROM contacts WHERE district IS NOT NULL AND district != '' AND state = ANY($1) ORDER BY district",
+          "SELECT district, COUNT(*) as count FROM contacts WHERE district IS NOT NULL AND district != '' AND status = 'active' AND state = ANY($1) GROUP BY district ORDER BY district",
           [states]
         );
         filters.districts = distRes.rows.map((r) => r.district);
+        const districtCounts: Record<string, number> = {};
+        for (const r of distRes.rows) districtCounts[r.district] = parseInt(r.count);
+        filters.districtCounts = districtCounts;
       } else {
         const distRes = await pool.query(
-          "SELECT DISTINCT district FROM contacts WHERE district IS NOT NULL AND district != '' ORDER BY district"
+          "SELECT district, COUNT(*) as count FROM contacts WHERE district IS NOT NULL AND district != '' AND status = 'active' GROUP BY district ORDER BY district"
         );
         filters.districts = distRes.rows.map((r) => r.district);
+        const districtCounts: Record<string, number> = {};
+        for (const r of distRes.rows) districtCounts[r.district] = parseInt(r.count);
+        filters.districtCounts = districtCounts;
       }
 
-      // Blocks: optionally filtered by district
+      // Blocks: optionally filtered by district, with counts
       if (district) {
         const districts = (district as string).split(',').map(s => s.trim()).filter(Boolean);
         const blockRes = await pool.query(
-          "SELECT DISTINCT block FROM contacts WHERE block IS NOT NULL AND block != '' AND district = ANY($1) ORDER BY block",
+          "SELECT block, COUNT(*) as count FROM contacts WHERE block IS NOT NULL AND block != '' AND status = 'active' AND district = ANY($1) GROUP BY block ORDER BY block",
           [districts]
         );
         filters.blocks = blockRes.rows.map((r) => r.block);
+        const blockCounts: Record<string, number> = {};
+        for (const r of blockRes.rows) blockCounts[r.block] = parseInt(r.count);
+        filters.blockCounts = blockCounts;
       } else {
         const blockRes = await pool.query(
-          "SELECT DISTINCT block FROM contacts WHERE block IS NOT NULL AND block != '' ORDER BY block"
+          "SELECT block, COUNT(*) as count FROM contacts WHERE block IS NOT NULL AND block != '' AND status = 'active' GROUP BY block ORDER BY block"
         );
         filters.blocks = blockRes.rows.map((r) => r.block);
+        const blockCounts: Record<string, number> = {};
+        for (const r of blockRes.rows) blockCounts[r.block] = parseInt(r.count);
+        filters.blockCounts = blockCounts;
       }
 
-      // Categories
+      // Categories with counts
       const catRes = await pool.query(
-        "SELECT DISTINCT category FROM contacts WHERE category IS NOT NULL AND category != '' ORDER BY category"
+        "SELECT category, COUNT(*) as count FROM contacts WHERE category IS NOT NULL AND category != '' AND status = 'active' GROUP BY category ORDER BY category"
       );
       filters.categories = catRes.rows.map((r) => r.category);
+      const categoryCounts: Record<string, number> = {};
+      for (const r of catRes.rows) categoryCounts[r.category] = parseInt(r.count);
+      filters.categoryCounts = categoryCounts;
 
-      // Management types
+      // Management types with counts
       const mgmtRes = await pool.query(
-        "SELECT DISTINCT management FROM contacts WHERE management IS NOT NULL AND management != '' ORDER BY management"
+        "SELECT management, COUNT(*) as count FROM contacts WHERE management IS NOT NULL AND management != '' AND status = 'active' GROUP BY management ORDER BY management"
       );
       filters.managements = mgmtRes.rows.map((r) => r.management);
+      const managementCounts: Record<string, number> = {};
+      for (const r of mgmtRes.rows) managementCounts[r.management] = parseInt(r.count);
+      filters.managementCounts = managementCounts;
 
       return filters;
     }, 300); // Cache for 5 minutes
@@ -1457,6 +1479,69 @@ export async function getHealthStats(req: Request, res: Response, next: NextFunc
       stats[row.health_status] = row.count;
     }
     res.json(stats);
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Count contacts matching smart filter criteria WITHOUT creating a list.
+ * Used for live preview in the smart list creation modal.
+ * POST /contacts/count-filtered
+ */
+export async function getFilteredContactCount(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const criteria = req.body;
+    if (!criteria || typeof criteria !== 'object') {
+      res.json({ count: 0 });
+      return;
+    }
+
+    let where = '';
+    const params: unknown[] = [];
+    let paramIndex = 1;
+
+    if (criteria.state && Array.isArray(criteria.state) && criteria.state.length > 0) {
+      where += ` AND c.state = ANY($${paramIndex})`;
+      params.push(criteria.state);
+      paramIndex++;
+    }
+    if (criteria.district && Array.isArray(criteria.district) && criteria.district.length > 0) {
+      where += ` AND c.district = ANY($${paramIndex})`;
+      params.push(criteria.district);
+      paramIndex++;
+    }
+    if (criteria.block && Array.isArray(criteria.block) && criteria.block.length > 0) {
+      where += ` AND c.block = ANY($${paramIndex})`;
+      params.push(criteria.block);
+      paramIndex++;
+    }
+    if (criteria.category && Array.isArray(criteria.category) && criteria.category.length > 0) {
+      where += ` AND c.category = ANY($${paramIndex})`;
+      params.push(criteria.category);
+      paramIndex++;
+    }
+    if (criteria.management && Array.isArray(criteria.management) && criteria.management.length > 0) {
+      where += ` AND c.management = ANY($${paramIndex})`;
+      params.push(criteria.management);
+      paramIndex++;
+    }
+    if (criteria.classes_min != null) {
+      where += ` AND CASE WHEN c.classes ~ '^[0-9]+-[0-9]+$' THEN CAST(split_part(c.classes, '-', 2) AS integer) >= $${paramIndex} ELSE true END`;
+      params.push(criteria.classes_min);
+      paramIndex++;
+    }
+    if (criteria.classes_max != null) {
+      where += ` AND CASE WHEN c.classes ~ '^[0-9]+-[0-9]+$' THEN CAST(split_part(c.classes, '-', 1) AS integer) <= $${paramIndex} ELSE true END`;
+      params.push(criteria.classes_max);
+      paramIndex++;
+    }
+
+    const result = await pool.query(
+      `SELECT COUNT(*) FROM contacts c WHERE c.status = 'active' ${where}`,
+      params
+    );
+    res.json({ count: parseInt(result.rows[0].count) });
   } catch (err) {
     next(err);
   }
