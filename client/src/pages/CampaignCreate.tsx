@@ -8,7 +8,7 @@ import {
 } from '../api/campaigns.api';
 import { listTemplates, Template, checkSpamScore, SpamCheckResult } from '../api/templates.api';
 import { listLists, ContactList } from '../api/lists.api';
-import { listContacts, Contact, verifyEmails as apiVerifyEmails } from '../api/contacts.api';
+import { listContacts, Contact, verifyListEmails } from '../api/contacts.api';
 import EmailVerifyModal from '../components/EmailVerifyModal';
 import { sendTestEmail } from '../api/settings.api';
 import UploadProgress, { FileUploadProgress } from '../components/ui/UploadProgress';
@@ -401,21 +401,27 @@ export default function CampaignCreate() {
   async function handleVerifyEmailList() {
     if (!listId) return;
     setVerifyChecking(true);
+    toast.loading('Verifying all contacts in list... this may take a minute', { id: 'verify-list' });
     try {
-      const contactsRes = await listContacts({ listId, limit: '100' });
-      const emails = (contactsRes.data || []).map((c: Contact) => c.email);
-      if (emails.length === 0) {
-        toast.error('No emails found in the selected list');
-        setVerifyChecking(false);
-        return;
-      }
-      setVerifyEmails(emails);
-      const res = await apiVerifyEmails(emails);
-      const valid = res.results.filter((r) => r.risk === 'low').length;
-      const risky = res.results.filter((r) => r.risk === 'medium').length;
-      const invalid = res.results.filter((r) => r.risk === 'high' || !r.valid).length;
+      // Use server-side list verification which checks ALL contacts (not just 100)
+      const res = await verifyListEmails(listId);
+      toast.dismiss('verify-list');
+
+      const allEmails = (res.results || []).map((r: { email: string }) => r.email);
+      setVerifyEmails(allEmails);
+
+      const valid = res.summary?.valid || res.results.filter((r: { risk: string }) => r.risk === 'low').length;
+      const risky = res.summary?.risky || res.results.filter((r: { risk: string }) => r.risk === 'medium' || r.risk === 'high').length;
+      const invalid = res.summary?.invalid || res.results.filter((r: { valid: boolean }) => !r.valid).length;
       setVerifyResult({ valid, risky, invalid });
+
+      if (invalid > 0 || risky > 0) {
+        toast(`${valid} valid, ${risky} risky, ${invalid} invalid contacts found`, { icon: '⚠️', duration: 6000 });
+      } else {
+        toast.success(`All ${valid} contacts are valid!`);
+      }
     } catch {
+      toast.dismiss('verify-list');
       toast.error('Failed to verify emails');
     } finally {
       setVerifyChecking(false);
@@ -1287,14 +1293,56 @@ export default function CampaignCreate() {
             {verifyChecking ? (
               <span className="text-sm text-gray-500">Verifying email list...</span>
             ) : verifyResult ? (
-              <>
-                <div className="flex items-center gap-2 text-sm">
-                  <span className="font-medium text-green-600">{verifyResult.valid} valid</span>
-                  {verifyResult.risky > 0 && <span className="font-medium text-yellow-600">{verifyResult.risky} at risk</span>}
-                  {verifyResult.invalid > 0 && <span className="font-medium text-red-600">{verifyResult.invalid} invalid</span>}
+              <div className="w-full">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-sm">
+                    <span className="font-medium text-green-600">{verifyResult.valid} valid</span>
+                    {verifyResult.risky > 0 && <span className="font-medium text-yellow-600">{verifyResult.risky} risky</span>}
+                    {verifyResult.invalid > 0 && <span className="font-medium text-red-600">{verifyResult.invalid} invalid</span>}
+                  </div>
+                  <button onClick={() => setShowVerifyModal(true)} className="text-sm text-primary-600 hover:text-primary-800 font-medium">View Details</button>
                 </div>
-                <button onClick={() => setShowVerifyModal(true)} className="text-sm text-primary-600 hover:text-primary-800 font-medium">View Details</button>
-              </>
+                {(verifyResult.invalid > 0 || verifyResult.risky > 0) && (
+                  <div className="mt-2 flex items-center gap-2">
+                    {verifyResult.invalid > 0 && (
+                      <button
+                        onClick={async () => {
+                          try {
+                            const { bulkSuppressContacts } = await import('../api/contacts.api');
+                            await bulkSuppressContacts({ filters: { listId, health_status: 'invalid' } });
+                            toast.success(`${verifyResult.invalid} invalid contacts suppressed`);
+                            setVerifyResult({ ...verifyResult, invalid: 0 });
+                          } catch { toast.error('Failed to suppress'); }
+                        }}
+                        className="rounded bg-red-100 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-200"
+                      >
+                        Suppress {verifyResult.invalid} invalid
+                      </button>
+                    )}
+                    {verifyResult.risky > 0 && (
+                      <button
+                        onClick={async () => {
+                          try {
+                            const { bulkSuppressContacts } = await import('../api/contacts.api');
+                            await bulkSuppressContacts({ filters: { listId, health_status: 'risky' } });
+                            toast.success(`${verifyResult.risky} risky contacts suppressed`);
+                            setVerifyResult({ ...verifyResult, risky: 0 });
+                          } catch { toast.error('Failed to suppress'); }
+                        }}
+                        className="rounded bg-yellow-100 px-3 py-1 text-xs font-medium text-yellow-700 hover:bg-yellow-200"
+                      >
+                        Suppress {verifyResult.risky} risky
+                      </button>
+                    )}
+                    <button
+                      onClick={handleVerifyEmailList}
+                      className="rounded bg-gray-100 px-3 py-1 text-xs font-medium text-gray-600 hover:bg-gray-200"
+                    >
+                      Re-verify
+                    </button>
+                  </div>
+                )}
+              </div>
             ) : (
               <>
                 <span className="text-sm text-gray-500">Verify your email list before sending</span>
