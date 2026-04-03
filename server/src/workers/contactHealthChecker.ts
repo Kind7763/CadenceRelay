@@ -3,8 +3,8 @@ import { pool } from '../config/database';
 import { redis } from '../config/redis';
 import { logger } from '../utils/logger';
 
-const BATCH_SIZE = 200;
-const MAX_CONTACTS_PER_RUN = 5000;
+const BATCH_SIZE = 500;
+const MAX_CONTACTS_PER_RUN = 0; // 0 = unlimited, check ALL contacts
 const MX_TIMEOUT_MS = 5000;
 const REDIS_PROGRESS_KEY = 'contact-health-check-progress';
 
@@ -85,7 +85,9 @@ export async function runContactHealthCheck(): Promise<void> {
         OR health_checked_at < NOW() - INTERVAL '30 days'
         OR health_checked_at IS NULL`
   );
-  const totalEligible = Math.min(parseInt(countResult.rows[0].count), MAX_CONTACTS_PER_RUN);
+  const totalEligible = MAX_CONTACTS_PER_RUN > 0
+    ? Math.min(parseInt(countResult.rows[0].count), MAX_CONTACTS_PER_RUN)
+    : parseInt(countResult.rows[0].count);
 
   const progress: HealthProgress = {
     total: totalEligible,
@@ -109,7 +111,7 @@ export async function runContactHealthCheck(): Promise<void> {
   const mxCache = new Map<string, 'valid' | 'invalid'>();
   let totalChecked = 0;
 
-  while (totalChecked < MAX_CONTACTS_PER_RUN) {
+  while (MAX_CONTACTS_PER_RUN === 0 || totalChecked < MAX_CONTACTS_PER_RUN) {
     // Fetch a batch of contacts that need checking
     const batchResult = await pool.query(
       `SELECT id, email, status FROM contacts
