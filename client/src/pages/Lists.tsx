@@ -256,6 +256,26 @@ function SmartListModal({ onClose, onCreated }: { onClose: () => void; onCreated
 
   const createSmartListMutation = useCreateSmartList();
 
+  function toggleCriteriaValue(field: 'state' | 'district' | 'block' | 'category' | 'management', value: string) {
+    setCriteria((prev) => {
+      const next = { ...prev };
+      const current = (next[field] as string[]) || [];
+      if (current.includes(value)) {
+        (next as Record<string, string[]>)[field] = current.filter(v => v !== value);
+      } else {
+        (next as Record<string, string[]>)[field] = [...current, value];
+      }
+      if (field === 'state') {
+        next.district = [];
+        next.block = [];
+      }
+      if (field === 'district') {
+        next.block = [];
+      }
+      return next;
+    });
+  }
+
   function updateCriteria(field: keyof SmartFilterCriteria, value: string) {
     setCriteria((prev) => {
       const next = { ...prev };
@@ -333,61 +353,51 @@ function SmartListModal({ onClose, onCreated }: { onClose: () => void; onCreated
 
           {filters && (
             <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-medium text-gray-500">State</label>
-                <select
-                  value={criteria.state?.[0] || ''}
-                  onChange={(e) => updateCriteria('state', e.target.value)}
-                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
-                >
-                  <option value="">All States</option>
-                  {filters.states.map((s: string) => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-500">District</label>
-                <select
-                  value={criteria.district?.[0] || ''}
-                  onChange={(e) => updateCriteria('district', e.target.value)}
-                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
-                >
-                  <option value="">All Districts</option>
-                  {filters.districts.map((d: string) => <option key={d} value={d}>{d}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-500">Block</label>
-                <select
-                  value={criteria.block?.[0] || ''}
-                  onChange={(e) => updateCriteria('block', e.target.value)}
-                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
-                >
-                  <option value="">All Blocks</option>
-                  {filters.blocks.map((b: string) => <option key={b} value={b}>{b}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-500">Category</label>
-                <select
-                  value={criteria.category?.[0] || ''}
-                  onChange={(e) => updateCriteria('category', e.target.value)}
-                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
-                >
-                  <option value="">All Categories</option>
-                  {filters.categories.map((c: string) => <option key={c} value={c}>{c}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-500">Management</label>
-                <select
-                  value={criteria.management?.[0] || ''}
-                  onChange={(e) => updateCriteria('management', e.target.value)}
-                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
-                >
-                  <option value="">All Management Types</option>
-                  {filters.managements.map((m: string) => <option key={m} value={m}>{m}</option>)}
-                </select>
-              </div>
+              {/* Multi-select filter component */}
+              {([
+                { field: 'state' as const, label: 'States', options: filters.states as string[], placeholder: 'All States' },
+                { field: 'district' as const, label: 'Districts', options: filters.districts as string[], placeholder: 'All Districts' },
+                { field: 'block' as const, label: 'Blocks', options: filters.blocks as string[], placeholder: 'All Blocks' },
+                { field: 'category' as const, label: 'Categories', options: filters.categories as string[], placeholder: 'All Categories' },
+                { field: 'management' as const, label: 'Management', options: filters.managements as string[], placeholder: 'All Management Types' },
+              ]).map(({ field, label, options, placeholder }) => {
+                const selected = (criteria[field] as string[]) || [];
+                return (
+                  <div key={field}>
+                    <label className="block text-xs font-medium text-gray-500">
+                      {label} {selected.length > 0 && <span className="text-primary-600">({selected.length} selected)</span>}
+                    </label>
+                    {selected.length > 0 && (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {selected.map(v => (
+                          <span key={v} className="inline-flex items-center gap-1 rounded-full bg-primary-100 px-2 py-0.5 text-xs text-primary-700">
+                            {v}
+                            <button onClick={() => toggleCriteriaValue(field, v)} className="text-primary-400 hover:text-primary-600">&times;</button>
+                          </span>
+                        ))}
+                        <button onClick={() => setCriteria(prev => ({ ...prev, [field]: [] }))} className="text-xs text-gray-400 hover:text-gray-600">Clear all</button>
+                      </div>
+                    )}
+                    <div className="mt-1 max-h-32 overflow-y-auto rounded-lg border px-1 py-1">
+                      {options.length === 0 ? (
+                        <p className="px-2 py-1 text-xs text-gray-400">{selected.length === 0 ? placeholder : 'No more options'}</p>
+                      ) : (
+                        options.map((opt: string) => (
+                          <label key={opt} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-gray-50">
+                            <input
+                              type="checkbox"
+                              checked={selected.includes(opt)}
+                              onChange={() => toggleCriteriaValue(field, opt)}
+                              className="h-3.5 w-3.5 rounded border-gray-300 text-primary-600"
+                            />
+                            <span className="truncate">{opt}</span>
+                          </label>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-gray-500">Classes Min</label>
