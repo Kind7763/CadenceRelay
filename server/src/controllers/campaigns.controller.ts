@@ -331,18 +331,31 @@ export async function sendCampaign(req: Request, res: Response, next: NextFuncti
     if (!['draft', 'scheduled'].includes(existing.rows[0].status)) {
       throw new AppError('Campaign is already sending or completed', 400);
     }
-    if (!existing.rows[0].template_id || !existing.rows[0].list_id) {
-      throw new AppError('Campaign must have a template and list', 400);
+    if (!existing.rows[0].template_id) {
+      throw new AppError('Campaign must have a template assigned', 400);
     }
 
-    // FIX: Validate template and list still exist before sending
+    // Check if campaign has pre-created recipients (resend campaigns don't need a list)
+    const hasPreCreatedRecipients = await pool.query(
+      'SELECT COUNT(*) FROM campaign_recipients WHERE campaign_id = $1', [id]
+    );
+    const preCreatedCount = parseInt(hasPreCreatedRecipients.rows[0].count);
+
+    if (!existing.rows[0].list_id && preCreatedCount === 0) {
+      throw new AppError('Campaign must have a list or pre-created recipients', 400);
+    }
+
+    // FIX: Validate template still exists before sending
     const templateCheck = await pool.query('SELECT id FROM templates WHERE id = $1 AND is_active = true', [existing.rows[0].template_id]);
     if (templateCheck.rows.length === 0) {
       throw new AppError('The assigned template no longer exists or has been deactivated', 400);
     }
-    const listCheck = await pool.query('SELECT id FROM contact_lists WHERE id = $1', [existing.rows[0].list_id]);
-    if (listCheck.rows.length === 0) {
-      throw new AppError('The assigned contact list no longer exists', 400);
+    // Only validate list if campaign has one (resend campaigns may have list_id=NULL)
+    if (existing.rows[0].list_id) {
+      const listCheck = await pool.query('SELECT id FROM contact_lists WHERE id = $1', [existing.rows[0].list_id]);
+      if (listCheck.rows.length === 0) {
+        throw new AppError('The assigned contact list no longer exists', 400);
+      }
     }
 
     await pool.query(
@@ -875,7 +888,7 @@ export async function resendToNonOpeners(req: Request, res: Response, next: Next
       [
         newName,
         source.template_id,
-        source.list_id,
+        null, // list_id = NULL so dispatch worker uses pre-created recipients only
         source.provider,
         source.throttle_per_second,
         source.throttle_per_hour,
@@ -1039,7 +1052,7 @@ export async function resendTransientBounced(req: Request, res: Response, next: 
       [
         `Retry: ${source.name}`,
         source.template_id,
-        source.list_id,
+        null, // list_id = NULL so dispatch worker uses pre-created recipients only
         source.provider,
         source.throttle_per_second,
         source.throttle_per_hour,

@@ -200,11 +200,14 @@ async function loadDispatchContext(campaignId: string) {
 }
 
 async function loadContacts(campaign: Record<string, unknown>, campaignId: string) {
+  // If no list_id, this campaign uses pre-created recipients only (resend to non-openers, etc.)
+  if (!campaign.list_id) return [];
+
   const listResult = await pool.query(
     'SELECT is_smart, filter_criteria FROM contact_lists WHERE id = $1',
     [campaign.list_id]
   );
-  if (listResult.rows.length === 0) throw new Error('Contact list not found');
+  if (listResult.rows.length === 0) return []; // List deleted — rely on pre-created recipients
   const list = listResult.rows[0];
 
   let contactsResult;
