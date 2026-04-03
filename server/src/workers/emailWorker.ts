@@ -2,6 +2,7 @@ import { Worker, Job, UnrecoverableError } from 'bullmq';
 import fs from 'fs';
 import { config } from '../config';
 import { pool } from '../config/database';
+import { redis } from '../config/redis';
 import { logger } from '../utils/logger';
 import { generateTrackingToken } from '../utils/crypto';
 import { renderTemplate } from '../utils/templateRenderer';
@@ -685,11 +686,23 @@ export function startEmailSendWorker(): Worker {
     async (job: Job<SendJobData>) => {
       const { campaignRecipientId, campaignId, email, subject, html, text, provider, providerConfig, trackingToken, trackingDomain, replyTo } = job.data;
 
-      // Check if campaign is paused
-      const campCheck = await pool.query('SELECT status FROM campaigns WHERE id = $1', [campaignId]);
+      // Check if campaign is paused + get throttle settings
+      const campCheck = await pool.query('SELECT status, throttle_per_second FROM campaigns WHERE id = $1', [campaignId]);
       if (campCheck.rows[0]?.status === 'paused') {
-        // Re-queue with delay
         throw new Error('Campaign paused');
+      }
+
+      // --- Per-campaign rate limiting using Redis token bucket ---
+      const throttlePerSec = campCheck.rows[0]?.throttle_per_second || 5;
+      const rateLimitKey = `rate-limit:${campaignId}:${Math.floor(Date.now() / 1000)}`;
+      const currentCount = await redis.incr(rateLimitKey);
+      if (currentCount === 1) {
+        await redis.expire(rateLimitKey, 2); // TTL 2 seconds for safety
+      }
+      if (currentCount > throttlePerSec) {
+        // Over the per-second limit — wait until next second
+        const waitMs = 1000 - (Date.now() % 1000) + 50; // wait until next second + 50ms buffer
+        await new Promise(resolve => setTimeout(resolve, waitMs));
       }
 
       // --- Suppression check ---
@@ -845,11 +858,7 @@ export function startEmailSendWorker(): Worker {
     },
     {
       connection: { url: config.redis.url },
-      concurrency: 10,
-      limiter: {
-        max: 5,
-        duration: 1000,
-      },
+      concurrency: 20, // Allow up to 20 concurrent jobs — actual rate controlled per-campaign below
     }
   );
 
