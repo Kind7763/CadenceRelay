@@ -1388,13 +1388,49 @@ export async function verifyListEmails(req: Request, res: Response, next: NextFu
     const { listId } = req.params;
     validateUUID(listId, 'list ID');
 
-    // Load contacts from the list
-    const contactsResult = await pool.query(
-      `SELECT c.email FROM contacts c
-       JOIN contact_list_members clm ON clm.contact_id = c.id
-       WHERE clm.list_id = $1 AND c.status = 'active'`,
-      [listId]
-    );
+    // Check if this is a smart list
+    const listResult = await pool.query('SELECT is_smart, filter_criteria FROM contact_lists WHERE id = $1', [listId]);
+    if (listResult.rows.length === 0) throw new AppError('List not found', 404);
+    const list = listResult.rows[0];
+
+    let contactsResult;
+    if (list.is_smart && list.filter_criteria) {
+      // Smart list — use dynamic filter query
+      const criteria = list.filter_criteria as Record<string, unknown>;
+      const filterParts: string[] = [];
+      const filterParams: unknown[] = [];
+      let paramIdx = 1;
+
+      if (criteria.state && Array.isArray(criteria.state) && criteria.state.length > 0) {
+        filterParts.push(`c.state = ANY($${paramIdx})`); filterParams.push(criteria.state); paramIdx++;
+      }
+      if (criteria.district && Array.isArray(criteria.district) && criteria.district.length > 0) {
+        filterParts.push(`c.district = ANY($${paramIdx})`); filterParams.push(criteria.district); paramIdx++;
+      }
+      if (criteria.block && Array.isArray(criteria.block) && criteria.block.length > 0) {
+        filterParts.push(`c.block = ANY($${paramIdx})`); filterParams.push(criteria.block); paramIdx++;
+      }
+      if (criteria.category && Array.isArray(criteria.category) && criteria.category.length > 0) {
+        filterParts.push(`c.category = ANY($${paramIdx})`); filterParams.push(criteria.category); paramIdx++;
+      }
+      if (criteria.management && Array.isArray(criteria.management) && criteria.management.length > 0) {
+        filterParts.push(`c.management = ANY($${paramIdx})`); filterParams.push(criteria.management); paramIdx++;
+      }
+
+      const whereExtra = filterParts.length > 0 ? ' AND ' + filterParts.join(' AND ') : '';
+      contactsResult = await pool.query(
+        `SELECT c.email FROM contacts c WHERE c.status = 'active'${whereExtra} LIMIT 5000`,
+        filterParams
+      );
+    } else {
+      // Regular list — use contact_list_members
+      contactsResult = await pool.query(
+        `SELECT c.email FROM contacts c
+         JOIN contact_list_members clm ON clm.contact_id = c.id
+         WHERE clm.list_id = $1 AND c.status = 'active' LIMIT 5000`,
+        [listId]
+      );
+    }
 
     const emails = contactsResult.rows.map(r => r.email);
     if (emails.length === 0) {
