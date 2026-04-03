@@ -571,24 +571,30 @@ export async function bulkSuppressContacts(req: Request, res: Response, next: Ne
       return;
     }
 
-    // Bulk insert into suppression_list
-    const valuesPlaceholders: string[] = [];
-    const queryParams: unknown[] = [];
-    let paramIdx = 1;
+    // Bulk insert into suppression_list in batches
+    let totalSuppressed = 0;
+    const suppressReason = reason || 'Bulk suppression from contacts page';
 
-    for (const email of emails) {
-      valuesPlaceholders.push(`($${paramIdx}, $${paramIdx + 1}, 'manual')`);
-      queryParams.push(email.toLowerCase(), reason || 'Bulk suppression from contacts page');
-      paramIdx += 2;
+    for (let i = 0; i < emails.length; i += 200) {
+      const batch = emails.slice(i, i + 200);
+      const valuesPlaceholders: string[] = [];
+      const queryParams: unknown[] = [];
+      let paramIdx = 1;
+
+      for (const email of batch) {
+        valuesPlaceholders.push(`($${paramIdx}, $${paramIdx + 1}, 'manual')`);
+        queryParams.push(email.toLowerCase(), suppressReason);
+        paramIdx += 2;
+      }
+
+      const insertResult = await pool.query(
+        `INSERT INTO suppression_list (email, reason, added_by)
+         VALUES ${valuesPlaceholders.join(', ')}
+         ON CONFLICT DO NOTHING`,
+        queryParams
+      );
+      totalSuppressed += insertResult.rowCount || 0;
     }
-
-    const insertResult = await pool.query(
-      `INSERT INTO suppression_list (email, reason, added_by)
-       VALUES ${valuesPlaceholders.join(', ')}
-       ON CONFLICT (email) DO NOTHING
-       RETURNING id`,
-      queryParams
-    );
 
     // Also update health_status for these contacts
     await pool.query(
@@ -597,7 +603,7 @@ export async function bulkSuppressContacts(req: Request, res: Response, next: Ne
       [emails.map(e => e.toLowerCase())]
     );
 
-    res.json({ message: `${insertResult.rowCount} email(s) added to suppression list`, suppressed: insertResult.rowCount });
+    res.json({ message: `${totalSuppressed} email(s) added to suppression list`, suppressed: totalSuppressed });
   } catch (err) {
     next(err);
   }
