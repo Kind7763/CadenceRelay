@@ -312,7 +312,6 @@ async function handleDispatch(job: Job<DispatchJobData>) {
   let contacts = await loadContacts(campaign, campaignId);
 
   // Check for pre-created pending recipients (from "Resend to Non-Openers" or manual enrollment)
-  // These already exist in campaign_recipients but were never enqueued for sending
   const preCreatedResult = await pool.query(
     `SELECT cr.id as recipient_id, cr.contact_id, cr.email, cr.tracking_token,
        c.name, c.state, c.district, c.block, c.classes, c.category, c.management, c.address, c.metadata
@@ -322,12 +321,35 @@ async function handleDispatch(job: Job<DispatchJobData>) {
     [campaignId]
   );
   const preCreatedContacts = preCreatedResult.rows;
-  const hasPreCreated = preCreatedContacts.length > 0 && contacts.length === 0;
+  const hasPreCreated = preCreatedContacts.length > 0;
+  const hasNewContacts = contacts.length > 0;
 
-  logger.info(`Campaign ${campaignId}: ${contacts.length} new recipients + ${preCreatedContacts.length} pre-created pending`);
+  // If we ONLY have pre-created contacts (no new from list), convert them to the same format
+  // so all dispatch logic (including A/B) works uniformly
+  if (hasPreCreated && !hasNewContacts) {
+    // Convert pre-created to the contact format used by the dispatch logic
+    contacts = preCreatedContacts.map(pc => ({
+      id: pc.contact_id,
+      email: pc.email,
+      name: pc.name,
+      state: pc.state,
+      district: pc.district,
+      block: pc.block,
+      classes: pc.classes,
+      category: pc.category,
+      management: pc.management,
+      address: pc.address,
+      metadata: pc.metadata,
+      _preCreatedId: pc.recipient_id, // track the existing recipient ID
+      _preCreatedToken: pc.tracking_token,
+    }));
+    logger.info(`Campaign ${campaignId}: using ${contacts.length} pre-created recipients`);
+  } else {
+    logger.info(`Campaign ${campaignId}: ${contacts.length} new recipients + ${preCreatedContacts.length} pre-created pending`);
+  }
 
-  // Update total recipients (only for newly loaded contacts, not pre-created ones)
-  if (contacts.length > 0) {
+  // Update total recipients (only for newly loaded contacts from list, not pre-created ones)
+  if (hasNewContacts) {
     await pool.query(
       'UPDATE campaigns SET total_recipients = total_recipients + $1, updated_at = NOW() WHERE id = $2',
       [contacts.length, campaignId]
@@ -369,10 +391,33 @@ async function handleDispatch(job: Job<DispatchJobData>) {
 
     logger.info(`Campaign ${campaignId} A/B test: ${variantAContacts.length} variant A, ${variantBContacts.length} variant B, ${holdoutContacts.length} holdout`);
 
+    // Helper: get or create a campaign_recipient for a contact
+    async function getOrCreateRecipient(contact: Record<string, unknown>, variant: string, status: string = 'queued'): Promise<{ id: string; token: string }> {
+      const preId = contact._preCreatedId as string | undefined;
+      const preToken = contact._preCreatedToken as string | undefined;
+
+      if (preId && preToken) {
+        // Pre-created recipient — update variant and status
+        await pool.query(
+          `UPDATE campaign_recipients SET ab_variant = $1, status = $2 WHERE id = $3`,
+          [variant, status, preId]
+        );
+        return { id: preId, token: preToken };
+      } else {
+        // New recipient — insert
+        const token = generateTrackingToken();
+        const crResult = await pool.query(
+          `INSERT INTO campaign_recipients (campaign_id, contact_id, email, tracking_token, ab_variant, status)
+           VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+          [campaignId, contact.id, contact.email, token, variant, status]
+        );
+        return { id: crResult.rows[0].id, token };
+      }
+    }
+
     // Dispatch variant A
     for (let i = 0; i < variantAContacts.length; i++) {
       const contact = variantAContacts[i];
-      const trackingToken = generateTrackingToken();
       const variables = buildContactVariables(contact);
       Object.assign(variables, resolveDynamicVars(i));
 
@@ -381,16 +426,12 @@ async function handleDispatch(job: Job<DispatchJobData>) {
       const renderedSubject = renderTemplate(subjectSource, variables);
       const renderedText = template.text_body ? renderTemplate(template.text_body, variables) : null;
 
-      const crResult = await pool.query(
-        `INSERT INTO campaign_recipients (campaign_id, contact_id, email, tracking_token, ab_variant)
-         VALUES ($1, $2, $3, $4, 'A') RETURNING id`,
-        [campaignId, contact.id, contact.email, trackingToken]
-      );
+      const { id: recipientId, token: trackingToken } = await getOrCreateRecipient(contact, 'A', 'queued');
 
       await emailSendQueue.add('send', {
-        campaignRecipientId: crResult.rows[0].id,
+        campaignRecipientId: recipientId,
         campaignId,
-        email: contact.email,
+        email: contact.email as string,
         subject: renderedSubject,
         html: renderedHtml,
         text: renderedText,
@@ -406,7 +447,6 @@ async function handleDispatch(job: Job<DispatchJobData>) {
     // Dispatch variant B
     for (let i = 0; i < variantBContacts.length; i++) {
       const contact = variantBContacts[i];
-      const trackingToken = generateTrackingToken();
       const variables = buildContactVariables(contact);
       Object.assign(variables, resolveDynamicVars(variantAContacts.length + i));
 
@@ -414,16 +454,12 @@ async function handleDispatch(job: Job<DispatchJobData>) {
       const renderedSubject = renderTemplate(variantBSubject, variables);
       const renderedText = variantBTemplate.text_body ? renderTemplate(variantBTemplate.text_body, variables) : null;
 
-      const crResult = await pool.query(
-        `INSERT INTO campaign_recipients (campaign_id, contact_id, email, tracking_token, ab_variant)
-         VALUES ($1, $2, $3, $4, 'B') RETURNING id`,
-        [campaignId, contact.id, contact.email, trackingToken]
-      );
+      const { id: recipientId, token: trackingToken } = await getOrCreateRecipient(contact, 'B', 'queued');
 
       await emailSendQueue.add('send', {
-        campaignRecipientId: crResult.rows[0].id,
+        campaignRecipientId: recipientId,
         campaignId,
-        email: contact.email,
+        email: contact.email as string,
         subject: renderedSubject,
         html: renderedHtml,
         text: renderedText,
@@ -436,14 +472,9 @@ async function handleDispatch(job: Job<DispatchJobData>) {
       } as SendJobData, { delay: 0 });
     }
 
-    // Create holdout recipients (pending, no send job yet)
+    // Create/update holdout recipients (pending, no send job yet)
     for (const contact of holdoutContacts) {
-      const trackingToken = generateTrackingToken();
-      await pool.query(
-        `INSERT INTO campaign_recipients (campaign_id, contact_id, email, tracking_token, ab_variant, status)
-         VALUES ($1, $2, $3, $4, 'holdout', 'pending')`,
-        [campaignId, contact.id, contact.email, trackingToken]
-      );
+      await getOrCreateRecipient(contact, 'holdout', 'pending');
     }
 
     // Update ab_test status to testing
@@ -462,7 +493,6 @@ async function handleDispatch(job: Job<DispatchJobData>) {
     // --- Normal (non-A/B) dispatch ---
     for (let recipientIndex = 0; recipientIndex < contacts.length; recipientIndex++) {
       const contact = contacts[recipientIndex];
-      const trackingToken = generateTrackingToken();
       const variables = buildContactVariables(contact);
       Object.assign(variables, resolveDynamicVars(recipientIndex));
 
@@ -470,16 +500,30 @@ async function handleDispatch(job: Job<DispatchJobData>) {
       const renderedSubject = renderTemplate((campaign.subject_override as string) || template.subject, variables);
       const renderedText = template.text_body ? renderTemplate(template.text_body, variables) : null;
 
-      const crResult = await pool.query(
-        `INSERT INTO campaign_recipients (campaign_id, contact_id, email, tracking_token)
-         VALUES ($1, $2, $3, $4) RETURNING id`,
-        [campaignId, contact.id, contact.email, trackingToken]
-      );
+      // Handle pre-created vs new recipients
+      let recipientId: string;
+      let trackingToken: string;
+      const preId = (contact as Record<string, unknown>)._preCreatedId as string | undefined;
+      const preToken = (contact as Record<string, unknown>)._preCreatedToken as string | undefined;
+
+      if (preId && preToken) {
+        recipientId = preId;
+        trackingToken = preToken;
+        await pool.query("UPDATE campaign_recipients SET status = 'queued' WHERE id = $1", [preId]);
+      } else {
+        trackingToken = generateTrackingToken();
+        const crResult = await pool.query(
+          `INSERT INTO campaign_recipients (campaign_id, contact_id, email, tracking_token)
+           VALUES ($1, $2, $3, $4) RETURNING id`,
+          [campaignId, contact.id, contact.email, trackingToken]
+        );
+        recipientId = crResult.rows[0].id;
+      }
 
       await emailSendQueue.add('send', {
-        campaignRecipientId: crResult.rows[0].id,
+        campaignRecipientId: recipientId,
         campaignId,
-        email: contact.email,
+        email: contact.email as string,
         subject: renderedSubject,
         html: renderedHtml,
         text: renderedText,
@@ -495,46 +539,8 @@ async function handleDispatch(job: Job<DispatchJobData>) {
     logger.info(`Campaign ${campaignId}: ${contacts.length} send jobs enqueued`);
   }
 
-  // Handle pre-created pending recipients (from "Resend to Non-Openers")
-  if (hasPreCreated) {
-    logger.info(`Campaign ${campaignId}: dispatching ${preCreatedContacts.length} pre-created recipients`);
-
-    for (let index = 0; index < preCreatedContacts.length; index++) {
-      const pc = preCreatedContacts[index];
-      const variables = buildContactVariables({
-        name: pc.name, email: pc.email, state: pc.state, district: pc.district,
-        block: pc.block, classes: pc.classes, category: pc.category,
-        management: pc.management, address: pc.address, metadata: pc.metadata,
-      });
-
-      const renderedHtml = renderTemplate(template.html_body, variables);
-      const renderedSubject = renderTemplate((campaign.subject_override as string) || template.subject, variables);
-      const renderedText = template.text_body ? renderTemplate(template.text_body, variables) : null;
-
-      // Update recipient status to queued
-      await pool.query(
-        "UPDATE campaign_recipients SET status = 'queued' WHERE id = $1",
-        [pc.recipient_id]
-      );
-
-      await emailSendQueue.add('send', {
-        campaignRecipientId: pc.recipient_id,
-        campaignId,
-        email: pc.email,
-        subject: renderedSubject,
-        html: renderedHtml,
-        text: renderedText,
-        provider: campaign.provider as string,
-        providerConfig: providerConfig as Record<string, unknown>,
-        trackingToken: pc.tracking_token,
-        trackingDomain,
-        attachments: campaignAttachments,
-        replyTo,
-      } as SendJobData, { delay: 0 });
-    }
-
-    logger.info(`Campaign ${campaignId}: ${preCreatedContacts.length} pre-created send jobs enqueued`);
-  }
+  // Note: pre-created recipients are now handled in the main dispatch flow above
+  // (converted to contacts array format with _preCreatedId/_preCreatedToken markers)
 }
 
 async function handlePickABWinner(job: Job<DispatchJobData>) {
