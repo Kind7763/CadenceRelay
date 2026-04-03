@@ -14,7 +14,7 @@ import {
   updateCampaignLabel,
   resendToNonOpeners,
   resendTransientBounced,
-  suppressPermanentBounces,
+  // suppressPermanentBounces removed — auto-suppression worker handles this
   Campaign,
 } from '../api/campaigns.api';
 import { getRecipientEvents } from '../api/analytics.api';
@@ -130,7 +130,9 @@ export default function CampaignDetail() {
 
   // Bounce action states
   const [resendingTransient, setResendingTransient] = useState(false);
-  const [suppressingPermanent, setSuppressingPermanent] = useState(false);
+  // suppressingPermanent removed — auto-suppression worker handles permanent bounces
+  const [showMoreActions, setShowMoreActions] = useState(false);
+  const moreActionsRef = useRef<HTMLDivElement>(null);
 
   async function handleReschedule() {
     if (!id || !newScheduledAt) return;
@@ -191,6 +193,16 @@ export default function CampaignDetail() {
 
   useEffect(() => { fetchCampaign(); }, [fetchCampaign]);
   useEffect(() => { fetchRecipients(); }, [fetchRecipients]);
+
+  // Close "More Actions" dropdown on outside click
+  useEffect(() => {
+    if (!showMoreActions) return;
+    function handleClick(e: MouseEvent) {
+      if (moreActionsRef.current && !moreActionsRef.current.contains(e.target as Node)) setShowMoreActions(false);
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [showMoreActions]);
 
   // Auto-refresh while sending
   useEffect(() => {
@@ -456,46 +468,52 @@ export default function CampaignDetail() {
           {campaign.status === 'sending' && <button onClick={handlePause} className="rounded-lg border border-orange-300 px-4 py-2 text-sm text-orange-600">Pause</button>}
           {campaign.status === 'paused' && <button onClick={handleResume} className="rounded-lg bg-primary-600 px-4 py-2 text-sm text-white">Resume</button>}
           {campaign.status === 'completed' && (
-            <>
+            <div className="relative" ref={moreActionsRef}>
               <button
-                onClick={() => { setResendSubject(`Re: ${campaign.template_subject || campaign.name}`); setShowResendModal(true); }}
-                className="rounded-lg border border-green-300 px-4 py-2 text-sm text-green-700 hover:bg-green-50"
+                onClick={() => setShowMoreActions(!showMoreActions)}
+                className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
               >
-                Resend to Non-Openers
+                More Actions ▾
               </button>
-              <button
-                onClick={async () => {
-                  if (!id) return;
-                  setResendingTransient(true);
-                  try {
-                    const newCamp = await resendTransientBounced(id);
-                    toast.success('Resend campaign created for transient bounces');
-                    if (newCamp?.id) navigate(`/campaigns/${newCamp.id}`);
-                  } catch { toast.error('Failed to create resend campaign'); }
-                  finally { setResendingTransient(false); }
-                }}
-                disabled={resendingTransient}
-                className="rounded-lg border border-orange-300 px-4 py-2 text-sm text-orange-700 hover:bg-orange-50 disabled:opacity-50"
-              >
-                {resendingTransient ? 'Creating...' : 'Resend Transient Bounced'}
-              </button>
-              <button
-                onClick={async () => {
-                  if (!id) return;
-                  setSuppressingPermanent(true);
-                  try {
-                    const res = await suppressPermanentBounces(id);
-                    toast.success(`${res.added} permanent bounces added to suppression list`);
-                    fetchCampaign();
-                  } catch { toast.error('Failed to suppress permanent bounces'); }
-                  finally { setSuppressingPermanent(false); }
-                }}
-                disabled={suppressingPermanent}
-                className="rounded-lg border border-red-300 px-4 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50"
-              >
-                {suppressingPermanent ? 'Suppressing...' : 'Suppress Permanent Bounces'}
-              </button>
-            </>
+              {showMoreActions && (
+                <div className="absolute right-0 top-full z-50 mt-1 w-56 rounded-lg border border-gray-200 bg-white py-1 shadow-lg" style={{ position: 'fixed', top: moreActionsRef.current ? moreActionsRef.current.getBoundingClientRect().bottom + 4 : 0, right: moreActionsRef.current ? window.innerWidth - moreActionsRef.current.getBoundingClientRect().right : 0 }}>
+                  <button
+                    onClick={() => { setResendSubject(`Re: ${campaign.template_subject || campaign.name}`); setShowResendModal(true); setShowMoreActions(false); }}
+                    className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50"
+                  >
+                    <span className="text-green-500">↻</span> Resend to Non-Openers
+                  </button>
+                  <button
+                    onClick={async () => {
+                      setShowMoreActions(false);
+                      if (!id) return;
+                      setResendingTransient(true);
+                      try {
+                        const newCamp = await resendTransientBounced(id);
+                        toast.success('Resend campaign created for transient bounces');
+                        if (newCamp?.id) navigate(`/campaigns/${newCamp.id}`);
+                      } catch (err) {
+                        const axiosErr = err as { response?: { data?: { error?: string } } };
+                        const msg = axiosErr?.response?.data?.error || 'Failed to create resend campaign';
+                        if (msg.toLowerCase().includes('no transient')) {
+                          toast('No transient bounced contacts found in this campaign', { icon: 'ℹ️' });
+                        } else {
+                          toast.error(msg);
+                        }
+                      } finally { setResendingTransient(false); }
+                    }}
+                    disabled={resendingTransient}
+                    className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    <span className="text-orange-500">↻</span> {resendingTransient ? 'Creating...' : 'Resend Transient Bounces'}
+                  </button>
+                  <hr className="my-1 border-gray-100" />
+                  <div className="px-4 py-2 text-xs text-gray-400">
+                    Permanent bounces are automatically suppressed by the system every 10 minutes.
+                  </div>
+                </div>
+              )}
+            </div>
           )}
           {(campaign.status === 'draft' || campaign.status === 'scheduled') && (
             <button onClick={() => navigate(`/campaigns/${id}/edit`)} className="rounded-lg bg-primary-600 px-4 py-2 text-sm text-white hover:bg-primary-700">
