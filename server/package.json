@@ -46,6 +46,7 @@
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/imap": "^0.8.43",
+    "@types/jest": "^30.0.0",
     "@types/jsonwebtoken": "^9.0.5",
     "@types/mailparser": "^3.4.6",
     "@types/multer": "^1.4.11",
