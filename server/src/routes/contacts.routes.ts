@@ -10,6 +10,8 @@ import {
   deleteContact,
   bulkDeleteContacts,
   bulkUpdateContacts,
+  bulkSuppressContacts,
+  bulkDeleteFiltered,
   importContacts,
   importContactsCSV,
   previewCSV,
@@ -73,6 +75,8 @@ router.get('/filters', getContactFilters);
 router.post('/health-check', startHealthCheck);
 router.get('/health-check', getHealthCheckProgress);
 router.get('/health-stats', getHealthStats);
+router.post('/bulk-suppress', bulkSuppressContacts);
+router.delete('/bulk-delete-filtered', bulkDeleteFiltered);
 router.get('/:id', getContact);
 router.post('/', validateBody(createSchema), createContact);
 router.put('/:id', validateBody(updateSchema), updateContact);

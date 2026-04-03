@@ -382,3 +382,29 @@ export async function getHealthStats(): Promise<HealthStats> {
   const res = await apiClient.get('/contacts/health-stats');
   return res.data;
 }
+
+// ── Bulk Filtered Operations ──
+
+export interface ContactFilterParams {
+  search?: string;
+  status?: string;
+  listId?: string;
+  state?: string;
+  district?: string;
+  block?: string;
+  category?: string;
+  management?: string;
+  engagement_min?: string;
+  engagement_max?: string;
+  health_status?: string;
+}
+
+export async function bulkSuppressContacts(payload: { contactIds?: string[]; filters?: ContactFilterParams; reason?: string }): Promise<{ suppressed: number; message: string }> {
+  const res = await apiClient.post('/contacts/bulk-suppress', payload);
+  return res.data;
+}
+
+export async function bulkDeleteFiltered(filters: ContactFilterParams, adminPassword: string): Promise<{ deleted: number; message: string }> {
+  const res = await apiClient.delete('/contacts/bulk-delete-filtered', { data: { filters, adminPassword } });
+  return res.data;
+}

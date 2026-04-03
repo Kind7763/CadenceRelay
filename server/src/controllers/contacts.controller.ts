@@ -31,128 +31,154 @@ const SORT_COLUMN_MAP: Record<string, string> = {
   health_status: 'c.health_status',
 };
 
+/**
+ * Shared WHERE clause builder — used by listContacts, bulkSuppressFiltered, bulkDeleteFiltered.
+ * Accepts filter params (from req.query or req.body.filters) and returns { whereClause, params, paramIndex }.
+ */
+interface ContactFilterParams {
+  search?: string;
+  status?: string;
+  listId?: string;
+  minSendCount?: string;
+  maxSendCount?: string;
+  state?: string;
+  district?: string;
+  block?: string;
+  category?: string;
+  management?: string;
+  engagement_min?: string;
+  engagement_max?: string;
+  health_status?: string;
+}
+
+async function buildContactWhereClause(filters: ContactFilterParams): Promise<{ whereClause: string; params: unknown[]; paramIndex: number }> {
+  let whereClause = 'WHERE 1=1';
+  const params: unknown[] = [];
+  let paramIndex = 1;
+
+  const { search, status, listId, minSendCount, maxSendCount, state, district, block, category, management, engagement_min, engagement_max, health_status } = filters;
+
+  if (search) {
+    whereClause += ` AND (c.email ILIKE $${paramIndex} OR c.name ILIKE $${paramIndex})`;
+    params.push(`%${search}%`);
+    paramIndex++;
+  }
+  if (status) {
+    whereClause += ` AND c.status = $${paramIndex}`;
+    params.push(status);
+    paramIndex++;
+  }
+  if (listId) {
+    const listResult = await pool.query('SELECT is_smart, filter_criteria FROM contact_lists WHERE id = $1', [listId]);
+    const list = listResult.rows[0];
+    if (list?.is_smart && list.filter_criteria) {
+      const criteria = list.filter_criteria as Record<string, unknown>;
+      if (criteria.state && Array.isArray(criteria.state) && criteria.state.length > 0) {
+        whereClause += ` AND c.state = ANY($${paramIndex})`;
+        params.push(criteria.state);
+        paramIndex++;
+      }
+      if (criteria.district && Array.isArray(criteria.district) && criteria.district.length > 0) {
+        whereClause += ` AND c.district = ANY($${paramIndex})`;
+        params.push(criteria.district);
+        paramIndex++;
+      }
+      if (criteria.block && Array.isArray(criteria.block) && criteria.block.length > 0) {
+        whereClause += ` AND c.block = ANY($${paramIndex})`;
+        params.push(criteria.block);
+        paramIndex++;
+      }
+      if (criteria.category && Array.isArray(criteria.category) && criteria.category.length > 0) {
+        whereClause += ` AND c.category = ANY($${paramIndex})`;
+        params.push(criteria.category);
+        paramIndex++;
+      }
+      if (criteria.management && Array.isArray(criteria.management) && criteria.management.length > 0) {
+        whereClause += ` AND c.management = ANY($${paramIndex})`;
+        params.push(criteria.management);
+        paramIndex++;
+      }
+      if (criteria.classes_min != null) {
+        whereClause += ` AND CASE WHEN c.classes ~ '^[0-9]+-[0-9]+$' THEN CAST(split_part(c.classes, '-', 2) AS integer) >= $${paramIndex} ELSE true END`;
+        params.push(criteria.classes_min);
+        paramIndex++;
+      }
+      if (criteria.classes_max != null) {
+        whereClause += ` AND CASE WHEN c.classes ~ '^[0-9]+-[0-9]+$' THEN CAST(split_part(c.classes, '-', 1) AS integer) <= $${paramIndex} ELSE true END`;
+        params.push(criteria.classes_max);
+        paramIndex++;
+      }
+    } else {
+      whereClause += ` AND c.id IN (SELECT contact_id FROM contact_list_members WHERE list_id = $${paramIndex})`;
+      params.push(listId);
+      paramIndex++;
+    }
+  }
+  if (minSendCount) {
+    whereClause += ` AND c.send_count >= $${paramIndex}`;
+    params.push(parseInt(minSendCount));
+    paramIndex++;
+  }
+  if (maxSendCount) {
+    whereClause += ` AND c.send_count <= $${paramIndex}`;
+    params.push(parseInt(maxSendCount));
+    paramIndex++;
+  }
+  if (state) {
+    const states = state.split(',').map(s => s.trim()).filter(Boolean);
+    whereClause += ` AND c.state = ANY($${paramIndex})`;
+    params.push(states);
+    paramIndex++;
+  }
+  if (district) {
+    const districts = district.split(',').map(s => s.trim()).filter(Boolean);
+    whereClause += ` AND c.district = ANY($${paramIndex})`;
+    params.push(districts);
+    paramIndex++;
+  }
+  if (block) {
+    const blocks = block.split(',').map(s => s.trim()).filter(Boolean);
+    whereClause += ` AND c.block = ANY($${paramIndex})`;
+    params.push(blocks);
+    paramIndex++;
+  }
+  if (category) {
+    const categories = category.split(',').map(s => s.trim()).filter(Boolean);
+    whereClause += ` AND c.category = ANY($${paramIndex})`;
+    params.push(categories);
+    paramIndex++;
+  }
+  if (management) {
+    const managements = management.split(',').map(s => s.trim()).filter(Boolean);
+    whereClause += ` AND c.management = ANY($${paramIndex})`;
+    params.push(managements);
+    paramIndex++;
+  }
+  if (engagement_min) {
+    whereClause += ` AND COALESCE(c.engagement_score, 50) >= $${paramIndex}`;
+    params.push(parseInt(engagement_min));
+    paramIndex++;
+  }
+  if (engagement_max) {
+    whereClause += ` AND COALESCE(c.engagement_score, 50) <= $${paramIndex}`;
+    params.push(parseInt(engagement_max));
+    paramIndex++;
+  }
+  if (health_status) {
+    whereClause += ` AND c.health_status = $${paramIndex}`;
+    params.push(health_status);
+    paramIndex++;
+  }
+
+  return { whereClause, params, paramIndex };
+}
+
 export async function listContacts(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { page, limit, offset } = parsePagination(req.query as { page?: string; limit?: string });
-    const { search, status, listId, minSendCount, maxSendCount, state, district, block, category, management, sortBy, sortDir, engagement_min, engagement_max, health_status } = req.query;
+    const { sortBy, sortDir } = req.query;
 
-    let whereClause = 'WHERE 1=1';
-    const params: unknown[] = [];
-    let paramIndex = 1;
-
-    if (search) {
-      whereClause += ` AND (c.email ILIKE $${paramIndex} OR c.name ILIKE $${paramIndex})`;
-      params.push(`%${search}%`);
-      paramIndex++;
-    }
-    if (status) {
-      whereClause += ` AND c.status = $${paramIndex}`;
-      params.push(status);
-      paramIndex++;
-    }
-    if (listId) {
-      // Check if this is a smart list — smart lists use dynamic filter criteria, not contact_list_members
-      const listResult = await pool.query('SELECT is_smart, filter_criteria FROM contact_lists WHERE id = $1', [listId]);
-      const list = listResult.rows[0];
-      if (list?.is_smart && list.filter_criteria) {
-        const criteria = list.filter_criteria as Record<string, unknown>;
-        if (criteria.state && Array.isArray(criteria.state) && criteria.state.length > 0) {
-          whereClause += ` AND c.state = ANY($${paramIndex})`;
-          params.push(criteria.state);
-          paramIndex++;
-        }
-        if (criteria.district && Array.isArray(criteria.district) && criteria.district.length > 0) {
-          whereClause += ` AND c.district = ANY($${paramIndex})`;
-          params.push(criteria.district);
-          paramIndex++;
-        }
-        if (criteria.block && Array.isArray(criteria.block) && criteria.block.length > 0) {
-          whereClause += ` AND c.block = ANY($${paramIndex})`;
-          params.push(criteria.block);
-          paramIndex++;
-        }
-        if (criteria.category && Array.isArray(criteria.category) && criteria.category.length > 0) {
-          whereClause += ` AND c.category = ANY($${paramIndex})`;
-          params.push(criteria.category);
-          paramIndex++;
-        }
-        if (criteria.management && Array.isArray(criteria.management) && criteria.management.length > 0) {
-          whereClause += ` AND c.management = ANY($${paramIndex})`;
-          params.push(criteria.management);
-          paramIndex++;
-        }
-        if (criteria.classes_min != null) {
-          whereClause += ` AND CASE WHEN c.classes ~ '^[0-9]+-[0-9]+$' THEN CAST(split_part(c.classes, '-', 2) AS integer) >= $${paramIndex} ELSE true END`;
-          params.push(criteria.classes_min);
-          paramIndex++;
-        }
-        if (criteria.classes_max != null) {
-          whereClause += ` AND CASE WHEN c.classes ~ '^[0-9]+-[0-9]+$' THEN CAST(split_part(c.classes, '-', 1) AS integer) <= $${paramIndex} ELSE true END`;
-          params.push(criteria.classes_max);
-          paramIndex++;
-        }
-      } else {
-        // Regular list — use contact_list_members
-        whereClause += ` AND c.id IN (SELECT contact_id FROM contact_list_members WHERE list_id = $${paramIndex})`;
-        params.push(listId);
-        paramIndex++;
-      }
-    }
-    if (minSendCount) {
-      whereClause += ` AND c.send_count >= $${paramIndex}`;
-      params.push(parseInt(minSendCount as string));
-      paramIndex++;
-    }
-    if (maxSendCount) {
-      whereClause += ` AND c.send_count <= $${paramIndex}`;
-      params.push(parseInt(maxSendCount as string));
-      paramIndex++;
-    }
-    if (state) {
-      const states = (state as string).split(',').map(s => s.trim()).filter(Boolean);
-      whereClause += ` AND c.state = ANY($${paramIndex})`;
-      params.push(states);
-      paramIndex++;
-    }
-    if (district) {
-      const districts = (district as string).split(',').map(s => s.trim()).filter(Boolean);
-      whereClause += ` AND c.district = ANY($${paramIndex})`;
-      params.push(districts);
-      paramIndex++;
-    }
-    if (block) {
-      const blocks = (block as string).split(',').map(s => s.trim()).filter(Boolean);
-      whereClause += ` AND c.block = ANY($${paramIndex})`;
-      params.push(blocks);
-      paramIndex++;
-    }
-    if (category) {
-      const categories = (category as string).split(',').map(s => s.trim()).filter(Boolean);
-      whereClause += ` AND c.category = ANY($${paramIndex})`;
-      params.push(categories);
-      paramIndex++;
-    }
-    if (management) {
-      const managements = (management as string).split(',').map(s => s.trim()).filter(Boolean);
-      whereClause += ` AND c.management = ANY($${paramIndex})`;
-      params.push(managements);
-      paramIndex++;
-    }
-    if (engagement_min) {
-      whereClause += ` AND COALESCE(c.engagement_score, 50) >= $${paramIndex}`;
-      params.push(parseInt(engagement_min as string));
-      paramIndex++;
-    }
-    if (engagement_max) {
-      whereClause += ` AND COALESCE(c.engagement_score, 50) <= $${paramIndex}`;
-      params.push(parseInt(engagement_max as string));
-      paramIndex++;
-    }
-    if (health_status) {
-      whereClause += ` AND c.health_status = $${paramIndex}`;
-      params.push(health_status);
-      paramIndex++;
-    }
+    const { whereClause, params, paramIndex } = await buildContactWhereClause(req.query as ContactFilterParams);
 
     const countResult = await pool.query(
       `SELECT COUNT(*) FROM contacts c ${whereClause}`,
@@ -497,6 +523,129 @@ export async function deleteSuppressedContacts(req: Request, res: Response, next
 
       await client.query('COMMIT');
       res.json({ message: `${result.rowCount} suppressed contact(s) deleted`, deleted: result.rowCount });
+    } catch (txErr) {
+      await client.query('ROLLBACK');
+      throw txErr;
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Bulk suppress contacts — accepts either { contactIds: string[] } OR { filters: ContactFilterParams }.
+ * When filters provided, builds the same WHERE clause as listContacts and adds all matching emails to suppression.
+ */
+export async function bulkSuppressContacts(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { contactIds, filters, reason } = req.body;
+
+    let emails: string[];
+
+    if (filters && typeof filters === 'object') {
+      // Use filter-based selection
+      const { whereClause, params } = await buildContactWhereClause(filters as ContactFilterParams);
+      const result = await pool.query(
+        `SELECT c.email FROM contacts c ${whereClause}`,
+        params
+      );
+      emails = result.rows.map((r: { email: string }) => r.email);
+    } else if (Array.isArray(contactIds) && contactIds.length > 0) {
+      // Use explicit contact IDs
+      for (const id of contactIds) {
+        validateUUID(id, 'contact ID');
+      }
+      const result = await pool.query(
+        'SELECT email FROM contacts WHERE id = ANY($1)',
+        [contactIds]
+      );
+      emails = result.rows.map((r: { email: string }) => r.email);
+    } else {
+      throw new AppError('Provide either contactIds or filters', 400);
+    }
+
+    if (emails.length === 0) {
+      res.json({ message: 'No matching contacts found', suppressed: 0 });
+      return;
+    }
+
+    // Bulk insert into suppression_list
+    const valuesPlaceholders: string[] = [];
+    const queryParams: unknown[] = [];
+    let paramIdx = 1;
+
+    for (const email of emails) {
+      valuesPlaceholders.push(`($${paramIdx}, $${paramIdx + 1}, 'manual')`);
+      queryParams.push(email.toLowerCase(), reason || 'Bulk suppression from contacts page');
+      paramIdx += 2;
+    }
+
+    const insertResult = await pool.query(
+      `INSERT INTO suppression_list (email, reason, added_by)
+       VALUES ${valuesPlaceholders.join(', ')}
+       ON CONFLICT (email) DO NOTHING
+       RETURNING id`,
+      queryParams
+    );
+
+    // Also update health_status for these contacts
+    await pool.query(
+      `UPDATE contacts SET health_status = 'suppressed', updated_at = NOW()
+       WHERE LOWER(email) = ANY($1)`,
+      [emails.map(e => e.toLowerCase())]
+    );
+
+    res.json({ message: `${insertResult.rowCount} email(s) added to suppression list`, suppressed: insertResult.rowCount });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Bulk delete contacts by filters — accepts { filters: ContactFilterParams, adminPassword: string }.
+ * Builds the same WHERE clause as listContacts and deletes all matching contacts.
+ */
+export async function bulkDeleteFiltered(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { filters, adminPassword } = req.body;
+    await verifyAdminPassword(adminPassword);
+
+    if (!filters || typeof filters !== 'object') {
+      throw new AppError('filters object is required', 400);
+    }
+
+    const { whereClause, params } = await buildContactWhereClause(filters as ContactFilterParams);
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Get matching contact IDs
+      const idsResult = await client.query(
+        `SELECT c.id FROM contacts c ${whereClause}`,
+        params
+      );
+      const ids = idsResult.rows.map((r: { id: string }) => r.id);
+
+      if (ids.length === 0) {
+        await client.query('COMMIT');
+        res.json({ message: 'No matching contacts found', deleted: 0 });
+        return;
+      }
+
+      // Nullify contact_id in campaign_recipients for historical data preservation
+      await client.query(
+        'UPDATE campaign_recipients SET contact_id = NULL WHERE contact_id = ANY($1)',
+        [ids]
+      );
+
+      // contact_list_members has ON DELETE CASCADE
+      const result = await client.query('DELETE FROM contacts WHERE id = ANY($1)', [ids]);
+
+      await client.query('COMMIT');
+      res.json({ message: `${result.rowCount} contact(s) deleted`, deleted: result.rowCount });
     } catch (txErr) {
       await client.query('ROLLBACK');
       throw txErr;

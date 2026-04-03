@@ -10,8 +10,13 @@ import {
   getHealthStats,
   HealthCheckProgress,
   HealthStats,
+  bulkSuppressContacts,
+  bulkDeleteFiltered,
+  deleteSuppressedContacts,
+  ContactFilterParams,
 } from '../api/contacts.api';
 import { createSmartList, ContactList } from '../api/lists.api';
+import { useQueryClient } from '@tanstack/react-query';
 import { useContactsList, useCreateContact, useDeleteContact, useBulkDeleteContacts, useBulkUpdateContacts, useUpdateContact } from '../hooks/useContacts';
 import { useListsList } from '../hooks/useLists';
 import { useContactFilters } from '../hooks/useFilters';
@@ -551,7 +556,10 @@ function ContactsContent() {
   const [inlineVarName, setInlineVarName] = useState('');
   const [inlineVarType, setInlineVarType] = useState<'text' | 'number' | 'date' | 'select'>('text');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [selectAllMatching, setSelectAllMatching] = useState(false);
   const [deleteModal, setDeleteModal] = useState<{ type: 'single' | 'bulk'; id?: string } | null>(null);
+  const [deleteSuppressedModal, setDeleteSuppressedModal] = useState(false);
+  const [deleteFilteredModal, setDeleteFilteredModal] = useState<{ healthStatus: string; count: number } | null>(null);
   const [showFilters, setShowFilters] = useState(false);
 
   // Bulk edit modals
@@ -587,6 +595,7 @@ function ContactsContent() {
   });
   const { data: customVariables = [] } = useCustomVariables();
 
+  const queryClient = useQueryClient();
   const createContactMutation = useCreateContact();
   const createVarMutation = useCreateCustomVariable();
   const deleteContactMutation = useDeleteContact();
@@ -599,7 +608,7 @@ function ContactsContent() {
   const totalPages = Math.ceil(total / pageSize);
 
   // Clear selection when page/filters change
-  useEffect(() => { setSelectedIds(new Set()); }, [page, search, statusFilter, listFilter, stateFilter, districtFilter, blockFilter, categoryFilter, managementFilter]);
+  useEffect(() => { setSelectedIds(new Set()); setSelectAllMatching(false); }, [page, search, statusFilter, listFilter, stateFilter, districtFilter, blockFilter, categoryFilter, managementFilter]);
 
   // Reset cascading filters
   useEffect(() => { setDistrictFilter(''); setBlockFilter(''); }, [stateFilter]);
@@ -653,10 +662,30 @@ function ContactsContent() {
   function toggleSelectAll() {
     if (selectedIds.size === contacts.length) {
       setSelectedIds(new Set());
+      setSelectAllMatching(false);
     } else {
       setSelectedIds(new Set(contacts.map((c) => c.id)));
     }
   }
+
+  // Build current filter params for bulk operations
+  function getCurrentFilterParams(): ContactFilterParams {
+    const fp: ContactFilterParams = {};
+    if (search) fp.search = search;
+    if (statusFilter) fp.status = statusFilter;
+    if (listFilter) fp.listId = listFilter;
+    if (stateFilter) fp.state = stateFilter;
+    if (districtFilter) fp.district = districtFilter;
+    if (blockFilter) fp.block = blockFilter;
+    if (categoryFilter) fp.category = categoryFilter;
+    if (managementFilter) fp.management = managementFilter;
+    if (engagementMin) fp.engagement_min = engagementMin;
+    if (engagementMax) fp.engagement_max = engagementMax;
+    if (healthStatusFilter) fp.health_status = healthStatusFilter;
+    return fp;
+  }
+
+  const effectiveCount = selectAllMatching ? total : selectedIds.size;
 
   function resetAddForm() {
     setNewContact({ email: '', name: '', state: '', district: '', block: '', classes: '', category: '', management: '', address: '' });
@@ -722,12 +751,68 @@ function ContactsContent() {
     if (deleteModal.type === 'single' && deleteModal.id) {
       await deleteContactMutation.mutateAsync({ id: deleteModal.id, adminPassword: password });
     } else if (deleteModal.type === 'bulk') {
-      const ids = Array.from(selectedIds);
-      await bulkDeleteMutation.mutateAsync({ ids, adminPassword: password });
+      if (selectAllMatching) {
+        // Delete all matching contacts using filter-based endpoint
+        const result = await bulkDeleteFiltered(getCurrentFilterParams(), password);
+        toast.success(`${result.deleted.toLocaleString()} contact(s) deleted`);
+        queryClient.invalidateQueries({ queryKey: ['contacts'] });
+      } else {
+        const ids = Array.from(selectedIds);
+        await bulkDeleteMutation.mutateAsync({ ids, adminPassword: password });
+      }
       setSelectedIds(new Set());
+      setSelectAllMatching(false);
     }
 
     setDeleteModal(null);
+  }
+
+  async function handleDeleteSuppressedConfirm(password: string) {
+    const result = await deleteSuppressedContacts(password);
+    toast.success(`${result.deleted} suppressed contact(s) deleted`);
+    setDeleteSuppressedModal(false);
+    queryClient.invalidateQueries({ queryKey: ['contacts'] });
+    getHealthStats().then(setHealthStatsState).catch(() => {});
+  }
+
+  async function handleDeleteFilteredConfirm(password: string) {
+    if (!deleteFilteredModal) return;
+    const filters: ContactFilterParams = { health_status: deleteFilteredModal.healthStatus };
+    const result = await bulkDeleteFiltered(filters, password);
+    toast.success(`${result.deleted.toLocaleString()} contact(s) deleted`);
+    setDeleteFilteredModal(null);
+    queryClient.invalidateQueries({ queryKey: ['contacts'] });
+    getHealthStats().then(setHealthStatsState).catch(() => {});
+  }
+
+  async function handleBulkSuppress() {
+    try {
+      if (selectAllMatching) {
+        const result = await bulkSuppressContacts({ filters: getCurrentFilterParams() });
+        toast.success(`${result.suppressed.toLocaleString()} contact(s) added to suppression list`);
+      } else {
+        const ids = Array.from(selectedIds);
+        const result = await bulkSuppressContacts({ contactIds: ids });
+        toast.success(`${result.suppressed.toLocaleString()} contact(s) added to suppression list`);
+      }
+      setSelectedIds(new Set());
+      setSelectAllMatching(false);
+      queryClient.invalidateQueries({ queryKey: ['contacts'] });
+      getHealthStats().then(setHealthStatsState).catch(() => {});
+    } catch {
+      toast.error('Failed to suppress contacts');
+    }
+  }
+
+  async function handleSuppressHealthStatus(healthStatus: string) {
+    try {
+      const result = await bulkSuppressContacts({ filters: { health_status: healthStatus } });
+      toast.success(`${result.suppressed.toLocaleString()} contact(s) added to suppression list`);
+      queryClient.invalidateQueries({ queryKey: ['contacts'] });
+      getHealthStats().then(setHealthStatsState).catch(() => {});
+    } catch {
+      toast.error('Failed to suppress contacts');
+    }
   }
 
   function handleSort(column: string) {
@@ -779,14 +864,17 @@ function ContactsContent() {
     }
   }
 
-  // Inline edit save handler
   // Bulk update handler (shared between BulkEdit and SetVariable modals)
   async function handleBulkUpdate(contactIds: string[], updates: Record<string, unknown>) {
+    // Note: for selectAllMatching, we still use the contactIds approach —
+    // server-side filtered bulk update would require a new endpoint.
+    // For now, use the IDs of the visible page when selectAllMatching is not set.
     await bulkUpdateMutation.mutateAsync({
       contactIds,
       updates: updates as { status?: string; state?: string; district?: string; block?: string; category?: string; management?: string; metadata?: Record<string, string> },
     });
     setSelectedIds(new Set());
+    setSelectAllMatching(false);
   }
 
   return (
@@ -796,7 +884,7 @@ function ContactsContent() {
         <div className="flex gap-2">
           {selectedIds.size > 0 && (
             <>
-              {customVariables.length > 0 && (
+              {customVariables.length > 0 && !selectAllMatching && (
                 <button
                   onClick={() => setShowSetVariableModal(true)}
                   className="rounded-lg border border-primary-300 bg-primary-50 px-3 py-2 text-sm text-primary-700 hover:bg-primary-100"
@@ -804,17 +892,25 @@ function ContactsContent() {
                   Set Variable ({selectedIds.size})
                 </button>
               )}
+              {!selectAllMatching && (
+                <button
+                  onClick={() => setShowBulkEditModal(true)}
+                  className="rounded-lg border border-primary-300 bg-primary-50 px-3 py-2 text-sm text-primary-700 hover:bg-primary-100"
+                >
+                  Bulk Edit ({selectedIds.size})
+                </button>
+              )}
               <button
-                onClick={() => setShowBulkEditModal(true)}
-                className="rounded-lg border border-primary-300 bg-primary-50 px-3 py-2 text-sm text-primary-700 hover:bg-primary-100"
+                onClick={handleBulkSuppress}
+                className="rounded-lg border border-orange-300 bg-orange-50 px-3 py-2 text-sm text-orange-700 hover:bg-orange-100"
               >
-                Bulk Edit ({selectedIds.size})
+                Suppress ({effectiveCount.toLocaleString()})
               </button>
               <button
                 onClick={() => setDeleteModal({ type: 'bulk' })}
                 className="rounded-lg bg-red-600 px-3 py-2 text-sm text-white hover:bg-red-700"
               >
-                Delete Selected ({selectedIds.size})
+                Delete Selected ({effectiveCount.toLocaleString()})
               </button>
             </>
           )}
@@ -1049,28 +1145,56 @@ function ContactsContent() {
 
       {/* Health Stats Summary */}
       {healthStats && (
-        <div className="mt-3 flex items-center gap-3 rounded-lg bg-white px-4 py-2 shadow-sm text-xs">
-          <span className="font-medium text-gray-600">Health:</span>
-          <span className="inline-flex items-center gap-1">
-            <span className="inline-block h-2 w-2 rounded-full bg-green-500"></span>
-            Good: {healthStats.good.toLocaleString()}
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <span className="inline-block h-2 w-2 rounded-full bg-yellow-500"></span>
-            Risky: {healthStats.risky.toLocaleString()}
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <span className="inline-block h-2 w-2 rounded-full bg-red-500"></span>
-            Invalid: {healthStats.invalid.toLocaleString()}
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <span className="inline-block h-2 w-2 rounded-full bg-gray-400"></span>
-            Suppressed: {healthStats.suppressed.toLocaleString()}
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <span className="inline-block h-2 w-2 rounded-full bg-gray-200"></span>
-            Unchecked: {healthStats.unchecked.toLocaleString()}
-          </span>
+        <div className="mt-3 flex items-center justify-between rounded-lg bg-white px-4 py-2 shadow-sm text-xs">
+          <div className="flex items-center gap-3">
+            <span className="font-medium text-gray-600">Health:</span>
+            <span className="inline-flex items-center gap-1">
+              <span className="inline-block h-2 w-2 rounded-full bg-green-500"></span>
+              Good: {healthStats.good.toLocaleString()}
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span className="inline-block h-2 w-2 rounded-full bg-yellow-500"></span>
+              Risky: {healthStats.risky.toLocaleString()}
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span className="inline-block h-2 w-2 rounded-full bg-red-500"></span>
+              Invalid: {healthStats.invalid.toLocaleString()}
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span className="inline-block h-2 w-2 rounded-full bg-gray-400"></span>
+              Suppressed: {healthStats.suppressed.toLocaleString()}
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span className="inline-block h-2 w-2 rounded-full bg-gray-200"></span>
+              Unchecked: {healthStats.unchecked.toLocaleString()}
+            </span>
+          </div>
+          <div className="flex items-center gap-3">
+            {healthStats.invalid > 0 && (
+              <button
+                onClick={() => setDeleteFilteredModal({ healthStatus: 'invalid', count: healthStats.invalid })}
+                className="text-red-600 hover:text-red-800 font-medium"
+              >
+                Delete {healthStats.invalid.toLocaleString()} invalid
+              </button>
+            )}
+            {healthStats.risky > 0 && (
+              <button
+                onClick={() => handleSuppressHealthStatus('risky')}
+                className="text-orange-600 hover:text-orange-800 font-medium"
+              >
+                Suppress {healthStats.risky.toLocaleString()} risky
+              </button>
+            )}
+            {healthStats.suppressed > 0 && (
+              <button
+                onClick={() => setDeleteSuppressedModal(true)}
+                className="text-gray-500 hover:text-gray-700 font-medium"
+              >
+                Delete {healthStats.suppressed.toLocaleString()} suppressed
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -1091,6 +1215,33 @@ function ContactsContent() {
         </div>
       ) : (
         <>
+          {/* Select All Matching Banner */}
+          {selectedIds.size === contacts.length && contacts.length > 0 && total > contacts.length && (
+            <div className="mt-2 rounded-lg bg-primary-50 border border-primary-200 px-4 py-2 text-sm text-primary-800">
+              {selectAllMatching ? (
+                <span>
+                  All <strong>{total.toLocaleString()}</strong> matching contacts are selected.{' '}
+                  <button
+                    onClick={() => { setSelectAllMatching(false); setSelectedIds(new Set()); }}
+                    className="font-medium text-primary-600 underline hover:text-primary-800"
+                  >
+                    Clear selection
+                  </button>
+                </span>
+              ) : (
+                <span>
+                  {contacts.length} contacts on this page selected.{' '}
+                  <button
+                    onClick={() => setSelectAllMatching(true)}
+                    className="font-medium text-primary-600 underline hover:text-primary-800"
+                  >
+                    Select all {total.toLocaleString()} matching contacts
+                  </button>
+                </span>
+              )}
+            </div>
+          )}
+
           <div className="mt-2 overflow-hidden rounded-xl bg-white shadow-sm">
             <div className="overflow-x-auto">
               <table className="w-full text-sm table-fixed">
@@ -1126,7 +1277,9 @@ function ContactsContent() {
                     <th className="w-[8%] px-3 py-3 text-center font-medium text-gray-600 cursor-pointer select-none hover:text-gray-900" onClick={() => handleSort('engagement_score')}>
                       Score<SortIndicator column="engagement_score" />
                     </th>
-                    <th className="w-[8%] px-3 py-3 text-center font-medium text-gray-600">Health</th>
+                    <th className="w-[8%] px-3 py-3 text-center font-medium text-gray-600 cursor-pointer select-none hover:text-gray-900" onClick={() => handleSort('health_status')}>
+                      Health<SortIndicator column="health_status" />
+                    </th>
                     <th className="w-[10%] px-3 py-3 text-right font-medium text-gray-600">Actions</th>
                   </tr>
                 </thead>
@@ -1259,12 +1412,38 @@ function ContactsContent() {
           title={
             deleteModal.type === 'single'
               ? 'Delete contact?'
-              : `Delete ${selectedIds.size} contact(s)?`
+              : `Delete ${effectiveCount.toLocaleString()} contact(s)?`
           }
-          description="This action cannot be undone. The contact(s) will be permanently removed. Historical send data will be preserved."
+          description={
+            selectAllMatching
+              ? `This will permanently delete ALL ${total.toLocaleString()} contacts matching your current filters. This action cannot be undone.`
+              : 'This action cannot be undone. The contact(s) will be permanently removed. Historical send data will be preserved.'
+          }
           confirmLabel="Delete"
           onConfirm={handleDeleteConfirm}
           onCancel={() => setDeleteModal(null)}
+        />
+      )}
+
+      {/* Delete Suppressed Contacts Modal */}
+      {deleteSuppressedModal && (
+        <AdminPasswordModal
+          title="Delete suppressed contacts?"
+          description={`This will permanently delete all contacts whose email is on the suppression list (${healthStats?.suppressed.toLocaleString() || 0} contacts). This action cannot be undone.`}
+          confirmLabel="Delete Suppressed"
+          onConfirm={handleDeleteSuppressedConfirm}
+          onCancel={() => setDeleteSuppressedModal(false)}
+        />
+      )}
+
+      {/* Delete Filtered Contacts Modal (for health status quick actions) */}
+      {deleteFilteredModal && (
+        <AdminPasswordModal
+          title={`Delete ${deleteFilteredModal.count.toLocaleString()} ${deleteFilteredModal.healthStatus} contacts?`}
+          description={`This will permanently delete all contacts with health status "${deleteFilteredModal.healthStatus}". This action cannot be undone.`}
+          confirmLabel="Delete"
+          onConfirm={handleDeleteFilteredConfirm}
+          onCancel={() => setDeleteFilteredModal(null)}
         />
       )}
 
