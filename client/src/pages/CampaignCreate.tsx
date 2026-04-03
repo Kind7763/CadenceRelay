@@ -706,9 +706,15 @@ export default function CampaignCreate() {
   }
 
   const contactCount = selectedList?.contact_count || 0;
-  const estimatedMinutes = Math.ceil(contactCount / throttlePerSecond / 60);
+
+  // Estimate send time considering BOTH per-second and per-hour limits
+  const perSecondMinutes = Math.ceil(contactCount / throttlePerSecond / 60);
+  const perHourMinutes = throttlePerHour > 0 ? Math.ceil((contactCount / throttlePerHour) * 60) : perSecondMinutes;
+  // The actual time is the SLOWER of the two limits
+  const estimatedMinutes = Math.max(perSecondMinutes, perHourMinutes);
   const estimatedHours = Math.floor(estimatedMinutes / 60);
   const estimatedMinsRemainder = estimatedMinutes % 60;
+  const isHourLimited = perHourMinutes > perSecondMinutes;
 
   // Build upload progress files for the UploadProgress component
   const uploadProgressFiles: FileUploadProgress[] = showUploadProgress && attachments.length > 0
@@ -1237,7 +1243,10 @@ export default function CampaignCreate() {
                   ? `~${estimatedHours}h ${estimatedMinsRemainder}m for ${contactCount.toLocaleString()} emails`
                   : `~${estimatedMinutes} minute(s) for ${contactCount.toLocaleString()} emails`}
             </p>
-            <p className="mt-0.5 text-xs text-blue-600">At {throttlePerSecond} emails/sec</p>
+            <p className="mt-0.5 text-xs text-blue-600">
+              At {throttlePerSecond} emails/sec, {throttlePerHour.toLocaleString()}/hr
+              {isHourLimited && <span className="ml-1 text-amber-600">(limited by hourly cap)</span>}
+            </p>
           </div>
 
           <div className="flex gap-2">

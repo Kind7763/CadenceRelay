@@ -687,22 +687,42 @@ export function startEmailSendWorker(): Worker {
       const { campaignRecipientId, campaignId, email, subject, html, text, provider, providerConfig, trackingToken, trackingDomain, replyTo } = job.data;
 
       // Check if campaign is paused + get throttle settings
-      const campCheck = await pool.query('SELECT status, throttle_per_second FROM campaigns WHERE id = $1', [campaignId]);
+      const campCheck = await pool.query('SELECT status, throttle_per_second, throttle_per_hour FROM campaigns WHERE id = $1', [campaignId]);
       if (campCheck.rows[0]?.status === 'paused') {
         throw new Error('Campaign paused');
       }
 
-      // --- Per-campaign rate limiting using Redis token bucket ---
       const throttlePerSec = campCheck.rows[0]?.throttle_per_second || 5;
-      const rateLimitKey = `rate-limit:${campaignId}:${Math.floor(Date.now() / 1000)}`;
-      const currentCount = await redis.incr(rateLimitKey);
-      if (currentCount === 1) {
-        await redis.expire(rateLimitKey, 2); // TTL 2 seconds for safety
+      const throttlePerHour = campCheck.rows[0]?.throttle_per_hour || 5000;
+
+      // --- Per-hour rate limiting ---
+      const hourKey = `rate-limit-hour:${campaignId}:${Math.floor(Date.now() / 3600000)}`;
+      const hourCount = await redis.incr(hourKey);
+      if (hourCount === 1) await redis.expire(hourKey, 7200);
+      if (hourCount > throttlePerHour) {
+        // Over hourly limit — pause the campaign and stop processing
+        await pool.query(
+          "UPDATE campaigns SET status = 'paused', pause_reason = 'Hourly throttle limit reached', updated_at = NOW() WHERE id = $1 AND status = 'sending'",
+          [campaignId]
+        );
+        logger.warn(`Campaign ${campaignId}: hourly throttle limit ${throttlePerHour} reached, pausing`);
+        throw new UnrecoverableError('HOURLY_LIMIT_REACHED');
       }
-      if (currentCount > throttlePerSec) {
-        // Over the per-second limit — wait until next second
-        const waitMs = 1000 - (Date.now() % 1000) + 50; // wait until next second + 50ms buffer
-        await new Promise(resolve => setTimeout(resolve, waitMs));
+
+      // --- Per-second rate limiting with proper wait loop ---
+      const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const secKey = `rate-limit-sec:${campaignId}:${Math.floor(Date.now() / 1000)}`;
+        const secCount = await redis.incr(secKey);
+        if (secCount === 1) await redis.expire(secKey, 3);
+
+        if (secCount <= throttlePerSec) {
+          break; // Under limit, proceed to send
+        }
+
+        // Over per-second limit — wait until next second and retry
+        const waitMs = 1000 - (Date.now() % 1000) + 50;
+        await sleep(waitMs);
       }
 
       // --- Suppression check ---
