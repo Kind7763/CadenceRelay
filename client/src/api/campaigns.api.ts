@@ -39,6 +39,7 @@ export interface Campaign {
   label_name?: string;
   label_color?: string;
   dynamic_variables?: DynamicVariable[];
+  subject_override?: string | null;
   ab_test?: ABTest | null;
   created_at: string;
 }

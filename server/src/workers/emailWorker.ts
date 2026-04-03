@@ -377,7 +377,8 @@ async function handleDispatch(job: Job<DispatchJobData>) {
       Object.assign(variables, resolveDynamicVars(i));
 
       const renderedHtml = renderTemplate(template.html_body, variables);
-      const renderedSubject = renderTemplate(template.subject, variables);
+      const subjectSource = (campaign.subject_override as string) || template.subject;
+      const renderedSubject = renderTemplate(subjectSource, variables);
       const renderedText = template.text_body ? renderTemplate(template.text_body, variables) : null;
 
       const crResult = await pool.query(
@@ -466,7 +467,7 @@ async function handleDispatch(job: Job<DispatchJobData>) {
       Object.assign(variables, resolveDynamicVars(recipientIndex));
 
       const renderedHtml = renderTemplate(template.html_body, variables);
-      const renderedSubject = renderTemplate(template.subject, variables);
+      const renderedSubject = renderTemplate((campaign.subject_override as string) || template.subject, variables);
       const renderedText = template.text_body ? renderTemplate(template.text_body, variables) : null;
 
       const crResult = await pool.query(
@@ -507,7 +508,7 @@ async function handleDispatch(job: Job<DispatchJobData>) {
       });
 
       const renderedHtml = renderTemplate(template.html_body, variables);
-      const renderedSubject = renderTemplate(template.subject, variables);
+      const renderedSubject = renderTemplate((campaign.subject_override as string) || template.subject, variables);
       const renderedText = template.text_body ? renderTemplate(template.text_body, variables) : null;
 
       // Update recipient status to queued

@@ -240,6 +240,7 @@ export default function CampaignCreate() {
   const [newDynVar, setNewDynVar] = useState<DynVar>({ key: '', type: 'counter' });
 
   // A/B Testing state
+  const [subjectOverrideVal, setSubjectOverrideVal] = useState('');
   const [abTestEnabled, setAbTestEnabled] = useState(false);
   const [abVariantBSubject, setAbVariantBSubject] = useState('');
   const [abSplitPercentage, setAbSplitPercentage] = useState(20);
@@ -275,6 +276,10 @@ export default function CampaignCreate() {
           setProjectId((c as Campaign & { project_id?: string }).project_id || '');
         }
         setDraftId(c.id);
+        // Load subject override
+        if (c.subject_override) {
+          setSubjectOverrideVal(c.subject_override);
+        }
         // Load existing attachments from the campaign
         if (c.attachments && c.attachments.length > 0) {
           setExistingAttachments(c.attachments);
@@ -546,6 +551,15 @@ export default function CampaignCreate() {
           await updateDynamicVariablesApi(campaignId, dynamicVars);
         } catch {
           toast.error('Warning: Failed to save dynamic variables');
+        }
+      }
+
+      // Save custom subject line override if set
+      if (subjectOverrideVal.trim() && campaignId) {
+        try {
+          await updateCampaign(campaignId, { subjectOverride: subjectOverrideVal.trim() });
+        } catch {
+          toast.error('Warning: Failed to save custom subject line');
         }
       }
 
@@ -1238,6 +1252,9 @@ export default function CampaignCreate() {
             <div><span className="text-gray-500">List:</span> <span className="font-medium">{selectedList?.name} ({selectedList?.contact_count} contacts)</span></div>
             <div><span className="text-gray-500">Schedule:</span> <span className="font-medium">{scheduleType === 'now' ? 'Send immediately' : new Date(scheduledAt).toLocaleString()}</span></div>
             <div><span className="text-gray-500">Throttle:</span> <span className="font-medium">{throttlePerSecond}/sec, {throttlePerHour}/hr</span></div>
+            {subjectOverrideVal && (
+              <div className="col-span-2"><span className="text-gray-500">Subject Line:</span> <span className="font-medium text-primary-700">{subjectOverrideVal}</span> <span className="text-xs text-gray-400">(overrides template)</span></div>
+            )}
             {dynamicVars.length > 0 && (
               <div className="col-span-2"><span className="text-gray-500">Dynamic Variables:</span> <span className="font-medium">{dynamicVars.map(v => `{{${v.key}}} (${v.type})`).join(', ')}</span></div>
             )}
@@ -1294,6 +1311,28 @@ export default function CampaignCreate() {
 
           {/* Attachments in review */}
           {renderReviewAttachments()}
+
+          {/* Custom Subject Line Override */}
+          <div className="rounded-lg border border-gray-200 p-4">
+            <label className="mb-1 block text-sm font-medium text-gray-700">
+              Custom Subject Line <span className="text-gray-400 font-normal">(optional — overrides template subject)</span>
+            </label>
+            <input
+              type="text"
+              value={subjectOverrideVal}
+              onChange={(e) => setSubjectOverrideVal(e.target.value)}
+              placeholder={selectedTemplate?.subject || 'Leave blank to use template subject'}
+              className="w-full rounded-lg border px-3 py-2 text-sm"
+              autoComplete="off"
+            />
+            {subjectOverrideVal && (
+              <div className="mt-2 flex items-center gap-2">
+                <span className="text-xs text-green-600">Custom subject will be used instead of template subject</span>
+                <button onClick={() => setSubjectOverrideVal('')} className="text-xs text-gray-400 hover:text-gray-600">Clear</button>
+              </div>
+            )}
+            <p className="mt-1 text-xs text-gray-400">Supports variables: {'{{name}}'}, {'{{email}}'}, {'{{state}}'}, etc.</p>
+          </div>
 
           {/* A/B Test Configuration */}
           <div className="rounded-lg border border-gray-200">

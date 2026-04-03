@@ -148,7 +148,7 @@ export async function updateCampaign(req: Request, res: Response, next: NextFunc
   try {
     const { id } = req.params;
     validateUUID(id, 'campaign ID');
-    const { name, templateId, listId, provider, throttlePerSecond, throttlePerHour, description, abTest } = req.body;
+    const { name, templateId, listId, provider, throttlePerSecond, throttlePerHour, description, abTest, subjectOverride } = req.body;
 
     const existing = await pool.query('SELECT status FROM campaigns WHERE id = $1', [id]);
     if (existing.rows.length === 0) throw new AppError('Campaign not found', 404);
@@ -176,12 +176,14 @@ export async function updateCampaign(req: Request, res: Response, next: NextFunc
         throttle_per_hour = COALESCE($6, throttle_per_hour),
         description = COALESCE($7, description),
         ab_test = COALESCE($8, ab_test),
+        subject_override = CASE WHEN $9::text = '__CLEAR__' THEN NULL WHEN $9 IS NOT NULL THEN $9 ELSE subject_override END,
         updated_at = NOW()
-       WHERE id = $9 RETURNING *`,
+       WHERE id = $10 RETURNING *`,
       [name, isDraftOrScheduled ? templateId : null, isDraftOrScheduled ? listId : null,
        isDraftOrScheduled ? provider : null, isDraftOrScheduled ? throttlePerSecond : null,
        isDraftOrScheduled ? throttlePerHour : null, description,
-       abTest !== undefined ? JSON.stringify(abTest) : null, id]
+       abTest !== undefined ? JSON.stringify(abTest) : null,
+       subjectOverride === null ? '__CLEAR__' : subjectOverride || null, id]
     );
 
     res.json({ campaign: result.rows[0] });

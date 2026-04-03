@@ -337,6 +337,9 @@ ALTER TABLE campaign_recipients ADD COLUMN IF NOT EXISTS bounce_type varchar(20)
 ALTER TABLE contacts ADD COLUMN IF NOT EXISTS bounce_type varchar(20);
 CREATE INDEX IF NOT EXISTS cr_bounce_type_idx ON campaign_recipients(bounce_type) WHERE bounce_type IS NOT NULL;
 
+-- Campaign subject override
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS subject_override varchar(998);
+
 -- Contact health check
 ALTER TABLE contacts ADD COLUMN IF NOT EXISTS health_status varchar(20) DEFAULT 'unchecked';
 ALTER TABLE contacts ADD COLUMN IF NOT EXISTS health_checked_at timestamptz;

@@ -36,6 +36,7 @@ const updateSchema = z.object({
   throttlePerHour: z.number().min(1).max(100000).optional(),
   description: z.string().optional(),
   abTest: z.any().optional(),
+  subjectOverride: z.string().max(998).nullable().optional(),
 });
 
 const scheduleSchema = z.object({
