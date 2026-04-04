@@ -14,9 +14,11 @@ import {
   updateCampaignLabel,
   resendToNonOpeners,
   resendTransientBounced,
+  exportCampaignRecipients,
   // suppressPermanentBounces removed — auto-suppression worker handles this
   Campaign,
 } from '../api/campaigns.api';
+import { bulkSuppressContacts } from '../api/contacts.api';
 import { getRecipientEvents } from '../api/analytics.api';
 import { listContacts, Contact } from '../api/contacts.api';
 import LabelPicker from '../components/ui/LabelPicker';
@@ -75,6 +77,9 @@ export default function CampaignDetail() {
   const [previewContacts, setPreviewContacts] = useState<Contact[]>([]);
   const [selectedPreviewContact, setSelectedPreviewContact] = useState<Contact | null>(null);
   const [recipientSort, setRecipientSort] = useState<SortState | null>(null);
+  const [pageSize, setPageSize] = useState(50);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [selectAllMatching, setSelectAllMatching] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
@@ -181,7 +186,7 @@ export default function CampaignDetail() {
 
   const fetchRecipients = useCallback(async () => {
     if (!id) return;
-    const params: Record<string, string> = { page: String(recipientPage), limit: '50' };
+    const params: Record<string, string> = { page: String(recipientPage), limit: String(pageSize) };
     if (recipientFilter) params.status = recipientFilter;
     if (bounceTypeFilter) params.bounceType = bounceTypeFilter;
     try {
@@ -189,7 +194,7 @@ export default function CampaignDetail() {
       setRecipients(res.data);
       setRecipientTotal(res.pagination.total);
     } catch { /* ignore */ }
-  }, [id, recipientPage, recipientFilter, bounceTypeFilter]);
+  }, [id, recipientPage, pageSize, recipientFilter, bounceTypeFilter]);
 
   useEffect(() => { fetchCampaign(); }, [fetchCampaign]);
   useEffect(() => { fetchRecipients(); }, [fetchRecipients]);
@@ -222,16 +227,59 @@ export default function CampaignDetail() {
     };
   }, [campaign?.status, fetchCampaign, fetchRecipients]);
 
+  // Clear selection when page/filters change
+  useEffect(() => {
+    setSelectedIds(new Set());
+    setSelectAllMatching(false);
+  }, [recipientPage, pageSize, recipientFilter, bounceTypeFilter]);
+
+  function toggleRecipientSelect(rid: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(rid)) next.delete(rid);
+      else next.add(rid);
+      return next;
+    });
+    setSelectAllMatching(false);
+  }
+
+  function toggleSelectAllVisible() {
+    if (selectedIds.size === recipients.length && recipients.length > 0) {
+      setSelectedIds(new Set());
+      setSelectAllMatching(false);
+    } else {
+      setSelectedIds(new Set(recipients.map((r) => r.id)));
+    }
+  }
+
+  const effectiveSelectedCount = selectAllMatching ? recipientTotal : selectedIds.size;
+
   function handleExportRecipients() {
-    if (!recipients.length) {
+    // If selectAllMatching, use server-side export
+    if (selectAllMatching && id) {
+      const params: Record<string, string> = {};
+      if (recipientFilter) params.status = recipientFilter;
+      if (bounceTypeFilter) params.bounceType = bounceTypeFilter;
+      exportCampaignRecipients(id, params);
+      toast.success('Exporting all matching recipients...');
+      return;
+    }
+
+    const toExport = selectedIds.size > 0
+      ? recipients.filter((r) => selectedIds.has(r.id))
+      : recipients;
+
+    if (!toExport.length) {
       toast.error('No recipients to export');
       return;
     }
-    const header = 'Email,Status,Sent At,Opened At,Clicked At,Bounced At,Error\n';
-    const rows = recipients.map((r) =>
-      [r.email, r.status, r.sent_at || '', r.opened_at || '', r.clicked_at || '', r.bounced_at || '', r.error_message || '']
-        .map((v) => `"${v}"`)
-        .join(',')
+    const header = 'Email,Name,Status,Bounce Type,Sent At,Opened At,Clicked At,Bounced At,Open Count,Click Count,Last Opened,Last Clicked,AB Variant,Error Message\n';
+    const rows = toExport.map((r) =>
+      [
+        r.email, '', r.status, r.bounce_type || '', r.sent_at || '', r.opened_at || '',
+        r.clicked_at || '', r.bounced_at || '', String(r.open_count || 0), String(r.click_count || 0),
+        r.last_opened_at || '', r.last_clicked_at || '', '', r.error_message || '',
+      ].map((v) => `"${v}"`).join(',')
     ).join('\n');
     const blob = new Blob([header + rows], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
@@ -243,6 +291,28 @@ export default function CampaignDetail() {
     a.remove();
     URL.revokeObjectURL(url);
     toast.success('Recipients exported');
+  }
+
+  async function handleSuppressSelected() {
+    if (effectiveSelectedCount === 0) return;
+    try {
+      if (selectAllMatching && id) {
+        // Suppress all matching via filter
+        const filterParams: Record<string, string> = { campaignId: id };
+        if (recipientFilter) filterParams.status = recipientFilter;
+        if (bounceTypeFilter) filterParams.bounceType = bounceTypeFilter;
+        const result = await bulkSuppressContacts({ filters: filterParams });
+        toast.success(`${result.suppressed.toLocaleString()} contact(s) suppressed`);
+      } else {
+        const emails = recipients.filter((r) => selectedIds.has(r.id)).map((r) => r.email);
+        const result = await bulkSuppressContacts({ contactIds: emails });
+        toast.success(`${result.suppressed.toLocaleString()} contact(s) suppressed`);
+      }
+      setSelectedIds(new Set());
+      setSelectAllMatching(false);
+    } catch {
+      toast.error('Failed to suppress contacts');
+    }
   }
 
   async function handleStarToggle() {
@@ -638,11 +708,10 @@ export default function CampaignDetail() {
       </div>
 
       {/* Stats */}
-      <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-6">
+      <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
         {[
           { label: 'Sent', value: sentCount, color: 'text-blue-600' },
           { label: 'Failed', value: failedCount, color: 'text-red-600' },
-          { label: 'Bounced', value: bounceCount, color: 'text-orange-600' },
           { label: 'Opens', value: `${openCount} (${openRate}%)`, color: 'text-green-600' },
           { label: 'Clicks', value: `${clickCount} (${clickRate}%)`, color: 'text-purple-600' },
           { label: 'Complaints', value: complaintCount, color: 'text-red-600' },
@@ -652,6 +721,53 @@ export default function CampaignDetail() {
             <p className={`text-xl font-bold ${s.color}`}>{s.value}</p>
           </div>
         ))}
+        {/* Bounce breakdown card */}
+        <div className="rounded-xl bg-white p-4 shadow-sm">
+          <span className="text-xs text-gray-500">Bounced</span>
+          <p className="text-xl font-bold text-orange-600">
+            {bounceCount} {sentCount > 0 && <span className="text-sm font-normal text-gray-400">({((bounceCount / sentCount) * 100).toFixed(1)}%)</span>}
+          </p>
+          {campaign.bounceBreakdown && (bounceCount > 0) && (
+            <div className="mt-2 space-y-1 border-t border-gray-100 pt-2">
+              {campaign.bounceBreakdown.permanent > 0 && (
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-red-600">Permanent</span>
+                  <span className="font-medium text-red-600">
+                    {campaign.bounceBreakdown.permanent}
+                    {sentCount > 0 && <span className="ml-1 text-gray-400">({((campaign.bounceBreakdown.permanent / sentCount) * 100).toFixed(1)}%)</span>}
+                  </span>
+                </div>
+              )}
+              {campaign.bounceBreakdown.transient > 0 && (
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-orange-600">Transient</span>
+                  <span className="font-medium text-orange-600">
+                    {campaign.bounceBreakdown.transient}
+                    {sentCount > 0 && <span className="ml-1 text-gray-400">({((campaign.bounceBreakdown.transient / sentCount) * 100).toFixed(1)}%)</span>}
+                  </span>
+                </div>
+              )}
+              {campaign.bounceBreakdown.undetermined > 0 && (
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-gray-600">Undetermined</span>
+                  <span className="font-medium text-gray-600">
+                    {campaign.bounceBreakdown.undetermined}
+                    {sentCount > 0 && <span className="ml-1 text-gray-400">({((campaign.bounceBreakdown.undetermined / sentCount) * 100).toFixed(1)}%)</span>}
+                  </span>
+                </div>
+              )}
+              {campaign.bounceBreakdown.suppressed > 0 && (
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-gray-500">Suppressed</span>
+                  <span className="font-medium text-gray-500">
+                    {campaign.bounceBreakdown.suppressed}
+                    {sentCount > 0 && <span className="ml-1 text-gray-400">({((campaign.bounceBreakdown.suppressed / sentCount) * 100).toFixed(1)}%)</span>}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* A/B Test Results */}
@@ -932,7 +1048,25 @@ export default function CampaignDetail() {
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">Recipients</h2>
           <div className="flex items-center gap-2">
-            <button onClick={handleExportRecipients} className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50">Export Recipients</button>
+            {selectedIds.size > 0 && (
+              <>
+                <button
+                  onClick={handleExportRecipients}
+                  className="rounded-lg border border-primary-300 bg-primary-50 px-3 py-1.5 text-sm text-primary-700 hover:bg-primary-100"
+                >
+                  Export Selected ({effectiveSelectedCount.toLocaleString()})
+                </button>
+                <button
+                  onClick={handleSuppressSelected}
+                  className="rounded-lg border border-red-300 bg-red-50 px-3 py-1.5 text-sm text-red-700 hover:bg-red-100"
+                >
+                  Suppress Selected ({effectiveSelectedCount.toLocaleString()})
+                </button>
+              </>
+            )}
+            {selectedIds.size === 0 && (
+              <button onClick={handleExportRecipients} className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50">Export Recipients</button>
+            )}
             <select value={recipientFilter} onChange={(e) => { setRecipientFilter(e.target.value); setRecipientPage(1); }} className="rounded border px-2 py-1 text-sm">
               <option value="">All Statuses</option>
               <option value="pending">Pending</option>
@@ -950,39 +1084,85 @@ export default function CampaignDetail() {
             </select>
           </div>
         </div>
+
+        {/* Select All Matching Banner */}
+        {selectedIds.size === recipients.length && recipients.length > 0 && recipientTotal > recipients.length && (
+          <div className="mt-2 rounded-lg bg-primary-50 border border-primary-200 px-4 py-2 text-sm text-primary-800">
+            {selectAllMatching ? (
+              <span>
+                All <strong>{recipientTotal.toLocaleString()}</strong> matching recipients are selected.{' '}
+                <button
+                  onClick={() => { setSelectAllMatching(false); setSelectedIds(new Set()); }}
+                  className="font-medium text-primary-600 underline hover:text-primary-800"
+                >
+                  Clear selection
+                </button>
+              </span>
+            ) : (
+              <span>
+                {recipients.length} recipients on this page are selected.{' '}
+                <button
+                  onClick={() => setSelectAllMatching(true)}
+                  className="font-medium text-primary-600 underline hover:text-primary-800"
+                >
+                  Select all {recipientTotal.toLocaleString()} matching recipients
+                </button>
+              </span>
+            )}
+          </div>
+        )}
+
         <div className="overflow-x-auto">
           <table className="mt-4 w-full text-sm">
             <thead className="bg-gray-50">
               <tr>
+                <th className="w-10 px-3 py-2">
+                  <input
+                    type="checkbox"
+                    checked={recipients.length > 0 && selectedIds.size === recipients.length}
+                    onChange={toggleSelectAllVisible}
+                    className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                  />
+                </th>
                 <SortableHeader label="Email" field="email" currentSort={recipientSort} onSort={(f) => setRecipientSort(toggleSort(recipientSort, f))} />
                 <SortableHeader label="Status" field="status" currentSort={recipientSort} onSort={(f) => setRecipientSort(toggleSort(recipientSort, f))} />
-                <th className="px-3 py-2 text-left font-medium text-gray-600">Bounce Type</th>
+                <SortableHeader label="Bounce Type" field="bounce_type" currentSort={recipientSort} onSort={(f) => setRecipientSort(toggleSort(recipientSort, f))} />
                 <SortableHeader label="Sent" field="sent_at" currentSort={recipientSort} onSort={(f) => setRecipientSort(toggleSort(recipientSort, f))} />
                 <SortableHeader label="Opens" field="open_count" currentSort={recipientSort} onSort={(f) => setRecipientSort(toggleSort(recipientSort, f))} className="text-center" />
                 <SortableHeader label="Clicks" field="click_count" currentSort={recipientSort} onSort={(f) => setRecipientSort(toggleSort(recipientSort, f))} className="text-center" />
                 <SortableHeader label="Last Opened" field="last_opened_at" currentSort={recipientSort} onSort={(f) => setRecipientSort(toggleSort(recipientSort, f))} />
-                <th className="px-3 py-2 text-left font-medium text-gray-600">Error</th>
+                <SortableHeader label="Error" field="error_message" currentSort={recipientSort} onSort={(f) => setRecipientSort(toggleSort(recipientSort, f))} />
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {recipients.length === 0 ? (
-                <tr><td colSpan={8} className="px-3 py-4 text-center text-gray-400">No recipients</td></tr>
+                <tr><td colSpan={9} className="px-3 py-4 text-center text-gray-400">No recipients</td></tr>
               ) : sortItems(recipients, recipientSort, (r: Recipient, field: string) => {
                 switch (field) {
                   case 'email': return r.email;
                   case 'status': return r.status;
+                  case 'bounce_type': return r.bounce_type || '';
                   case 'sent_at': return r.sent_at || '';
                   case 'open_count': return r.open_count || 0;
                   case 'click_count': return r.click_count || 0;
                   case 'last_opened_at': return r.last_opened_at || '';
+                  case 'error_message': return r.error_message || '';
                   default: return null;
                 }
               }).map((r) => (
                 <React.Fragment key={r.id}>
                   <tr
-                    className="hover:bg-gray-50 cursor-pointer"
+                    className={`hover:bg-gray-50 cursor-pointer ${selectedIds.has(r.id) ? 'bg-primary-50' : ''}`}
                     onClick={() => toggleRecipientEvents(r.id)}
                   >
+                    <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(r.id)}
+                        onChange={() => toggleRecipientSelect(r.id)}
+                        className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                      />
+                    </td>
                     <td className="px-3 py-2">
                       <span className="mr-1 text-gray-400">{expandedRecipient === r.id ? '\u25BC' : '\u25B6'}</span>
                       {r.email}
@@ -1013,7 +1193,7 @@ export default function CampaignDetail() {
                   </tr>
                   {expandedRecipient === r.id && (
                     <tr>
-                      <td colSpan={8} className="bg-gray-50 px-6 py-3">
+                      <td colSpan={9} className="bg-gray-50 px-6 py-3">
                         {eventsLoading ? (
                           <p className="text-sm text-gray-400">Loading events...</p>
                         ) : recipientEvents.length === 0 ? (
@@ -1061,13 +1241,31 @@ export default function CampaignDetail() {
             </tbody>
           </table>
         </div>
-        {recipientTotal > 50 && (
-          <div className="mt-3 flex justify-end gap-2">
-            <button disabled={recipientPage <= 1} onClick={() => setRecipientPage(recipientPage - 1)} className="rounded border px-3 py-1 text-xs disabled:opacity-50 hover:bg-gray-50">Prev</button>
-            <span className="px-2 py-1 text-xs">{recipientPage}/{Math.ceil(recipientTotal / 50)}</span>
-            <button disabled={recipientPage >= Math.ceil(recipientTotal / 50)} onClick={() => setRecipientPage(recipientPage + 1)} className="rounded border px-3 py-1 text-xs disabled:opacity-50 hover:bg-gray-50">Next</button>
+        {/* Pagination + page size */}
+        <div className="mt-3 flex items-center justify-between text-sm text-gray-600">
+          <div className="flex items-center gap-1.5">
+            <span className="text-gray-400">Show</span>
+            <select
+              value={pageSize}
+              onChange={(e) => { setPageSize(Number(e.target.value)); setRecipientPage(1); }}
+              className="rounded border border-gray-300 px-2 py-1 text-sm"
+            >
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+              <option value={250}>250</option>
+              <option value={500}>500</option>
+            </select>
+            <span className="text-gray-400">per page</span>
           </div>
-        )}
+          <span>{recipientTotal.toLocaleString()} recipients total</span>
+          {Math.ceil(recipientTotal / pageSize) > 1 && (
+            <div className="flex gap-2">
+              <button disabled={recipientPage <= 1} onClick={() => setRecipientPage(recipientPage - 1)} className="rounded border px-3 py-1 text-xs disabled:opacity-50 hover:bg-gray-50">Prev</button>
+              <span className="px-2 py-1 text-xs">Page {recipientPage} of {Math.ceil(recipientTotal / pageSize)}</span>
+              <button disabled={recipientPage >= Math.ceil(recipientTotal / pageSize)} onClick={() => setRecipientPage(recipientPage + 1)} className="rounded border px-3 py-1 text-xs disabled:opacity-50 hover:bg-gray-50">Next</button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Resend to Non-Openers Modal */}

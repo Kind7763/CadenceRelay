@@ -311,6 +311,11 @@ function CampaignsContent() {
         const clicks = Number(c.click_count) || 0;
         return sentC > 0 ? clicks / sentC : 0;
       }
+      case 'bounce_rate': {
+        const sentB = Number(c.sent_count) || 0;
+        const bounces = Number(c.bounce_count) || 0;
+        return sentB > 0 ? bounces / sentB : 0;
+      }
       default: return null;
     }
   };
@@ -342,7 +347,9 @@ function CampaignsContent() {
   function renderCard(c: Campaign) {
     const sentCount = Number(c.sent_count) || 0;
     const openCount = Number(c.open_count) || 0;
+    const bounceCountCard = Number(c.bounce_count) || 0;
     const openRate = sentCount > 0 ? ((openCount / sentCount) * 100).toFixed(1) : '0.0';
+    const bounceRateCard = sentCount > 0 ? ((bounceCountCard / sentCount) * 100).toFixed(1) : '0.0';
     const project = projects.find((p) => p.id === (c as Campaign & { project_id?: string }).project_id);
 
     return (
@@ -373,8 +380,13 @@ function CampaignsContent() {
             <h3 className="font-semibold text-gray-900 truncate">{c.name}</h3>
           </div>
           <p className="mt-1 text-sm text-gray-500">
-            {c.total_recipients.toLocaleString()} recipients{' '}
-            {sentCount > 0 && <span className="text-gray-400">/ {openRate}% opens</span>}
+            {sentCount > 0 ? sentCount.toLocaleString() : c.total_recipients.toLocaleString()} sent
+            {sentCount > 0 && (
+              <>
+                {' '}<span className="text-gray-400">&middot; {openRate}% opens</span>
+                {' '}<span className={Number(bounceRateCard) > 5 ? 'text-red-500' : 'text-gray-400'}>&middot; {bounceRateCard}% bounced</span>
+              </>
+            )}
           </p>
         </div>
         <div className="mt-3 flex items-center justify-between text-xs text-gray-400">
@@ -396,7 +408,9 @@ function CampaignsContent() {
   function renderRow(c: Campaign) {
     const sentCount = Number(c.sent_count) || 0;
     const openCount = Number(c.open_count) || 0;
+    const bounceCountRow = Number(c.bounce_count) || 0;
     const openRate = sentCount > 0 ? ((openCount / sentCount) * 100).toFixed(1) : '0.0';
+    const bounceRateRow = sentCount > 0 ? ((bounceCountRow / sentCount) * 100).toFixed(1) : '0.0';
     const isArchived = !!c.is_archived;
 
     return (
@@ -438,6 +452,9 @@ function CampaignsContent() {
         </td>
         <td className="px-4 py-3" onClick={() => navigate(`/campaigns/${c.id}`)}>
           {openRate}%
+        </td>
+        <td className="px-4 py-3" onClick={() => navigate(`/campaigns/${c.id}`)}>
+          <span className={Number(bounceRateRow) > 5 ? 'text-red-600 font-medium' : ''}>{bounceRateRow}%</span>
         </td>
         <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
           <button
@@ -496,6 +513,7 @@ function CampaignsContent() {
                 <SortableHeader label="Date" field="created_at" currentSort={sort} onSort={handleSort} className="px-4" />
                 <SortableHeader label="Recipients" field="total_recipients" currentSort={sort} onSort={handleSort} className="px-4" />
                 <SortableHeader label="Open Rate" field="open_rate" currentSort={sort} onSort={handleSort} className="px-4" />
+                <SortableHeader label="Bounce %" field="bounce_rate" currentSort={sort} onSort={handleSort} className="px-4" />
                 <th className="w-10 px-4 py-3 text-center font-medium text-gray-600">
                   <span title="Star">{'\u2606'}</span>
                 </th>
@@ -504,7 +522,7 @@ function CampaignsContent() {
             </thead>
             <tbody className="divide-y divide-gray-100">
               {items.length === 0 ? (
-                <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400">No campaigns found</td></tr>
+                <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-400">No campaigns found</td></tr>
               ) : items.map(renderRow)}
             </tbody>
           </table>

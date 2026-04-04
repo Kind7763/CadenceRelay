@@ -28,6 +28,23 @@ const ROLE_PREFIXES = new Set([
   'team', 'hr', 'careers', 'jobs', 'legal', 'compliance', 'privacy',
 ]);
 
+// Common typo domains with their corrections
+const TYPO_DOMAINS: Record<string, string> = {
+  'gmial.com': 'gmail.com', 'gmal.com': 'gmail.com', 'gmaill.com': 'gmail.com',
+  'gamil.com': 'gmail.com', 'gnail.com': 'gmail.com', 'gmai.com': 'gmail.com',
+  'gmali.com': 'gmail.com', 'gmail.co': 'gmail.com', 'gmail.con': 'gmail.com',
+  'yaho.com': 'yahoo.com', 'yahooo.com': 'yahoo.com', 'yahoo.con': 'yahoo.com',
+  'yahoi.com': 'yahoo.com', 'yhaoo.com': 'yahoo.com',
+  'hotmal.com': 'hotmail.com', 'hotmial.com': 'hotmail.com', 'hotmaill.com': 'hotmail.com',
+  'hotmail.con': 'hotmail.com', 'hotamil.com': 'hotmail.com',
+  'outlok.com': 'outlook.com', 'outloo.com': 'outlook.com', 'outlook.con': 'outlook.com',
+  'redifmail.com': 'rediffmail.com', 'rediffmal.com': 'rediffmail.com',
+  'yaho.co.in': 'yahoo.co.in', 'yahooo.co.in': 'yahoo.co.in',
+};
+
+// Invalid/reserved TLDs
+const INVALID_TLDS = ['.invalid', '.test', '.example', '.localhost', '.internal'];
+
 export interface EmailVerificationResult {
   email: string;
   valid: boolean;
@@ -37,6 +54,9 @@ export interface EmailVerificationResult {
     disposable: 'pass' | 'fail';
     roleBased: 'pass' | 'warning';
     previouslyBounced: 'pass' | 'fail';
+    typoDomain: 'pass' | 'fail';
+    invalidTld: 'pass' | 'fail';
+    duplicate: 'pass' | 'fail';
   };
   risk: 'low' | 'medium' | 'high';
   suggestion: string | null;
@@ -90,6 +110,9 @@ export async function verifyEmail(email: string): Promise<EmailVerificationResul
       disposable: 'pass',
       roleBased: 'pass',
       previouslyBounced: 'pass',
+      typoDomain: 'pass',
+      invalidTld: 'pass',
+      duplicate: 'pass',
     },
     risk: 'low',
     suggestion: null,
@@ -107,6 +130,23 @@ export async function verifyEmail(email: string): Promise<EmailVerificationResul
   }
 
   const [localPart, domain] = email.split('@');
+
+  // 1b. Invalid TLD check
+  const domainLower = domain.toLowerCase();
+  if (INVALID_TLDS.some((tld) => domainLower.endsWith(tld))) {
+    result.checks.invalidTld = 'fail';
+    result.valid = false;
+    result.risk = 'high';
+    suggestions.push(`Invalid TLD in domain "${domain}"`);
+  }
+
+  // 1c. Typo domain check
+  const typoDomainSuggestion = TYPO_DOMAINS[domainLower];
+  if (typoDomainSuggestion) {
+    result.checks.typoDomain = 'fail';
+    result.risk = 'high';
+    suggestions.push(`Did you mean ${typoDomainSuggestion}?`);
+  }
 
   // 2. MX record check
   const hasMx = await checkMx(domain);
@@ -152,11 +192,23 @@ export async function verifyEmailBatch(emails: string[]): Promise<EmailVerificat
   // Process in parallel with concurrency limit
   const CONCURRENCY = 10;
   const results: EmailVerificationResult[] = [];
+  const seen = new Set<string>();
 
   for (let i = 0; i < emails.length; i += CONCURRENCY) {
     const batch = emails.slice(i, i + CONCURRENCY);
     const batchResults = await Promise.all(batch.map(verifyEmail));
-    results.push(...batchResults);
+
+    for (const result of batchResults) {
+      const normalized = result.email.toLowerCase();
+      if (seen.has(normalized)) {
+        result.checks.duplicate = 'fail';
+        if (result.risk === 'low') result.risk = 'medium';
+        const existing = result.suggestion ? result.suggestion + '; ' : '';
+        result.suggestion = existing + 'Duplicate email in batch';
+      }
+      seen.add(normalized);
+      results.push(result);
+    }
   }
 
   return results;

@@ -5,6 +5,7 @@ import {
   createCampaign, getCampaign, updateCampaign, scheduleCampaign, sendCampaign,
   addAttachments as apiAddAttachments, addAttachmentsTracked, removeAttachment as apiRemoveAttachment,
   CampaignAttachment, Campaign, updateDynamicVariables as updateDynamicVariablesApi,
+  estimateSendCount,
 } from '../api/campaigns.api';
 import { listTemplates, Template, checkSpamScore, SpamCheckResult } from '../api/templates.api';
 import { listLists, ContactList } from '../api/lists.api';
@@ -243,6 +244,10 @@ export default function CampaignCreate() {
   const [abTestDuration, setAbTestDuration] = useState(4);
   const [abWinnerMetric, setAbWinnerMetric] = useState<'open_rate' | 'click_rate'>('open_rate');
 
+  // Send estimate state
+  const [sendEstimate, setSendEstimate] = useState<{ total: number; suppressed: number; invalid: number; willSend: number } | null>(null);
+  const [sendEstimateLoading, setSendEstimateLoading] = useState(false);
+
   // Combined count for the 10-file limit
   const totalAttachmentCount = existingAttachments.length + attachments.length;
   const totalAttachmentSize =
@@ -340,6 +345,20 @@ export default function CampaignCreate() {
       }
     }
   }, [selectedTemplate, selectedPreviewContact]);
+
+  // Fetch send estimate when entering the Review step
+  useEffect(() => {
+    if (step === 5 && listId) {
+      setSendEstimateLoading(true);
+      const timer = setTimeout(() => {
+        estimateSendCount(listId)
+          .then((est) => setSendEstimate(est))
+          .catch(() => setSendEstimate(null))
+          .finally(() => setSendEstimateLoading(false));
+      }, 300); // debounce
+      return () => clearTimeout(timer);
+    }
+  }, [step, listId]);
 
   // Auto-run spam check when entering the Review step
   useEffect(() => {
@@ -1249,6 +1268,37 @@ export default function CampaignCreate() {
             )}
             {dynamicVars.length > 0 && (
               <div className="col-span-2"><span className="text-gray-500">Dynamic Variables:</span> <span className="font-medium">{dynamicVars.map(v => `{{${v.key}}} (${v.type})`).join(', ')}</span></div>
+            )}
+          </div>
+
+          {/* Send Estimate */}
+          <div className="rounded-lg border border-gray-200 p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-sm font-medium text-gray-700">Send Estimate</span>
+            </div>
+            {sendEstimateLoading ? (
+              <p className="text-sm text-gray-500">Calculating send estimate...</p>
+            ) : sendEstimate ? (
+              <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Total in list</span>
+                  <span className="font-medium">{sendEstimate.total.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Suppressed (will skip)</span>
+                  <span className="font-medium text-orange-600">{sendEstimate.suppressed.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Invalid health</span>
+                  <span className="font-medium text-red-600">{sendEstimate.invalid.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Estimated delivery</span>
+                  <span className="font-bold text-green-600">~{sendEstimate.willSend.toLocaleString()}</span>
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-gray-400">Unable to calculate send estimate</p>
             )}
           </div>
 

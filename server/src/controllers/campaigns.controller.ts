@@ -14,6 +14,15 @@ function validateUUID(id: string, label = 'ID'): void {
   }
 }
 
+function escapeCSV(value: string | null | undefined): string {
+  if (value == null) return '';
+  const str = String(value);
+  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
 const UPLOAD_DIR = process.env.UPLOAD_DIR || '/app/uploads';
 
 // Ensure upload directory exists
@@ -100,7 +109,36 @@ export async function getCampaign(req: Request, res: Response, next: NextFunctio
       [id]
     );
     if (result.rows.length === 0) throw new AppError('Campaign not found', 404);
-    res.json({ campaign: result.rows[0] });
+
+    // Bounce type breakdown
+    const bounceBreakdownResult = await pool.query(
+      `SELECT bounce_type, COUNT(*) as count
+       FROM campaign_recipients
+       WHERE campaign_id = $1 AND bounce_type IS NOT NULL
+       GROUP BY bounce_type`,
+      [id]
+    );
+
+    const suppressedResult = await pool.query(
+      `SELECT COUNT(*) FROM campaign_recipients
+       WHERE campaign_id = $1 AND status = 'failed' AND error_message = 'Email suppressed'`,
+      [id]
+    );
+
+    const bounceBreakdown: Record<string, number> = {
+      permanent: 0,
+      transient: 0,
+      undetermined: 0,
+      suppressed: parseInt(suppressedResult.rows[0].count) || 0,
+    };
+    for (const row of bounceBreakdownResult.rows) {
+      const key = (row.bounce_type as string).toLowerCase();
+      if (key in bounceBreakdown) {
+        bounceBreakdown[key] = parseInt(row.count);
+      }
+    }
+
+    res.json({ campaign: result.rows[0], bounceBreakdown });
   } catch (err) {
     next(err);
   }
@@ -697,7 +735,7 @@ export async function getCampaignRecipients(req: Request, res: Response, next: N
     const { id } = req.params;
     validateUUID(id, 'campaign ID');
     const { page, limit, offset } = parsePagination(req.query as { page?: string; limit?: string });
-    const { status, excludeEmails } = req.query;
+    const { status, bounceType, excludeEmails } = req.query;
 
     let whereClause = 'WHERE cr.campaign_id = $1';
     const params: unknown[] = [id];
@@ -706,6 +744,12 @@ export async function getCampaignRecipients(req: Request, res: Response, next: N
     if (status) {
       whereClause += ` AND cr.status = $${idx}`;
       params.push(status);
+      idx++;
+    }
+
+    if (bounceType && typeof bounceType === 'string') {
+      whereClause += ` AND cr.bounce_type = $${idx}`;
+      params.push(bounceType);
       idx++;
     }
 
@@ -732,6 +776,143 @@ export async function getCampaignRecipients(req: Request, res: Response, next: N
     );
 
     res.json(buildPaginatedResult(result.rows, total, { page, limit, offset }));
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function exportCampaignRecipients(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { id } = req.params;
+    validateUUID(id, 'campaign ID');
+    const { status, bounceType } = req.query;
+
+    let whereClause = 'WHERE cr.campaign_id = $1';
+    const params: unknown[] = [id];
+    let idx = 2;
+
+    if (status && typeof status === 'string') {
+      whereClause += ` AND cr.status = $${idx}`;
+      params.push(status);
+      idx++;
+    }
+
+    if (bounceType && typeof bounceType === 'string') {
+      whereClause += ` AND cr.bounce_type = $${idx}`;
+      params.push(bounceType);
+      idx++;
+    }
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename=recipients-${id}.csv`);
+
+    // Write CSV header
+    const header = 'email,name,status,bounce_type,sent_at,opened_at,clicked_at,bounced_at,open_count,click_count,last_opened_at,last_clicked_at,ab_variant,error_message\n';
+    res.write(header);
+
+    // Stream rows in batches to handle 20K+ recipients efficiently
+    const BATCH_SIZE = 1000;
+    let batchOffset = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      const batch = await pool.query(
+        `SELECT cr.email, cr.name, cr.status, cr.bounce_type, cr.sent_at, cr.opened_at,
+          cr.clicked_at, cr.bounced_at, COALESCE(cr.open_count, 0) as open_count,
+          COALESCE(cr.click_count, 0) as click_count, cr.last_opened_at, cr.last_clicked_at,
+          cr.ab_variant, cr.error_message
+         FROM campaign_recipients cr ${whereClause}
+         ORDER BY cr.created_at
+         LIMIT ${BATCH_SIZE} OFFSET ${batchOffset}`,
+        params
+      );
+
+      for (const r of batch.rows) {
+        const line = [
+          r.email, r.name, r.status, r.bounce_type,
+          r.sent_at || '', r.opened_at || '', r.clicked_at || '', r.bounced_at || '',
+          r.open_count, r.click_count, r.last_opened_at || '', r.last_clicked_at || '',
+          r.ab_variant || '', r.error_message || '',
+        ].map((v) => escapeCSV(String(v))).join(',');
+        res.write(line + '\n');
+      }
+
+      hasMore = batch.rows.length === BATCH_SIZE;
+      batchOffset += BATCH_SIZE;
+    }
+
+    res.end();
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function estimateSendCount(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { listId } = req.query;
+    if (!listId || typeof listId !== 'string' || !UUID_RE.test(listId)) {
+      throw new AppError('Valid listId query parameter is required', 400);
+    }
+
+    // Check if it's a smart list or regular list
+    const listResult = await pool.query(
+      'SELECT id, type, filters FROM contact_lists WHERE id = $1',
+      [listId]
+    );
+    if (listResult.rows.length === 0) throw new AppError('List not found', 404);
+
+    const list = listResult.rows[0];
+    let contactQuery: string;
+    const contactParams: unknown[] = [];
+
+    if (list.type === 'smart') {
+      // For smart lists, build filter query to count contacts
+      // Get total from the smart list filter
+      contactQuery = `
+        SELECT c.email FROM contacts c
+        WHERE c.status = 'active' AND c.id IN (
+          SELECT clc.contact_id FROM contact_list_contacts clc WHERE clc.list_id = $1
+        )`;
+      contactParams.push(listId);
+    } else {
+      contactQuery = `
+        SELECT c.email FROM contacts c
+        JOIN contact_list_contacts clc ON clc.contact_id = c.id
+        WHERE clc.list_id = $1 AND c.status = 'active'`;
+      contactParams.push(listId);
+    }
+
+    // Get all active emails in the list
+    const contactsResult = await pool.query(contactQuery, contactParams);
+    const allEmails = contactsResult.rows.map((r: { email: string }) => r.email);
+    const total = allEmails.length;
+
+    // Count suppressed
+    let suppressed = 0;
+    if (allEmails.length > 0) {
+      const suppressedResult = await pool.query(
+        `SELECT COUNT(*) FROM suppression_list WHERE LOWER(email) = ANY(
+          SELECT LOWER(unnest) FROM unnest($1::text[])
+        )`,
+        [allEmails]
+      );
+      suppressed = parseInt(suppressedResult.rows[0].count) || 0;
+    }
+
+    // Count invalid health_status
+    let invalid = 0;
+    if (allEmails.length > 0) {
+      const invalidResult = await pool.query(
+        `SELECT COUNT(*) FROM contacts
+         WHERE email = ANY($1) AND health_status = 'invalid'`,
+        [allEmails]
+      );
+      invalid = parseInt(invalidResult.rows[0].count) || 0;
+    }
+
+    const willSend = Math.max(0, total - suppressed - invalid);
+
+    res.json({ total, suppressed, invalid, willSend });
   } catch (err) {
     next(err);
   }

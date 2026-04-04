@@ -661,6 +661,7 @@ function DashboardContent() {
                   <th className="px-3 py-2 text-right font-medium text-gray-600">Sent</th>
                   <th className="px-3 py-2 text-right font-medium text-gray-600">Opens</th>
                   <th className="px-3 py-2 text-right font-medium text-gray-600">Clicks</th>
+                  <th className="px-3 py-2 text-right font-medium text-gray-600">Bounce %</th>
                   <th className="px-3 py-2 text-right font-medium text-gray-600">Open Rate</th>
                   <th className="px-3 py-2 text-right font-medium text-gray-600">Click Rate</th>
                   <th className="px-3 py-2 text-right font-medium text-gray-600">CTOR</th>
@@ -670,6 +671,9 @@ function DashboardContent() {
                 {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                 {(topCampaigns || []).map((c: any) => {
                   const ctor = toNum(c.open_count) > 0 ? ((toNum(c.click_count) / toNum(c.open_count)) * 100).toFixed(1) : '0';
+                  const bounceRateVal = toNum(c.sent_count) > 0 ? ((toNum(c.bounce_count) / toNum(c.sent_count)) * 100) : 0;
+                  const bounceRateStr = bounceRateVal.toFixed(1);
+                  const bounceColor = bounceRateVal > 5 ? 'text-red-600 font-medium' : bounceRateVal > 2 ? 'text-yellow-600' : 'text-green-600';
                   return (
                     <tr key={c.id} className="cursor-pointer hover:bg-gray-50" onClick={() => navigate(`/campaigns/${c.id}`)}>
                       <td className="px-3 py-2 font-medium">{c.name}</td>
@@ -678,6 +682,7 @@ function DashboardContent() {
                       <td className="px-3 py-2 text-right">{toNum(c.sent_count)}/{toNum(c.total_recipients)}</td>
                       <td className="px-3 py-2 text-right">{toNum(c.open_count)}</td>
                       <td className="px-3 py-2 text-right">{toNum(c.click_count)}</td>
+                      <td className={`px-3 py-2 text-right ${bounceColor}`}>{bounceRateStr}%</td>
                       <td className="px-3 py-2 text-right font-medium text-green-600">{c.open_rate}%</td>
                       <td className="px-3 py-2 text-right font-medium text-purple-600">{c.click_rate}%</td>
                       <td className="px-3 py-2 text-right text-indigo-600">{ctor}%</td>

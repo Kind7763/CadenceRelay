@@ -41,6 +41,12 @@ export interface Campaign {
   dynamic_variables?: DynamicVariable[];
   subject_override?: string | null;
   ab_test?: ABTest | null;
+  bounceBreakdown?: {
+    permanent: number;
+    transient: number;
+    undetermined: number;
+    suppressed: number;
+  };
   created_at: string;
 }
 
@@ -276,4 +282,22 @@ export async function createCampaignFromEmails(data: {
 }): Promise<Campaign> {
   const res = await apiClient.post('/campaigns/from-emails', data);
   return res.data.campaign as Campaign;
+}
+
+export async function exportCampaignRecipients(id: string, params?: Record<string, string>) {
+  const res = await apiClient.get(`/campaigns/${id}/recipients/export`, { params, responseType: 'blob' });
+  const blob = new Blob([res.data], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `recipients-export-${id}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+export async function estimateSendCount(listId: string): Promise<{ total: number; suppressed: number; invalid: number; willSend: number }> {
+  const res = await apiClient.get('/campaigns/estimate-send-count', { params: { listId } });
+  return res.data;
 }

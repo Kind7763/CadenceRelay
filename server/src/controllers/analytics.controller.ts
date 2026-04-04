@@ -147,6 +147,7 @@ export async function getDashboard(req: Request, res: Response, next: NextFuncti
       `SELECT c.id, c.name, c.status, c.provider, c.sent_count, c.open_count, c.click_count,
         c.bounce_count, c.failed_count, c.total_recipients, c.complaint_count, c.unsubscribe_count,
         c.started_at, c.completed_at, c.created_at,
+        CASE WHEN c.sent_count > 0 THEN ROUND((c.bounce_count::numeric / c.sent_count) * 100, 1) ELSE 0 END as bounce_rate,
         CASE WHEN c.sent_count > 0 THEN ROUND((c.open_count::numeric / c.sent_count) * 100, 1) ELSE 0 END as open_rate,
         CASE WHEN c.sent_count > 0 THEN ROUND((c.click_count::numeric / c.sent_count) * 100, 1) ELSE 0 END as click_rate
        FROM campaigns c

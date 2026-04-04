@@ -3,7 +3,8 @@ import multer from 'multer';
 import {
   listCampaigns, getCampaign, createCampaign, updateCampaign, deleteCampaign,
   bulkDeleteCampaigns, scheduleCampaign, sendCampaign, pauseCampaign, resumeCampaign,
-  getCampaignRecipients, addAttachments, removeAttachment, downloadAttachment,
+  getCampaignRecipients, exportCampaignRecipients, estimateSendCount,
+  addAttachments, removeAttachment, downloadAttachment,
   duplicateCampaign, toggleStar, toggleArchive, updateLabel,
   updateDynamicVariables, previewDynamicVariables, resendToNonOpeners,
   createCampaignFromEmails, resendTransientBounced, suppressPermanentBounces,
@@ -45,6 +46,7 @@ const scheduleSchema = z.object({
 
 router.get('/', listCampaigns);
 router.post('/from-emails', createCampaignFromEmails);
+router.get('/estimate-send-count', estimateSendCount);
 router.get('/:id', getCampaign);
 // Create campaign with optional attachments (multipart form)
 router.post('/', upload.array('attachments', 10), (req, _res, next) => {
@@ -61,6 +63,7 @@ router.post('/:id/send', sendCampaign);
 router.post('/:id/pause', pauseCampaign);
 router.post('/:id/resume', resumeCampaign);
 router.get('/:id/recipients', getCampaignRecipients);
+router.get('/:id/recipients/export', exportCampaignRecipients);
 // Campaign management actions
 router.post('/:id/duplicate', duplicateCampaign);
 router.post('/:id/resend-non-openers', resendToNonOpeners);
