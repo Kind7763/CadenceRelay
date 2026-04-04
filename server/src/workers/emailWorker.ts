@@ -305,6 +305,13 @@ async function handleDispatch(job: Job<DispatchJobData>) {
 
   const { campaign, template, providerConfig, trackingDomain, replyTo, campaignAttachments } = await loadDispatchContext(campaignId);
 
+  // Snapshot template content on first dispatch (won't overwrite on resume)
+  await pool.query(
+    `UPDATE campaigns SET template_version = $1, template_snapshot_subject = $2, template_snapshot_html = $3
+     WHERE id = $4 AND template_snapshot_html IS NULL`,
+    [template.version, template.subject, template.html_body, campaignId]
+  );
+
   if (campaign.status === 'paused') {
     logger.info(`Campaign ${campaignId} is paused, skipping dispatch`);
     return;
@@ -419,15 +426,26 @@ async function handleDispatch(job: Job<DispatchJobData>) {
     // Dispatch variant A
     for (let i = 0; i < variantAContacts.length; i++) {
       const contact = variantAContacts[i];
+      const { id: recipientId, token: trackingToken } = await getOrCreateRecipient(contact, 'A', 'queued');
+
       const variables = buildContactVariables(contact);
       Object.assign(variables, resolveDynamicVars(i));
+      variables['unsubscribe_url'] = `${trackingDomain}/api/v1/t/u/${trackingToken}`;
 
-      const renderedHtml = renderTemplate(template.html_body, variables);
+      let renderedHtml = renderTemplate(template.html_body, variables);
       const subjectSource = (campaign.subject_override as string) || template.subject;
       const renderedSubject = renderTemplate(subjectSource, variables);
       const renderedText = template.text_body ? renderTemplate(template.text_body, variables) : null;
 
-      const { id: recipientId, token: trackingToken } = await getOrCreateRecipient(contact, 'A', 'queued');
+      // Auto-inject unsubscribe link if template doesn't include one
+      if (!renderedHtml.toLowerCase().includes('unsubscribe')) {
+        const unsubLink = `<div style="text-align:center;padding:20px;font-size:12px;color:#999;"><a href="${trackingDomain}/api/v1/t/u/${trackingToken}" style="color:#999;text-decoration:underline;">Unsubscribe</a></div>`;
+        if (renderedHtml.includes('</body>')) {
+          renderedHtml = renderedHtml.replace('</body>', unsubLink + '</body>');
+        } else {
+          renderedHtml += unsubLink;
+        }
+      }
 
       await emailSendQueue.add('send', {
         campaignRecipientId: recipientId,
@@ -448,14 +466,25 @@ async function handleDispatch(job: Job<DispatchJobData>) {
     // Dispatch variant B
     for (let i = 0; i < variantBContacts.length; i++) {
       const contact = variantBContacts[i];
+      const { id: recipientId, token: trackingToken } = await getOrCreateRecipient(contact, 'B', 'queued');
+
       const variables = buildContactVariables(contact);
       Object.assign(variables, resolveDynamicVars(variantAContacts.length + i));
+      variables['unsubscribe_url'] = `${trackingDomain}/api/v1/t/u/${trackingToken}`;
 
-      const renderedHtml = renderTemplate(variantBTemplate.html_body, variables);
+      let renderedHtml = renderTemplate(variantBTemplate.html_body, variables);
       const renderedSubject = renderTemplate(variantBSubject, variables);
       const renderedText = variantBTemplate.text_body ? renderTemplate(variantBTemplate.text_body, variables) : null;
 
-      const { id: recipientId, token: trackingToken } = await getOrCreateRecipient(contact, 'B', 'queued');
+      // Auto-inject unsubscribe link if template doesn't include one
+      if (!renderedHtml.toLowerCase().includes('unsubscribe')) {
+        const unsubLink = `<div style="text-align:center;padding:20px;font-size:12px;color:#999;"><a href="${trackingDomain}/api/v1/t/u/${trackingToken}" style="color:#999;text-decoration:underline;">Unsubscribe</a></div>`;
+        if (renderedHtml.includes('</body>')) {
+          renderedHtml = renderedHtml.replace('</body>', unsubLink + '</body>');
+        } else {
+          renderedHtml += unsubLink;
+        }
+      }
 
       await emailSendQueue.add('send', {
         campaignRecipientId: recipientId,
@@ -494,14 +523,8 @@ async function handleDispatch(job: Job<DispatchJobData>) {
     // --- Normal (non-A/B) dispatch ---
     for (let recipientIndex = 0; recipientIndex < contacts.length; recipientIndex++) {
       const contact = contacts[recipientIndex];
-      const variables = buildContactVariables(contact);
-      Object.assign(variables, resolveDynamicVars(recipientIndex));
 
-      const renderedHtml = renderTemplate(template.html_body, variables);
-      const renderedSubject = renderTemplate((campaign.subject_override as string) || template.subject, variables);
-      const renderedText = template.text_body ? renderTemplate(template.text_body, variables) : null;
-
-      // Handle pre-created vs new recipients
+      // Handle pre-created vs new recipients (get token BEFORE rendering so unsubscribe_url is available)
       let recipientId: string;
       let trackingToken: string;
       const preId = (contact as Record<string, unknown>)._preCreatedId as string | undefined;
@@ -519,6 +542,24 @@ async function handleDispatch(job: Job<DispatchJobData>) {
           [campaignId, contact.id, contact.email, trackingToken]
         );
         recipientId = crResult.rows[0].id;
+      }
+
+      const variables = buildContactVariables(contact);
+      Object.assign(variables, resolveDynamicVars(recipientIndex));
+      variables['unsubscribe_url'] = `${trackingDomain}/api/v1/t/u/${trackingToken}`;
+
+      let renderedHtml = renderTemplate(template.html_body, variables);
+      const renderedSubject = renderTemplate((campaign.subject_override as string) || template.subject, variables);
+      const renderedText = template.text_body ? renderTemplate(template.text_body, variables) : null;
+
+      // Auto-inject unsubscribe link if template doesn't include one
+      if (!renderedHtml.toLowerCase().includes('unsubscribe')) {
+        const unsubLink = `<div style="text-align:center;padding:20px;font-size:12px;color:#999;"><a href="${trackingDomain}/api/v1/t/u/${trackingToken}" style="color:#999;text-decoration:underline;">Unsubscribe</a></div>`;
+        if (renderedHtml.includes('</body>')) {
+          renderedHtml = renderedHtml.replace('</body>', unsubLink + '</body>');
+        } else {
+          renderedHtml += unsubLink;
+        }
       }
 
       await emailSendQueue.add('send', {
@@ -643,10 +684,21 @@ async function handlePickABWinner(job: Job<DispatchJobData>) {
     const row = holdoutResult.rows[i];
     const variables = buildContactVariables(row);
     Object.assign(variables, resolveDynamicVars(i));
+    variables['unsubscribe_url'] = `${trackingDomain}/api/v1/t/u/${row.tracking_token}`;
 
-    const renderedHtml = renderTemplate(winnerTemplate.html_body, variables);
+    let renderedHtml = renderTemplate(winnerTemplate.html_body, variables);
     const renderedSubject = renderTemplate(winnerSubject, variables);
     const renderedText = winnerTemplate.text_body ? renderTemplate(winnerTemplate.text_body, variables) : null;
+
+    // Auto-inject unsubscribe link if template doesn't include one
+    if (!renderedHtml.toLowerCase().includes('unsubscribe')) {
+      const unsubLink = `<div style="text-align:center;padding:20px;font-size:12px;color:#999;"><a href="${trackingDomain}/api/v1/t/u/${row.tracking_token}" style="color:#999;text-decoration:underline;">Unsubscribe</a></div>`;
+      if (renderedHtml.includes('</body>')) {
+        renderedHtml = renderedHtml.replace('</body>', unsubLink + '</body>');
+      } else {
+        renderedHtml += unsubLink;
+      }
+    }
 
     await emailSendQueue.add('send', {
       campaignRecipientId: row.id,

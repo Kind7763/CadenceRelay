@@ -40,6 +40,9 @@ export interface Campaign {
   label_color?: string;
   dynamic_variables?: DynamicVariable[];
   subject_override?: string | null;
+  template_version?: number;
+  template_snapshot_subject?: string;
+  template_snapshot_html?: string;
   ab_test?: ABTest | null;
   bounceBreakdown?: {
     permanent: number;

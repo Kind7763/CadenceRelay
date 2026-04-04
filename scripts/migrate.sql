@@ -344,3 +344,8 @@ ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS subject_override varchar(998);
 ALTER TABLE contacts ADD COLUMN IF NOT EXISTS health_status varchar(20) DEFAULT 'unchecked';
 ALTER TABLE contacts ADD COLUMN IF NOT EXISTS health_checked_at timestamptz;
 CREATE INDEX IF NOT EXISTS contacts_health_status_idx ON contacts(health_status);
+
+-- Template snapshot: freeze template content when campaign first sends
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS template_version integer;
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS template_snapshot_subject varchar(998);
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS template_snapshot_html text;

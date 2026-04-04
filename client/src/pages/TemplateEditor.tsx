@@ -86,6 +86,7 @@ export default function TemplateEditor() {
     { key: 'category', label: 'Category' },
     { key: 'management', label: 'Management' },
     { key: 'address', label: 'Address' },
+    { key: 'unsubscribe_url', label: 'Unsubscribe Link URL' },
   ];
 
   const iframeRef = useRef<HTMLIFrameElement>(null);

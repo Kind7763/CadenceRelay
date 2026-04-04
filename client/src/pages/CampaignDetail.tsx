@@ -548,7 +548,7 @@ export default function CampaignDetail() {
               {showMoreActions && (
                 <div className="absolute right-0 top-full z-50 mt-1 w-56 rounded-lg border border-gray-200 bg-white py-1 shadow-lg" style={{ position: 'fixed', top: moreActionsRef.current ? moreActionsRef.current.getBoundingClientRect().bottom + 4 : 0, right: moreActionsRef.current ? window.innerWidth - moreActionsRef.current.getBoundingClientRect().right : 0 }}>
                   <button
-                    onClick={() => { setResendSubject(`Re: ${campaign.template_subject || campaign.name}`); setShowResendModal(true); setShowMoreActions(false); }}
+                    onClick={() => { setResendSubject(`Re: ${campaign.template_snapshot_subject || campaign.template_subject || campaign.name}`); setShowResendModal(true); setShowMoreActions(false); }}
                     className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50"
                   >
                     <span className="text-green-500">↻</span> Resend to Non-Openers
@@ -822,8 +822,8 @@ export default function CampaignDetail() {
                     <td className="py-2 pr-4 font-medium">
                       A {isWinnerA && <span className="text-yellow-500" title="Winner">&#9733;</span>}
                     </td>
-                    <td className="py-2 pr-4 max-w-[200px] truncate text-gray-600" title={campaign.template_subject || ''}>
-                      {campaign.template_subject || 'Original subject'}
+                    <td className="py-2 pr-4 max-w-[200px] truncate text-gray-600" title={campaign.template_snapshot_subject || campaign.template_subject || ''}>
+                      {campaign.template_snapshot_subject || campaign.template_subject || 'Original subject'}
                     </td>
                     <td className="py-2 pr-4 text-right">{aStats.sent}</td>
                     <td className="py-2 pr-4 text-right">{aStats.opens}</td>
@@ -878,10 +878,20 @@ export default function CampaignDetail() {
       })()}
 
       {/* Email Preview */}
-      {(campaign.template_subject || campaign.template_html_body || (campaign.attachments && campaign.attachments.length > 0)) && (
+      {(() => {
+        const previewSubject = campaign.template_snapshot_subject || campaign.template_subject || '';
+        const previewHtml = campaign.template_snapshot_html || campaign.template_html_body || '';
+        return (previewSubject || previewHtml || (campaign.attachments && campaign.attachments.length > 0)) ? (
         <div className="mt-6 rounded-xl bg-white shadow-sm overflow-hidden">
           <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
-            <h2 className="text-lg font-semibold">Email Preview</h2>
+            <div>
+              <h2 className="text-lg font-semibold">Email Preview</h2>
+              {campaign.template_version && campaign.started_at && (
+                <p className="text-xs text-gray-400 mt-0.5">
+                  Template v{campaign.template_version} — as sent on {new Date(campaign.started_at).toLocaleString()}
+                </p>
+              )}
+            </div>
             {previewContacts.length > 0 && (
               <div className="flex items-center gap-2">
                 <span className="text-xs text-gray-500">Preview as:</span>
@@ -908,24 +918,24 @@ export default function CampaignDetail() {
           </div>
 
           {/* Subject line */}
-          {campaign.template_subject && (
+          {previewSubject && (
             <div className="border-b border-gray-100 px-6 py-3">
               <span className="text-xs font-medium uppercase tracking-wide text-gray-400">Subject</span>
               <p className="mt-1 text-sm font-semibold text-gray-800">
-                {selectedPreviewContact ? replaceVars(campaign.template_subject, selectedPreviewContact) : campaign.template_subject}
+                {selectedPreviewContact ? replaceVars(previewSubject, selectedPreviewContact) : previewSubject}
               </p>
             </div>
           )}
 
           {/* Email body preview */}
-          {campaign.template_html_body && (
+          {previewHtml && (
             <div className="px-6 py-4">
               <div className="mx-auto max-w-3xl rounded-lg border border-gray-200 bg-white shadow-inner">
                 <iframe
                   ref={iframeRef}
                   sandbox="allow-same-origin"
                   title="Email body preview"
-                  srcDoc={selectedPreviewContact ? replaceVars(campaign.template_html_body, selectedPreviewContact) : campaign.template_html_body}
+                  srcDoc={selectedPreviewContact ? replaceVars(previewHtml, selectedPreviewContact) : previewHtml}
                   className="w-full border-0"
                   style={{ minHeight: '400px' }}
                   onLoad={() => {
@@ -1009,7 +1019,8 @@ export default function CampaignDetail() {
             </div>
           )}
         </div>
-      )}
+      ) : null;
+      })()}
 
       {/* Attachment Preview Modal */}
       {previewAttachment && (
