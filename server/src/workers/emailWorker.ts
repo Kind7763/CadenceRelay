@@ -356,8 +356,12 @@ async function handleDispatch(job: Job<DispatchJobData>) {
     logger.info(`Campaign ${campaignId}: ${contacts.length} new recipients + ${preCreatedContacts.length} pre-created pending`);
   }
 
-  // Note: total_recipients is updated AFTER dispatch completes to reflect actual count
-  // (not incremented here — prevents inflation from multiple dispatch runs)
+  // Set total_recipients to contact count BEFORE enqueuing send jobs
+  // This prevents the race condition where send worker completion check sees total=0
+  await pool.query(
+    'UPDATE campaigns SET total_recipients = $1, updated_at = NOW() WHERE id = $2',
+    [contacts.length, campaignId]
+  );
 
   const dynamicVarDefs: DynVarDef[] = Array.isArray(campaign.dynamic_variables)
     ? campaign.dynamic_variables
@@ -823,15 +827,17 @@ export function startEmailSendWorker(): Worker {
           [campaignId]
         );
         logger.info(`Skipping suppressed email ${email}`);
-        // Check campaign completion
+        // Check campaign completion (only if still sending and total > 0)
         const suppStats = await pool.query(
-          'SELECT total_recipients, sent_count, failed_count, bounce_count FROM campaigns WHERE id = $1',
+          'SELECT status, total_recipients, sent_count, failed_count, bounce_count FROM campaigns WHERE id = $1',
           [campaignId]
         );
         const suppCamp = suppStats.rows[0];
-        if (suppCamp && (Number(suppCamp.sent_count) + Number(suppCamp.failed_count) + Number(suppCamp.bounce_count)) >= Number(suppCamp.total_recipients)) {
+        const suppDone = Number(suppCamp.sent_count) + Number(suppCamp.failed_count) + Number(suppCamp.bounce_count);
+        const suppTarget = Number(suppCamp.total_recipients);
+        if (suppCamp && suppCamp.status === 'sending' && suppTarget > 0 && suppDone >= suppTarget) {
           await pool.query(
-            "UPDATE campaigns SET status = 'completed', completed_at = NOW(), updated_at = NOW() WHERE id = $1",
+            "UPDATE campaigns SET status = 'completed', completed_at = NOW(), updated_at = NOW() WHERE id = $1 AND status = 'sending'",
             [campaignId]
           );
         }
@@ -946,18 +952,20 @@ export function startEmailSendWorker(): Worker {
         [email]
       );
 
-      // Check if campaign is complete
+      // Check if campaign is complete (only if still sending and total > 0)
       const stats = await pool.query(
-        'SELECT total_recipients, sent_count, failed_count, bounce_count FROM campaigns WHERE id = $1',
+        'SELECT status, total_recipients, sent_count, failed_count, bounce_count FROM campaigns WHERE id = $1',
         [campaignId]
       );
       const camp = stats.rows[0];
-      if (camp && (Number(camp.sent_count) + Number(camp.failed_count) + Number(camp.bounce_count)) >= Number(camp.total_recipients)) {
+      const totalDone = Number(camp.sent_count) + Number(camp.failed_count) + Number(camp.bounce_count);
+      const totalTarget = Number(camp.total_recipients);
+      if (camp && camp.status === 'sending' && totalTarget > 0 && totalDone >= totalTarget) {
         await pool.query(
-          "UPDATE campaigns SET status = 'completed', completed_at = NOW(), updated_at = NOW() WHERE id = $1",
+          "UPDATE campaigns SET status = 'completed', completed_at = NOW(), updated_at = NOW() WHERE id = $1 AND status = 'sending'",
           [campaignId]
         );
-        logger.info(`Campaign ${campaignId} completed`);
+        logger.info(`Campaign ${campaignId} completed (${totalDone}/${totalTarget})`);
       }
 
       logger.debug(`Email sent to ${email}`, { messageId: result.messageId });
@@ -1065,14 +1073,16 @@ export function startEmailSendWorker(): Worker {
       logger.warn(`Temporary failure for ${email}, attempt ${job.attemptsMade}/${job.opts.attempts}: ${err.message}`);
     }
 
-    // Check campaign completion after any terminal state
+    // Check campaign completion after any terminal state (only if still sending and total > 0)
     if (isPermanentBounce || isFinalAttempt || isAuthError) {
       const stats = await pool.query(
-        'SELECT total_recipients, sent_count, failed_count, bounce_count FROM campaigns WHERE id = $1',
+        'SELECT status, total_recipients, sent_count, failed_count, bounce_count FROM campaigns WHERE id = $1',
         [campaignId]
       );
       const camp = stats.rows[0];
-      if (camp && (Number(camp.sent_count) + Number(camp.failed_count) + Number(camp.bounce_count)) >= Number(camp.total_recipients)) {
+      const totalDone = Number(camp.sent_count) + Number(camp.failed_count) + Number(camp.bounce_count);
+      const totalTarget = Number(camp.total_recipients);
+      if (camp && camp.status === 'sending' && totalTarget > 0 && totalDone >= totalTarget) {
         await pool.query(
           "UPDATE campaigns SET status = 'completed', completed_at = NOW(), updated_at = NOW() WHERE id = $1 AND status = 'sending'",
           [campaignId]
