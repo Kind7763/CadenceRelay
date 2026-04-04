@@ -1419,7 +1419,7 @@ export async function verifyListEmails(req: Request, res: Response, next: NextFu
 
       const whereExtra = filterParts.length > 0 ? ' AND ' + filterParts.join(' AND ') : '';
       contactsResult = await pool.query(
-        `SELECT c.email FROM contacts c WHERE c.status = 'active'${whereExtra} LIMIT 5000`,
+        `SELECT c.email FROM contacts c WHERE c.status = 'active'${whereExtra}`,
         filterParams
       );
     } else {
@@ -1427,7 +1427,7 @@ export async function verifyListEmails(req: Request, res: Response, next: NextFu
       contactsResult = await pool.query(
         `SELECT c.email FROM contacts c
          JOIN contact_list_members clm ON clm.contact_id = c.id
-         WHERE clm.list_id = $1 AND c.status = 'active' LIMIT 5000`,
+         WHERE clm.list_id = $1 AND c.status = 'active'`,
         [listId]
       );
     }

@@ -194,10 +194,18 @@ export default function CampaignCreate() {
   const [selectedPreviewContactId, setSelectedPreviewContactId] = useState('');
   const [previewContactsLoading, setPreviewContactsLoading] = useState(false);
 
-  // Feature 2: Send test email (simplified — single email input only)
+  // Feature 2: Send test email (tabbed — quick, from list, multiple)
   const [testEmailExpanded, setTestEmailExpanded] = useState(false);
   const [testEmailAddress, setTestEmailAddress] = useState('');
   const [testEmailSending, setTestEmailSending] = useState(false);
+  const [testTab, setTestTab] = useState<'quick' | 'list' | 'multiple'>('quick');
+  const [testListId, setTestListId] = useState('');
+  const [testListContacts, setTestListContacts] = useState<Contact[]>([]);
+  const [testListLoading, setTestListLoading] = useState(false);
+  const [testSelectedIds, setTestSelectedIds] = useState<Set<string>>(new Set());
+  const [testMultipleEmails, setTestMultipleEmails] = useState('');
+  const [testSending, setTestSending] = useState(false);
+  const [testProgress, setTestProgress] = useState({ sent: 0, total: 0 });
 
   // Spam score check
   const [spamResult, setSpamResult] = useState<SpamCheckResult | null>(null);
@@ -343,6 +351,29 @@ export default function CampaignCreate() {
         .finally(() => setSpamChecking(false));
     }
   }, [step, selectedTemplate]);
+
+  // Default testListId to campaign's listId
+  useEffect(() => {
+    if (listId && !testListId) setTestListId(listId);
+  }, [listId]);
+
+  // Load contacts when testListId changes (for "From List" tab)
+  useEffect(() => {
+    if (!testListId) { setTestListContacts([]); setTestSelectedIds(new Set()); return; }
+    let cancelled = false;
+    setTestListLoading(true);
+    listContacts({ listId: testListId, limit: '20' })
+      .then((res) => {
+        if (cancelled) return;
+        // Handle paginated response (data.data) or direct array
+        const contacts: Contact[] = Array.isArray(res) ? res : (res.data || []);
+        setTestListContacts(contacts);
+        setTestSelectedIds(new Set(contacts.map((c: Contact) => c.id)));
+      })
+      .catch(() => { if (!cancelled) setTestListContacts([]); })
+      .finally(() => { if (!cancelled) setTestListLoading(false); });
+    return () => { cancelled = true; };
+  }, [testListId]);
 
   async function handleVerifyEmailList() {
     if (!listId) return;
@@ -1446,7 +1477,7 @@ export default function CampaignCreate() {
             )}
           </div>
 
-          {/* Send Test Email — Clean & Simple */}
+          {/* Send Test Email — Tabbed: Quick / From List / Multiple */}
           <div className="rounded-lg border border-gray-200">
             <button
               onClick={() => setTestEmailExpanded(!testEmailExpanded)}
@@ -1459,46 +1490,215 @@ export default function CampaignCreate() {
             </button>
             {testEmailExpanded && (
               <div className="border-t p-4 space-y-3">
-                <div className="flex gap-2">
-                  <input
-                    type="email"
-                    placeholder="Enter email address to send test..."
-                    autoComplete="off" data-1p-ignore="true" data-lpignore="true" data-form-type="other"
-                    value={testEmailAddress}
-                    onChange={(e) => setTestEmailAddress(e.target.value)}
-                    className="flex-1 rounded-lg border px-3 py-2 text-sm"
-                  />
-                  <button
-                    disabled={!testEmailAddress || testEmailSending || !selectedTemplate}
-                    onClick={async () => {
-                      if (!selectedTemplate || !testEmailAddress) return;
-                      setTestEmailSending(true);
-                      try {
-                        const sampleContact: Contact = {
-                          id: '', email: testEmailAddress, name: 'Test User', metadata: {},
-                          status: 'active', bounce_count: 0, send_count: 0, last_sent_at: null,
-                          created_at: '', state: null, district: null, block: null,
-                          classes: null, category: null, management: null, address: null,
-                        };
-                        const subj = subjectOverrideVal || selectedTemplate.subject;
-                        const renderedSubject = replaceVariables(subj, sampleContact);
-                        const renderedHtml = replaceVariables(selectedTemplate.html_body, sampleContact);
-                        await sendTestEmail(testEmailAddress, { subject: renderedSubject, html: renderedHtml, campaignId: draftId || undefined });
-                        toast.success(`Test sent to ${testEmailAddress}`);
-                      } catch {
-                        toast.error('Failed to send test email');
-                      } finally {
-                        setTestEmailSending(false);
-                      }
-                    }}
-                    className="rounded-lg bg-primary-600 px-4 py-2 text-sm text-white hover:bg-primary-700 disabled:opacity-50"
-                  >
-                    {testEmailSending ? 'Sending...' : 'Send Test'}
-                  </button>
+                {/* Tabs */}
+                <div className="flex gap-1 rounded-lg bg-gray-100 p-0.5">
+                  {([['quick', 'Quick Send'], ['list', 'From List'], ['multiple', 'Multiple']] as const).map(([key, label]) => (
+                    <button
+                      key={key}
+                      onClick={() => setTestTab(key)}
+                      className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                        testTab === key ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
                 </div>
-                <p className="text-xs text-gray-400">
-                  Sends the template with sample variables{draftId && totalAttachmentCount > 0 ? ' + attachments' : ''}. Variables like {'{{name}}'} will show as "Test User".
-                </p>
+
+                {/* Quick Send Tab */}
+                {testTab === 'quick' && (
+                  <div className="space-y-2">
+                    <div className="flex gap-2">
+                      <input
+                        type="email"
+                        placeholder="Enter email address..."
+                        autoComplete="off" data-1p-ignore="true" data-lpignore="true" data-form-type="other"
+                        value={testEmailAddress}
+                        onChange={(e) => setTestEmailAddress(e.target.value)}
+                        className="flex-1 rounded-lg border px-3 py-2 text-sm"
+                      />
+                      <button
+                        disabled={!testEmailAddress || testEmailSending || !selectedTemplate}
+                        onClick={async () => {
+                          if (!selectedTemplate || !testEmailAddress) return;
+                          setTestEmailSending(true);
+                          try {
+                            const sampleContact: Contact = {
+                              id: '', email: testEmailAddress, name: 'Test User', metadata: {},
+                              status: 'active', bounce_count: 0, send_count: 0, last_sent_at: null,
+                              created_at: '', state: null, district: null, block: null,
+                              classes: null, category: null, management: null, address: null,
+                            };
+                            const subj = subjectOverrideVal || selectedTemplate.subject;
+                            const renderedSubject = replaceVariables(subj, sampleContact);
+                            const renderedHtml = replaceVariables(selectedTemplate.html_body, sampleContact);
+                            await sendTestEmail(testEmailAddress, { subject: renderedSubject, html: renderedHtml, campaignId: draftId || undefined });
+                            toast.success(`Test sent to ${testEmailAddress}`);
+                          } catch {
+                            toast.error('Failed to send test email');
+                          } finally {
+                            setTestEmailSending(false);
+                          }
+                        }}
+                        className="rounded-lg bg-primary-600 px-4 py-2 text-sm text-white hover:bg-primary-700 disabled:opacity-50"
+                      >
+                        {testEmailSending ? 'Sending...' : 'Send Test'}
+                      </button>
+                    </div>
+                    <p className="text-xs text-gray-400">
+                      Variables like {'{{name}}'} will show as "Test User"{draftId && totalAttachmentCount > 0 ? '. Attachments included.' : '.'}
+                    </p>
+                  </div>
+                )}
+
+                {/* From List Tab */}
+                {testTab === 'list' && (
+                  <div className="space-y-3">
+                    <select
+                      value={testListId}
+                      onChange={(e) => { setTestListId(e.target.value); setTestSelectedIds(new Set()); }}
+                      className="w-full rounded-lg border px-3 py-2 text-sm"
+                    >
+                      <option value="">Select a list...</option>
+                      {lists.map((l) => (
+                        <option key={l.id} value={l.id}>
+                          {l.name}{l.id === listId ? ' (campaign list)' : ''}
+                        </option>
+                      ))}
+                    </select>
+
+                    {testListLoading && (
+                      <p className="text-xs text-gray-400">Loading contacts...</p>
+                    )}
+
+                    {!testListLoading && testListContacts.length > 0 && (
+                      <div className="max-h-48 overflow-y-auto space-y-1">
+                        {testListContacts.map((c) => (
+                          <label key={c.id} className="flex items-center gap-2 rounded px-2 py-1 text-sm hover:bg-gray-50 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={testSelectedIds.has(c.id)}
+                              onChange={() => {
+                                setTestSelectedIds((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(c.id)) next.delete(c.id); else next.add(c.id);
+                                  return next;
+                                });
+                              }}
+                              className="rounded border-gray-300"
+                            />
+                            <span className="text-gray-700 truncate">{c.email}</span>
+                            {c.name && <span className="text-gray-400 text-xs truncate">{c.name}</span>}
+                          </label>
+                        ))}
+                      </div>
+                    )}
+
+                    {!testListLoading && testListId && testListContacts.length === 0 && (
+                      <p className="text-xs text-gray-400">No contacts in this list.</p>
+                    )}
+
+                    {testProgress.total > 0 && testSending && (
+                      <div className="text-xs text-gray-500">
+                        Sending {testProgress.sent} of {testProgress.total}...
+                      </div>
+                    )}
+
+                    <button
+                      disabled={testSelectedIds.size === 0 || testSending || !selectedTemplate}
+                      onClick={async () => {
+                        if (!selectedTemplate) return;
+                        const selected = testListContacts.filter((c) => testSelectedIds.has(c.id));
+                        if (selected.length === 0) return;
+                        setTestSending(true);
+                        setTestProgress({ sent: 0, total: selected.length });
+                        let sent = 0;
+                        try {
+                          for (const contact of selected) {
+                            const subj = subjectOverrideVal || selectedTemplate.subject;
+                            const renderedSubject = replaceVariables(subj, contact);
+                            const renderedHtml = replaceVariables(selectedTemplate.html_body, contact);
+                            await sendTestEmail(contact.email, { subject: renderedSubject, html: renderedHtml, campaignId: draftId || undefined });
+                            sent++;
+                            setTestProgress({ sent, total: selected.length });
+                          }
+                          toast.success(`Test sent to ${sent} contact${sent !== 1 ? 's' : ''}`);
+                        } catch {
+                          toast.error(`Failed after sending ${sent} of ${selected.length}`);
+                        } finally {
+                          setTestSending(false);
+                          setTestProgress({ sent: 0, total: 0 });
+                        }
+                      }}
+                      className="w-full rounded-lg bg-primary-600 px-4 py-2 text-sm text-white hover:bg-primary-700 disabled:opacity-50"
+                    >
+                      {testSending
+                        ? `Sending ${testProgress.sent}/${testProgress.total}...`
+                        : `Send to ${testSelectedIds.size} Selected`}
+                    </button>
+                  </div>
+                )}
+
+                {/* Multiple Tab */}
+                {testTab === 'multiple' && (
+                  <div className="space-y-2">
+                    <textarea
+                      placeholder="Paste emails, one per line..."
+                      value={testMultipleEmails}
+                      onChange={(e) => setTestMultipleEmails(e.target.value)}
+                      rows={4}
+                      className="w-full rounded-lg border px-3 py-2 text-sm font-mono"
+                    />
+                    {(() => {
+                      const emails = testMultipleEmails.split('\n').map((e) => e.trim()).filter((e) => e && e.includes('@'));
+                      return (
+                        <>
+                          {testProgress.total > 0 && testSending && (
+                            <div className="text-xs text-gray-500">
+                              Sending {testProgress.sent} of {testProgress.total}...
+                            </div>
+                          )}
+                          <button
+                            disabled={emails.length === 0 || testSending || !selectedTemplate}
+                            onClick={async () => {
+                              if (!selectedTemplate || emails.length === 0) return;
+                              setTestSending(true);
+                              setTestProgress({ sent: 0, total: emails.length });
+                              let sent = 0;
+                              try {
+                                for (const email of emails) {
+                                  const sampleContact: Contact = {
+                                    id: '', email, name: 'Test User', metadata: {},
+                                    status: 'active', bounce_count: 0, send_count: 0, last_sent_at: null,
+                                    created_at: '', state: null, district: null, block: null,
+                                    classes: null, category: null, management: null, address: null,
+                                  };
+                                  const subj = subjectOverrideVal || selectedTemplate.subject;
+                                  const renderedSubject = replaceVariables(subj, sampleContact);
+                                  const renderedHtml = replaceVariables(selectedTemplate.html_body, sampleContact);
+                                  await sendTestEmail(email, { subject: renderedSubject, html: renderedHtml, campaignId: draftId || undefined });
+                                  sent++;
+                                  setTestProgress({ sent, total: emails.length });
+                                }
+                                toast.success(`Test sent to ${sent} email${sent !== 1 ? 's' : ''}`);
+                              } catch {
+                                toast.error(`Failed after sending ${sent} of ${emails.length}`);
+                              } finally {
+                                setTestSending(false);
+                                setTestProgress({ sent: 0, total: 0 });
+                              }
+                            }}
+                            className="w-full rounded-lg bg-primary-600 px-4 py-2 text-sm text-white hover:bg-primary-700 disabled:opacity-50"
+                          >
+                            {testSending
+                              ? `Sending ${testProgress.sent}/${testProgress.total}...`
+                              : `Send to ${emails.length} Email${emails.length !== 1 ? 's' : ''}`}
+                          </button>
+                        </>
+                      );
+                    })()}
+                  </div>
+                )}
               </div>
             )}
           </div>
