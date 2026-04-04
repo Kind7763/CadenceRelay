@@ -516,28 +516,57 @@ async function handleDispatch(job: Job<DispatchJobData>) {
     logger.info(`Campaign ${campaignId}: A/B test dispatched. Winner pick scheduled in ${abTest.testDurationHours || 4}h`);
   } else {
     // --- Normal (non-A/B) dispatch ---
+    // STEP 1: Batch-create ALL campaign_recipients first (atomic — survives worker restart)
+    const newContacts = contacts.filter(c => !(c as Record<string, unknown>)._preCreatedId);
+    const preCreated = contacts.filter(c => (c as Record<string, unknown>)._preCreatedId);
+
+    if (newContacts.length > 0) {
+      // Batch INSERT in chunks of 500 for efficiency
+      for (let i = 0; i < newContacts.length; i += 500) {
+        const batch = newContacts.slice(i, i + 500);
+        const values: string[] = [];
+        const params: unknown[] = [];
+        let pIdx = 1;
+        for (const contact of batch) {
+          const token = generateTrackingToken();
+          (contact as Record<string, unknown>)._preCreatedToken = token;
+          values.push(`($${pIdx}, $${pIdx + 1}, $${pIdx + 2}, $${pIdx + 3}, 'pending')`);
+          params.push(campaignId, contact.id, contact.email, token);
+          pIdx += 4;
+        }
+        const insertResult = await pool.query(
+          `INSERT INTO campaign_recipients (campaign_id, contact_id, email, tracking_token, status)
+           VALUES ${values.join(', ')}
+           ON CONFLICT DO NOTHING
+           RETURNING id, contact_id`,
+          params
+        );
+        // Map back the recipient IDs
+        for (const row of insertResult.rows) {
+          const contact = batch.find(c => c.id === row.contact_id);
+          if (contact) (contact as Record<string, unknown>)._preCreatedId = row.id;
+        }
+      }
+      logger.info(`Campaign ${campaignId}: batch-created ${newContacts.length} campaign_recipients`);
+    }
+
+    // Mark pre-created recipients as queued
+    if (preCreated.length > 0) {
+      const preIds = preCreated.map(c => (c as Record<string, unknown>)._preCreatedId as string);
+      await pool.query(
+        `UPDATE campaign_recipients SET status = 'queued' WHERE id = ANY($1)`,
+        [preIds]
+      );
+    }
+
+    // STEP 2: Enqueue send jobs for ALL recipients (safe to retry — idempotent)
+    let enqueuedCount = 0;
     for (let recipientIndex = 0; recipientIndex < contacts.length; recipientIndex++) {
       const contact = contacts[recipientIndex];
+      const recipientId = (contact as Record<string, unknown>)._preCreatedId as string;
+      const trackingToken = (contact as Record<string, unknown>)._preCreatedToken as string;
 
-      // Handle pre-created vs new recipients (get token BEFORE rendering so unsubscribe_url is available)
-      let recipientId: string;
-      let trackingToken: string;
-      const preId = (contact as Record<string, unknown>)._preCreatedId as string | undefined;
-      const preToken = (contact as Record<string, unknown>)._preCreatedToken as string | undefined;
-
-      if (preId && preToken) {
-        recipientId = preId;
-        trackingToken = preToken;
-        await pool.query("UPDATE campaign_recipients SET status = 'queued' WHERE id = $1", [preId]);
-      } else {
-        trackingToken = generateTrackingToken();
-        const crResult = await pool.query(
-          `INSERT INTO campaign_recipients (campaign_id, contact_id, email, tracking_token)
-           VALUES ($1, $2, $3, $4) RETURNING id`,
-          [campaignId, contact.id, contact.email, trackingToken]
-        );
-        recipientId = crResult.rows[0].id;
-      }
+      if (!recipientId || !trackingToken) continue; // Skip if batch insert had a conflict
 
       const variables = buildContactVariables(contact);
       Object.assign(variables, resolveDynamicVars(recipientIndex));
@@ -571,9 +600,10 @@ async function handleDispatch(job: Job<DispatchJobData>) {
         attachments: campaignAttachments,
         replyTo,
       } as SendJobData, { delay: 0 });
+      enqueuedCount++;
     }
 
-    logger.info(`Campaign ${campaignId}: ${contacts.length} send jobs enqueued`);
+    logger.info(`Campaign ${campaignId}: ${enqueuedCount} send jobs enqueued`);
   }
 
   // Update total_recipients to ACTUAL count (prevents inflation from multiple dispatch runs)
