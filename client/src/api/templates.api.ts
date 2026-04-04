@@ -37,6 +37,11 @@ export async function deleteTemplate(id: string) {
   return apiClient.delete(`/templates/${id}`);
 }
 
+export async function toggleArchiveTemplate(id: string) {
+  const res = await apiClient.put(`/templates/${id}/archive`);
+  return res.data;
+}
+
 export async function getTemplateVersions(id: string) {
   const res = await apiClient.get(`/templates/${id}/versions`);
   return res.data.versions;

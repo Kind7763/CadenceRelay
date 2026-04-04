@@ -5,6 +5,7 @@ import {
   createTemplate,
   updateTemplate,
   deleteTemplate,
+  toggleArchiveTemplate,
   getTemplateVersions,
   getTemplateVersion,
   restoreVersion,
@@ -39,6 +40,7 @@ router.get('/', listTemplates);
 router.get('/:id', getTemplate);
 router.post('/', validateBody(createSchema), createTemplate);
 router.put('/:id', validateBody(updateSchema), updateTemplate);
+router.put('/:id/archive', toggleArchiveTemplate);
 router.delete('/:id', deleteTemplate);
 router.get('/:id/versions', getTemplateVersions);
 router.get('/:id/versions/:version', getTemplateVersion);

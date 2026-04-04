@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Template } from '../api/templates.api';
+import { Template, toggleArchiveTemplate } from '../api/templates.api';
 import { useTemplatesList, useDeleteTemplate } from '../hooks/useTemplates';
 import { useProjectsList, useMoveItems } from '../hooks/useProjects';
 import { Project } from '../api/projects.api';
@@ -12,10 +12,12 @@ import { GroupBy, groupByDate, groupByProject } from '../utils/grouping';
 
 /* ─── Fixed-position 3-dot menu ─── */
 
-function TemplateCardMenu({ templateId, projects, onDelete }: {
+function TemplateCardMenu({ templateId, projects, onDelete, isArchived, onArchiveToggle }: {
   templateId: string;
   projects: Project[];
   onDelete: () => void;
+  isArchived?: boolean;
+  onArchiveToggle: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [dropdownStyle, setDropdownStyle] = useState<CSSProperties>({});
@@ -86,6 +88,12 @@ function TemplateCardMenu({ templateId, projects, onDelete }: {
             </>
           )}
           <button
+            onClick={(e) => { e.stopPropagation(); onArchiveToggle(); setOpen(false); }}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+          >
+            {isArchived ? 'Restore' : 'Archive'}
+          </button>
+          <button
             onClick={(e) => { e.stopPropagation(); onDelete(); setOpen(false); }}
             className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
           >
@@ -116,13 +124,17 @@ type TemplateWithProject = Template & { project_id?: string };
 function TemplatesContent() {
   const navigate = useNavigate();
   const [projectFilter, setProjectFilter] = useState('');
+  const [viewTab, setViewTab] = useState<'active' | 'archived'>('active');
   const [viewMode, setViewMode] = useState<ViewMode>(() => (localStorage.getItem('templates-view') as ViewMode) || 'grid');
   const [sort, setSort] = useState<SortState | null>(null);
   const [groupBy, setGroupBy] = useState<GroupBy>('none');
 
   const { data: projectsData = [] } = useProjectsList();
-  const { data: templates = [], isLoading, isError } = useTemplatesList(
-    projectFilter ? { project_id: projectFilter } : undefined
+  const queryParams: Record<string, string> = {};
+  if (projectFilter) queryParams.project_id = projectFilter;
+  if (viewTab === 'archived') queryParams.archived = 'true';
+  const { data: templates = [], isLoading, isError, refetch } = useTemplatesList(
+    Object.keys(queryParams).length > 0 ? queryParams : undefined
   );
   const deleteTemplateMutation = useDeleteTemplate();
 
@@ -132,8 +144,20 @@ function TemplatesContent() {
   }
 
   async function handleDelete(id: string) {
-    if (!confirm('Delete this template?')) return;
+    if (!confirm('Delete this template permanently?')) return;
     deleteTemplateMutation.mutate(id);
+  }
+
+  async function handleArchiveToggle(id: string) {
+    try {
+      const res = await toggleArchiveTemplate(id);
+      const { default: toast } = await import('react-hot-toast');
+      toast.success(res.is_active ? 'Template restored' : 'Template archived');
+      refetch();
+    } catch {
+      const { default: toast } = await import('react-hot-toast');
+      toast.error('Failed to update template');
+    }
   }
 
   function handleSort(field: string) {
@@ -168,7 +192,7 @@ function TemplatesContent() {
               </span>
             )}
           </div>
-          <TemplateCardMenu templateId={t.id} projects={projectsData} onDelete={() => handleDelete(t.id)} />
+          <TemplateCardMenu templateId={t.id} projects={projectsData} onDelete={() => handleDelete(t.id)} isArchived={!t.is_active} onArchiveToggle={() => handleArchiveToggle(t.id)} />
         </div>
         <p className="mt-2 text-sm text-gray-500 truncate">{t.subject}</p>
         <div className="mt-3 flex items-center justify-between text-xs text-gray-400">
@@ -205,7 +229,7 @@ function TemplatesContent() {
         <td className="px-3 py-2.5 text-gray-500">v{t.version}</td>
         <td className="px-3 py-2.5 text-gray-500">{new Date(t.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</td>
         <td className="px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
-          <TemplateCardMenu templateId={t.id} projects={projectsData} onDelete={() => handleDelete(t.id)} />
+          <TemplateCardMenu templateId={t.id} projects={projectsData} onDelete={() => handleDelete(t.id)} isArchived={!t.is_active} onArchiveToggle={() => handleArchiveToggle(t.id)} />
         </td>
       </tr>
     );
@@ -279,7 +303,19 @@ function TemplatesContent() {
         </button>
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center gap-3">
+      {/* Active / Archived tabs */}
+      <div className="mt-4 flex items-center gap-1">
+        <button
+          onClick={() => setViewTab('active')}
+          className={`rounded-lg px-4 py-2 text-sm font-medium ${viewTab === 'active' ? 'bg-primary-100 text-primary-700' : 'text-gray-500 hover:bg-gray-100'}`}
+        >Active</button>
+        <button
+          onClick={() => setViewTab('archived')}
+          className={`rounded-lg px-4 py-2 text-sm font-medium ${viewTab === 'archived' ? 'bg-primary-100 text-primary-700' : 'text-gray-500 hover:bg-gray-100'}`}
+        >Archived</button>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-3">
         <select
           value={projectFilter}
           onChange={(e) => setProjectFilter(e.target.value)}

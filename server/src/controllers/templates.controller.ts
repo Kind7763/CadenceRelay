@@ -13,8 +13,9 @@ function validateUUID(id: string, label = 'ID'): void {
 
 export async function listTemplates(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { project_id: projectId } = req.query;
-    let query = 'SELECT id, name, subject, html_body, text_body, variables, version, is_active, project_id, created_at, updated_at FROM templates WHERE is_active = true';
+    const { project_id: projectId, archived } = req.query;
+    const showArchived = archived === 'true';
+    let query = `SELECT id, name, subject, html_body, text_body, variables, version, is_active, project_id, created_at, updated_at FROM templates WHERE is_active = ${showArchived ? 'false' : 'true'}`;
     const params: unknown[] = [];
 
     if (projectId === 'none') {
@@ -113,6 +114,22 @@ export async function updateTemplate(req: Request, res: Response, next: NextFunc
   }
 }
 
+export async function toggleArchiveTemplate(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { id } = req.params;
+    validateUUID(id, 'template ID');
+    const result = await pool.query(
+      'UPDATE templates SET is_active = NOT is_active, updated_at = NOW() WHERE id = $1 RETURNING id, is_active',
+      [id]
+    );
+    if (result.rows.length === 0) throw new AppError('Template not found', 404);
+    const isActive = result.rows[0].is_active;
+    res.json({ message: isActive ? 'Template restored' : 'Template archived', is_active: isActive });
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function deleteTemplate(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { id } = req.params;
@@ -189,17 +206,20 @@ export async function restoreVersion(req: Request, res: Response, next: NextFunc
 
     const newVersionNum = current.rows[0].version + 1;
 
+    // Ensure variables is properly stringified for jsonb column
+    const variablesJson = typeof old.variables === 'string' ? old.variables : JSON.stringify(old.variables || []);
+
     // Update the main template with old version's content
     await pool.query(
       `UPDATE templates SET subject = $1, html_body = $2, text_body = $3, variables = $4, version = $5, updated_at = NOW() WHERE id = $6`,
-      [old.subject, old.html_body, old.text_body, old.variables, newVersionNum, id]
+      [old.subject, old.html_body, old.text_body, variablesJson, newVersionNum, id]
     );
 
     // Create a new version entry (labeled as restored)
     await pool.query(
       `INSERT INTO template_versions (template_id, version, subject, html_body, text_body, variables, label)
        VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [id, newVersionNum, old.subject, old.html_body, old.text_body, old.variables, `Restored from v${versionNum}`]
+      [id, newVersionNum, old.subject, old.html_body, old.text_body, variablesJson, `Restored from v${versionNum}`]
     );
 
     res.json({ message: `Restored to v${versionNum} as new v${newVersionNum}`, version: newVersionNum });
