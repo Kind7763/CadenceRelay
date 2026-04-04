@@ -356,13 +356,8 @@ async function handleDispatch(job: Job<DispatchJobData>) {
     logger.info(`Campaign ${campaignId}: ${contacts.length} new recipients + ${preCreatedContacts.length} pre-created pending`);
   }
 
-  // Update total recipients (only for newly loaded contacts from list, not pre-created ones)
-  if (hasNewContacts) {
-    await pool.query(
-      'UPDATE campaigns SET total_recipients = total_recipients + $1, updated_at = NOW() WHERE id = $2',
-      [contacts.length, campaignId]
-    );
-  }
+  // Note: total_recipients is updated AFTER dispatch completes to reflect actual count
+  // (not incremented here — prevents inflation from multiple dispatch runs)
 
   const dynamicVarDefs: DynVarDef[] = Array.isArray(campaign.dynamic_variables)
     ? campaign.dynamic_variables
@@ -581,8 +576,17 @@ async function handleDispatch(job: Job<DispatchJobData>) {
     logger.info(`Campaign ${campaignId}: ${contacts.length} send jobs enqueued`);
   }
 
-  // Note: pre-created recipients are now handled in the main dispatch flow above
-  // (converted to contacts array format with _preCreatedId/_preCreatedToken markers)
+  // Update total_recipients to ACTUAL count (prevents inflation from multiple dispatch runs)
+  const actualCountResult = await pool.query(
+    'SELECT COUNT(*) FROM campaign_recipients WHERE campaign_id = $1',
+    [campaignId]
+  );
+  const actualTotal = parseInt(actualCountResult.rows[0].count);
+  await pool.query(
+    'UPDATE campaigns SET total_recipients = $1, updated_at = NOW() WHERE id = $2',
+    [actualTotal, campaignId]
+  );
+  logger.info(`Campaign ${campaignId}: total_recipients set to ${actualTotal}`);
 }
 
 async function handlePickABWinner(job: Job<DispatchJobData>) {
