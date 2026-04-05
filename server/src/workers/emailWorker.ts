@@ -609,69 +609,69 @@ async function handleDispatch(job: Job<DispatchJobData>) {
       [campaignId]
     );
 
-    // Build all jobs in memory first (sequential for dynamic var ordering)
-    const jobsToEnqueue: { name: string; data: SendJobData; opts: { jobId: string } }[] = [];
-    const recipientIds: string[] = [];
+    // Render + enqueue in chunks of 500 to keep memory bounded
+    let totalEnqueued = 0;
+    const CHUNK_SIZE = 500;
 
-    for (let recipientIndex = 0; recipientIndex < pendingResult.rows.length; recipientIndex++) {
-      const row = pendingResult.rows[recipientIndex];
-      const recipientId = row.recipient_id as string;
-      const trackingToken = row.tracking_token as string;
+    for (let chunkStart = 0; chunkStart < pendingResult.rows.length; chunkStart += CHUNK_SIZE) {
+      const chunkEnd = Math.min(chunkStart + CHUNK_SIZE, pendingResult.rows.length);
+      const chunkJobs: { name: string; data: SendJobData; opts: { jobId: string } }[] = [];
+      const chunkIds: string[] = [];
 
-      const variables = buildContactVariables(row);
-      Object.assign(variables, resolveDynamicVars(recipientIndex));
-      variables['unsubscribe_url'] = `${trackingDomain}/api/v1/t/u/${trackingToken}`;
+      for (let recipientIndex = chunkStart; recipientIndex < chunkEnd; recipientIndex++) {
+        const row = pendingResult.rows[recipientIndex];
+        const recipientId = row.recipient_id as string;
+        const trackingToken = row.tracking_token as string;
 
-      let renderedHtml = renderTemplate(template.html_body, variables);
-      const renderedSubject = renderTemplate((campaign.subject_override as string) || template.subject, variables);
-      const renderedText = template.text_body ? renderTemplate(template.text_body, variables) : null;
+        const variables = buildContactVariables(row);
+        Object.assign(variables, resolveDynamicVars(recipientIndex));
+        variables['unsubscribe_url'] = `${trackingDomain}/api/v1/t/u/${trackingToken}`;
 
-      // Auto-inject unsubscribe link if template doesn't include one
-      if (!renderedHtml.toLowerCase().includes('unsubscribe')) {
-        const unsubLink = `<div style="text-align:center;padding:20px;font-size:12px;color:#999;"><a href="${trackingDomain}/api/v1/t/u/${trackingToken}" style="color:#999;text-decoration:underline;">Unsubscribe</a></div>`;
-        if (renderedHtml.includes('</body>')) {
-          renderedHtml = renderedHtml.replace('</body>', unsubLink + '</body>');
-        } else {
-          renderedHtml += unsubLink;
+        let renderedHtml = renderTemplate(template.html_body, variables);
+        const renderedSubject = renderTemplate((campaign.subject_override as string) || template.subject, variables);
+        const renderedText = template.text_body ? renderTemplate(template.text_body, variables) : null;
+
+        // Auto-inject unsubscribe link if template doesn't include one
+        if (!renderedHtml.toLowerCase().includes('unsubscribe')) {
+          const unsubLink = `<div style="text-align:center;padding:20px;font-size:12px;color:#999;"><a href="${trackingDomain}/api/v1/t/u/${trackingToken}" style="color:#999;text-decoration:underline;">Unsubscribe</a></div>`;
+          if (renderedHtml.includes('</body>')) {
+            renderedHtml = renderedHtml.replace('</body>', unsubLink + '</body>');
+          } else {
+            renderedHtml += unsubLink;
+          }
         }
+
+        chunkJobs.push({
+          name: 'send',
+          data: {
+            campaignRecipientId: recipientId,
+            campaignId,
+            email: row.email as string,
+            subject: renderedSubject,
+            html: renderedHtml,
+            text: renderedText,
+            provider: campaign.provider,
+            providerConfig,
+            trackingToken,
+            trackingDomain,
+            attachments: campaignAttachments,
+            replyTo,
+          } as SendJobData,
+          opts: { jobId: `send-${recipientId}` },
+        });
+        chunkIds.push(recipientId);
       }
 
-      jobsToEnqueue.push({
-        name: 'send',
-        data: {
-          campaignRecipientId: recipientId,
-          campaignId,
-          email: row.email as string,
-          subject: renderedSubject,
-          html: renderedHtml,
-          text: renderedText,
-          provider: campaign.provider,
-          providerConfig,
-          trackingToken,
-          trackingDomain,
-          attachments: campaignAttachments,
-          replyTo,
-        } as SendJobData,
-        opts: { jobId: `send-${recipientId}` },
-      });
-      recipientIds.push(recipientId);
-    }
-
-    // Bulk-enqueue in chunks of 500 (fast — single Redis pipeline per chunk)
-    for (let i = 0; i < jobsToEnqueue.length; i += 500) {
-      const chunk = jobsToEnqueue.slice(i, i + 500);
-      await emailSendQueue.addBulk(chunk);
-    }
-
-    // Bulk-update all recipients to 'queued' in one query
-    if (recipientIds.length > 0) {
+      // Enqueue chunk + mark as queued
+      await emailSendQueue.addBulk(chunkJobs);
       await pool.query(
         "UPDATE campaign_recipients SET status = 'queued' WHERE id = ANY($1) AND status = 'pending'",
-        [recipientIds]
+        [chunkIds]
       );
+      totalEnqueued += chunkIds.length;
     }
 
-    logger.info(`Campaign ${campaignId}: ${recipientIds.length} send jobs enqueued`);
+    logger.info(`Campaign ${campaignId}: ${totalEnqueued} send jobs enqueued`);
   }
 
   } finally {
