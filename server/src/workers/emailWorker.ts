@@ -305,7 +305,7 @@ async function handleDispatch(job: Job<DispatchJobData>) {
 
   // Redis dispatch lock — prevent concurrent dispatches for the same campaign
   const lockKey = `dispatch-lock:${campaignId}`;
-  const lockAcquired = await redis.set(lockKey, String(job.id), 'EX', 3600, 'NX');
+  const lockAcquired = await redis.set(lockKey, String(job.id), 'EX', 600, 'NX'); // 10-min TTL (was 1h)
   if (!lockAcquired) {
     logger.warn(`Campaign ${campaignId}: dispatch already in progress, skipping`);
     return;
@@ -581,7 +581,24 @@ async function handleDispatch(job: Job<DispatchJobData>) {
     );
     logger.info(`Campaign ${campaignId}: total_recipients set to ${actualTotal}`);
 
-    // STEP 3: DB-driven enqueue — query ALL pending recipients (resume-safe)
+    // STEP 3: Clean up stale failed BullMQ jobs for this campaign (prevents duplicate jobId blocking)
+    try {
+      const failedJobs = await emailSendQueue.getFailed(0, 20000);
+      let cleanedCount = 0;
+      for (const fJob of failedJobs) {
+        if (fJob.data?.campaignId === campaignId) {
+          await fJob.remove();
+          cleanedCount++;
+        }
+      }
+      if (cleanedCount > 0) {
+        logger.info(`Campaign ${campaignId}: cleaned up ${cleanedCount} stale failed jobs`);
+      }
+    } catch (cleanErr) {
+      logger.warn(`Campaign ${campaignId}: failed to clean stale jobs: ${(cleanErr as Error).message}`);
+    }
+
+    // STEP 4: DB-driven enqueue — query ALL pending/queued recipients (resume-safe)
     const pendingResult = await pool.query(
       `SELECT cr.id as recipient_id, cr.email, cr.tracking_token,
         c.name, c.state, c.district, c.block, c.classes, c.category, c.management, c.address, c.metadata
@@ -592,7 +609,10 @@ async function handleDispatch(job: Job<DispatchJobData>) {
       [campaignId]
     );
 
-    let enqueuedCount = 0;
+    // Build all jobs in memory first (sequential for dynamic var ordering)
+    const jobsToEnqueue: { name: string; data: SendJobData; opts: { jobId: string } }[] = [];
+    const recipientIds: string[] = [];
+
     for (let recipientIndex = 0; recipientIndex < pendingResult.rows.length; recipientIndex++) {
       const row = pendingResult.rows[recipientIndex];
       const recipientId = row.recipient_id as string;
@@ -616,33 +636,42 @@ async function handleDispatch(job: Job<DispatchJobData>) {
         }
       }
 
-      await emailSendQueue.add('send', {
-        campaignRecipientId: recipientId,
-        campaignId,
-        email: row.email as string,
-        subject: renderedSubject,
-        html: renderedHtml,
-        text: renderedText,
-        provider: campaign.provider,
-        providerConfig,
-        trackingToken,
-        trackingDomain,
-        attachments: campaignAttachments,
-        replyTo,
-      } as SendJobData, {
-        jobId: `send-${recipientId}`,
-        delay: 0,
+      jobsToEnqueue.push({
+        name: 'send',
+        data: {
+          campaignRecipientId: recipientId,
+          campaignId,
+          email: row.email as string,
+          subject: renderedSubject,
+          html: renderedHtml,
+          text: renderedText,
+          provider: campaign.provider,
+          providerConfig,
+          trackingToken,
+          trackingDomain,
+          attachments: campaignAttachments,
+          replyTo,
+        } as SendJobData,
+        opts: { jobId: `send-${recipientId}` },
       });
-
-      // Mark as queued after enqueuing
-      await pool.query(
-        "UPDATE campaign_recipients SET status = 'queued' WHERE id = $1 AND status = 'pending'",
-        [recipientId]
-      );
-      enqueuedCount++;
+      recipientIds.push(recipientId);
     }
 
-    logger.info(`Campaign ${campaignId}: ${enqueuedCount} send jobs enqueued`);
+    // Bulk-enqueue in chunks of 500 (fast — single Redis pipeline per chunk)
+    for (let i = 0; i < jobsToEnqueue.length; i += 500) {
+      const chunk = jobsToEnqueue.slice(i, i + 500);
+      await emailSendQueue.addBulk(chunk);
+    }
+
+    // Bulk-update all recipients to 'queued' in one query
+    if (recipientIds.length > 0) {
+      await pool.query(
+        "UPDATE campaign_recipients SET status = 'queued' WHERE id = ANY($1) AND status = 'pending'",
+        [recipientIds]
+      );
+    }
+
+    logger.info(`Campaign ${campaignId}: ${recipientIds.length} send jobs enqueued`);
   }
 
   } finally {
@@ -844,7 +873,8 @@ export function startEmailSendWorker(): Worker {
       // Check if campaign is paused + get throttle settings
       const campCheck = await pool.query('SELECT status, throttle_per_second, throttle_per_hour FROM campaigns WHERE id = $1', [campaignId]);
       if (campCheck.rows[0]?.status === 'paused') {
-        throw new Error('Campaign paused');
+        // Don't consume retry attempts — leave recipient as 'queued' for resume dispatch
+        throw new UnrecoverableError('CAMPAIGN_PAUSED');
       }
 
       const throttlePerSec = campCheck.rows[0]?.throttle_per_second || 5;
@@ -1018,6 +1048,13 @@ export function startEmailSendWorker(): Worker {
   worker.on('failed', async (job, err) => {
     if (!job) return;
     const { campaignRecipientId, campaignId, email } = job.data;
+
+    // Campaign-paused / throttle-paused: leave recipient as 'queued' for resume
+    const isPauseRelated = err.message === 'CAMPAIGN_PAUSED' || err.message === 'HOURLY_LIMIT_REACHED' || err.message === 'DAILY_LIMIT_REACHED';
+    if (isPauseRelated) {
+      logger.debug(`Job for ${email} stopped (${err.message}), recipient stays queued for resume`);
+      return;
+    }
 
     // Classify the error for proper handling
     const isPermanentBounce = err instanceof PermanentBounceError || err.name === 'PermanentBounceError';
