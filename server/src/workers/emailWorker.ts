@@ -343,7 +343,7 @@ async function handleDispatch(job: Job<DispatchJobData>) {
        c.name, c.state, c.district, c.block, c.classes, c.category, c.management, c.address, c.metadata
      FROM campaign_recipients cr
      LEFT JOIN contacts c ON c.id = cr.contact_id
-     WHERE cr.campaign_id = $1 AND cr.status = 'pending'`,
+     WHERE cr.campaign_id = $1 AND cr.status IN ('pending', 'queued')`,
     [campaignId]
   );
   const preCreatedContacts = preCreatedResult.rows;
@@ -587,7 +587,7 @@ async function handleDispatch(job: Job<DispatchJobData>) {
         c.name, c.state, c.district, c.block, c.classes, c.category, c.management, c.address, c.metadata
        FROM campaign_recipients cr
        LEFT JOIN contacts c ON c.id = cr.contact_id
-       WHERE cr.campaign_id = $1 AND cr.status = 'pending'
+       WHERE cr.campaign_id = $1 AND cr.status IN ('pending', 'queued')
        ORDER BY cr.created_at`,
       [campaignId]
     );
