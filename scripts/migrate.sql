@@ -353,6 +353,20 @@ ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS template_snapshot_html text;
 -- Unique constraint on campaign_recipients to prevent duplicate sends
 CREATE UNIQUE INDEX IF NOT EXISTS cr_campaign_contact_unique ON campaign_recipients(campaign_id, contact_id) WHERE contact_id IS NOT NULL;
 
+-- Email accounts (multi-Gmail / multi-SES support)
+CREATE TABLE IF NOT EXISTS email_accounts (
+    id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+    label varchar(100) NOT NULL,
+    provider_type varchar(10) NOT NULL CHECK (provider_type IN ('gmail', 'ses')),
+    config jsonb NOT NULL DEFAULT '{}',
+    daily_limit integer DEFAULT 500,
+    is_active boolean DEFAULT true,
+    created_at timestamptz DEFAULT NOW(),
+    updated_at timestamptz DEFAULT NOW()
+);
+
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS email_account_id uuid REFERENCES email_accounts(id) ON DELETE SET NULL;
+
 -- Per-campaign reply-to override
 ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS reply_to varchar(320);
 

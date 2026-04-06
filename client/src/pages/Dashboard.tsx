@@ -396,8 +396,14 @@ function DashboardContent() {
           <p className="text-xs text-gray-500 mt-1">Emails sent today vs. configured daily limits. Campaigns auto-pause when limits are reached.</p>
           <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
             {[
-              { label: 'Gmail', current: toNum(dailyUsage.gmail?.current), limit: toNum(dailyUsage.gmail?.limit), color: 'bg-blue-500' },
-              { label: 'AWS SES', current: toNum(dailyUsage.ses?.current), limit: toNum(dailyUsage.ses?.limit), color: 'bg-orange-500' },
+              { label: 'Gmail (Legacy)', current: toNum(dailyUsage.gmail?.current), limit: toNum(dailyUsage.gmail?.limit), color: 'bg-blue-500' },
+              { label: 'AWS SES (Legacy)', current: toNum(dailyUsage.ses?.current), limit: toNum(dailyUsage.ses?.limit), color: 'bg-orange-500' },
+              ...((dailyUsage.accounts || []) as Array<{ id: string; label: string; provider_type: string; current: number; limit: number }>).map((a) => ({
+                label: a.label,
+                current: toNum(a.current),
+                limit: toNum(a.limit),
+                color: a.provider_type === 'gmail' ? 'bg-indigo-500' : 'bg-amber-500',
+              })),
             ].map((p) => {
               const pct = p.limit > 0 ? Math.min(100, (p.current / p.limit) * 100) : 0;
               const isNearLimit = pct >= 80;

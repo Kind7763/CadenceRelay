@@ -25,11 +25,11 @@ export async function checkScheduledCampaigns(): Promise<void> {
 
     // Auto-resume campaigns paused due to daily send limits (new day = new quota)
     const pausedResult = await pool.query(
-      "SELECT id, provider FROM campaigns WHERE status = 'paused' AND pause_reason LIKE 'Daily%'"
+      "SELECT id, provider, email_account_id FROM campaigns WHERE status = 'paused' AND pause_reason LIKE 'Daily%'"
     );
 
     for (const row of pausedResult.rows) {
-      const limitCheck = await checkDailyLimit(row.provider);
+      const limitCheck = await checkDailyLimit(row.provider, row.email_account_id || undefined);
       if (limitCheck.allowed) {
         logger.info(`Resuming daily-limit-paused campaign ${row.id} (${row.provider}: ${limitCheck.current}/${limitCheck.limit})`);
         await pool.query(

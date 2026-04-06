@@ -41,6 +41,7 @@ export interface Campaign {
   dynamic_variables?: DynamicVariable[];
   subject_override?: string | null;
   reply_to?: string | null;
+  email_account_id?: string | null;
   template_version?: number;
   template_snapshot_subject?: string;
   template_snapshot_html?: string;
@@ -90,6 +91,7 @@ export async function createCampaign(data: {
   throttlePerSecond?: number; throttlePerHour?: number;
   projectId?: string;
   replyTo?: string;
+  emailAccountId?: string;
   attachments?: File[];
   onProgress?: (state: UploadState) => void;
   signal?: AbortSignal;
@@ -103,6 +105,7 @@ export async function createCampaign(data: {
   if (data.throttlePerHour) formData.append('throttlePerHour', String(data.throttlePerHour));
   if (data.projectId) formData.append('projectId', data.projectId);
   if (data.replyTo) formData.append('replyTo', data.replyTo);
+  if (data.emailAccountId) formData.append('emailAccountId', data.emailAccountId);
   if (data.attachments) {
     data.attachments.forEach((file) => formData.append('attachments', file));
   }

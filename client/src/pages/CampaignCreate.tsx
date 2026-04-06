@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
+import { useEmailAccounts } from '../hooks/useEmailAccounts';
 import {
   createCampaign, getCampaign, updateCampaign, scheduleCampaign, sendCampaign,
   addAttachments as apiAddAttachments, addAttachmentsTracked, removeAttachment as apiRemoveAttachment,
@@ -163,6 +164,8 @@ export default function CampaignCreate() {
   const [templateId, setTemplateId] = useState('');
   const [listId, setListId] = useState('');
   const [provider, setProvider] = useState<'gmail' | 'ses'>('ses');
+  const [emailAccountId, setEmailAccountId] = useState('');
+  const { data: emailAccounts = [] } = useEmailAccounts();
   const [replyTo, setReplyTo] = useState('');
   const [throttlePerSecond, setThrottlePerSecond] = useState(5);
   const [throttlePerHour, setThrottlePerHour] = useState(5000);
@@ -272,6 +275,7 @@ export default function CampaignCreate() {
         setTemplateId(c.template_id || '');
         setListId(c.list_id || '');
         setProvider((c.provider as 'gmail' | 'ses') || 'ses');
+        setEmailAccountId(c.email_account_id || '');
         setReplyTo(c.reply_to || '');
         setThrottlePerSecond(c.throttle_per_second || 5);
         setThrottlePerHour(c.throttle_per_hour || 5000);
@@ -518,6 +522,7 @@ export default function CampaignCreate() {
         await updateCampaign(draftId, {
           name, templateId, listId, provider, throttlePerSecond, throttlePerHour,
           replyTo: replyTo || null,
+          emailAccountId: emailAccountId || null,
         });
         campaignId = draftId;
 
@@ -540,6 +545,7 @@ export default function CampaignCreate() {
           name, templateId, listId, provider, throttlePerSecond, throttlePerHour,
           projectId: projectId || undefined,
           replyTo: replyTo || undefined,
+          emailAccountId: emailAccountId || undefined,
           attachments: hasNewAttachments ? attachments : undefined,
           onProgress: hasNewAttachments ? (state) => setCampaignUploadState(state) : undefined,
           signal: controller.signal,
@@ -639,6 +645,7 @@ export default function CampaignCreate() {
           throttlePerSecond,
           throttlePerHour,
           replyTo: replyTo || null,
+          emailAccountId: emailAccountId || null,
         });
 
         // Upload any new file attachments to the existing draft
@@ -665,6 +672,7 @@ export default function CampaignCreate() {
           throttlePerHour,
           projectId: projectId || undefined,
           replyTo: replyTo || undefined,
+          emailAccountId: emailAccountId || undefined,
           attachments: attachments.length > 0 ? attachments : undefined,
         });
         setDraftId(campaign.id);
@@ -871,11 +879,32 @@ export default function CampaignCreate() {
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700">Email Provider</label>
-            <div className="mt-1 flex gap-3">
-              <button onClick={() => setProvider('ses')} className={`rounded-lg px-4 py-2 text-sm ${provider === 'ses' ? 'bg-primary-600 text-white' : 'bg-gray-100'}`}>AWS SES</button>
-              <button onClick={() => setProvider('gmail')} className={`rounded-lg px-4 py-2 text-sm ${provider === 'gmail' ? 'bg-primary-600 text-white' : 'bg-gray-100'}`}>Gmail</button>
-            </div>
+            <label className="block text-sm font-medium text-gray-700">Email Account</label>
+            <select
+              value={emailAccountId}
+              onChange={(e) => {
+                const val = e.target.value;
+                setEmailAccountId(val);
+                if (val) {
+                  const acct = emailAccounts.find((a) => a.id === val);
+                  if (acct) setProvider(acct.provider_type);
+                }
+              }}
+              className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+            >
+              <option value="">Use Legacy Settings ({provider.toUpperCase()})</option>
+              {emailAccounts.map((acct) => (
+                <option key={acct.id} value={acct.id}>
+                  {acct.label} ({acct.provider_type === 'gmail' ? (acct.config.user as string || 'Gmail') : (acct.config.fromEmail as string || 'SES')}) — {acct.provider_type.toUpperCase()}
+                </option>
+              ))}
+            </select>
+            {!emailAccountId && (
+              <div className="mt-1 flex gap-2">
+                <button onClick={() => setProvider('ses')} className={`rounded-lg px-3 py-1 text-xs ${provider === 'ses' ? 'bg-primary-600 text-white' : 'bg-gray-100'}`}>AWS SES</button>
+                <button onClick={() => setProvider('gmail')} className={`rounded-lg px-3 py-1 text-xs ${provider === 'gmail' ? 'bg-primary-600 text-white' : 'bg-gray-100'}`}>Gmail</button>
+              </div>
+            )}
           </div>
           {/* Reply-To Override */}
           <div>
@@ -1277,7 +1306,7 @@ export default function CampaignCreate() {
           <h3 className="font-semibold">Campaign Summary</h3>
           <div className="grid grid-cols-2 gap-4 text-sm">
             <div><span className="text-gray-500">Name:</span> <span className="font-medium">{name}</span></div>
-            <div><span className="text-gray-500">Provider:</span> <span className="font-medium uppercase">{provider}</span></div>
+            <div><span className="text-gray-500">Account:</span> <span className="font-medium">{emailAccountId ? emailAccounts.find(a => a.id === emailAccountId)?.label || 'Selected Account' : `Legacy ${provider.toUpperCase()}`}</span></div>
             <div><span className="text-gray-500">Template:</span> <span className="font-medium">{selectedTemplate?.name}</span></div>
             <div><span className="text-gray-500">List:</span> <span className="font-medium">{selectedList?.name} ({selectedList?.contact_count} contacts)</span></div>
             <div><span className="text-gray-500">Schedule:</span> <span className="font-medium">{scheduleType === 'now' ? 'Send immediately' : new Date(scheduledAt).toLocaleString()}</span></div>

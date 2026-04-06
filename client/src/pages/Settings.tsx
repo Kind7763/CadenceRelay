@@ -42,6 +42,8 @@ import {
   useReorderCustomVariables,
 } from '../hooks/useCustomVariables';
 import { CustomVariable } from '../api/customVariables.api';
+import { useEmailAccounts, useCreateEmailAccount, useDeleteEmailAccount, useTestEmailAccount } from '../hooks/useEmailAccounts';
+import type { EmailAccount } from '../api/emailAccounts.api';
 import { FormSkeleton } from '../components/ui/Skeleton';
 import ErrorBoundary from '../components/ErrorBoundary';
 import AdminPasswordModal from '../components/ui/AdminPasswordModal';
@@ -191,6 +193,14 @@ function SettingsContent() {
   const addSuppressionMutation = useAddToSuppression();
   const bulkAddSuppressionMutation = useBulkAddToSuppression();
   const removeSuppressionMutation = useRemoveFromSuppression();
+
+  // Email Accounts state
+  const { data: emailAccounts = [] } = useEmailAccounts();
+  const createAccountMutation = useCreateEmailAccount();
+  const deleteAccountMutation = useDeleteEmailAccount();
+  const testAccountMutation = useTestEmailAccount();
+  const [showAddAccount, setShowAddAccount] = useState(false);
+  const [newAccount, setNewAccount] = useState({ label: '', providerType: 'gmail' as 'gmail' | 'ses', host: 'smtp.gmail.com', port: 587, user: '', pass: '', region: 'us-east-1', accessKeyId: '', secretAccessKey: '', fromEmail: '', fromName: '', dailyLimit: 500 });
 
   // Domain suppression state
   const [domainSuppPage, setDomainSuppPage] = useState(1);
@@ -560,6 +570,124 @@ function SettingsContent() {
             )}
           </div>
         )}
+      </div>
+
+      {/* Email Accounts */}
+      <div className="mt-6 rounded-xl bg-white p-6 shadow-sm">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">
+              Email Accounts
+              {emailAccounts.length > 0 && (
+                <span className="ml-2 inline-flex items-center rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-700">
+                  {emailAccounts.length}
+                </span>
+              )}
+            </h2>
+            <p className="mt-1 text-sm text-gray-500">
+              Add multiple Gmail or SES accounts. Select which account to use when creating a campaign.
+            </p>
+          </div>
+          <button
+            onClick={() => setShowAddAccount(!showAddAccount)}
+            className="rounded-lg bg-primary-600 px-4 py-2 text-sm text-white hover:bg-primary-700"
+          >
+            {showAddAccount ? 'Cancel' : 'Add Account'}
+          </button>
+        </div>
+
+        {/* Add Account Form */}
+        {showAddAccount && (
+          <div className="mt-4 rounded-lg border border-gray-200 p-4 space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-600">Label</label>
+                <input type="text" value={newAccount.label} onChange={(e) => setNewAccount({ ...newAccount, label: e.target.value })} placeholder="e.g., Office Gmail" className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600">Provider Type</label>
+                <div className="mt-1 flex gap-2">
+                  <button onClick={() => setNewAccount({ ...newAccount, providerType: 'gmail', dailyLimit: 500 })} className={`rounded-lg px-3 py-2 text-sm ${newAccount.providerType === 'gmail' ? 'bg-primary-600 text-white' : 'bg-gray-100'}`}>Gmail</button>
+                  <button onClick={() => setNewAccount({ ...newAccount, providerType: 'ses', dailyLimit: 50000 })} className={`rounded-lg px-3 py-2 text-sm ${newAccount.providerType === 'ses' ? 'bg-primary-600 text-white' : 'bg-gray-100'}`}>SES</button>
+                </div>
+              </div>
+            </div>
+            {newAccount.providerType === 'gmail' ? (
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className="block text-xs font-medium text-gray-600">SMTP Host</label><input type="text" value={newAccount.host} onChange={(e) => setNewAccount({ ...newAccount, host: e.target.value })} className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" /></div>
+                <div><label className="block text-xs font-medium text-gray-600">Port</label><input type="number" value={newAccount.port} onChange={(e) => setNewAccount({ ...newAccount, port: parseInt(e.target.value) || 587 })} className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" /></div>
+                <div><label className="block text-xs font-medium text-gray-600">Email</label><input type="email" value={newAccount.user} onChange={(e) => setNewAccount({ ...newAccount, user: e.target.value })} placeholder="you@gmail.com" className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" /></div>
+                <div><label className="block text-xs font-medium text-gray-600">App Password</label><input type="password" value={newAccount.pass} onChange={(e) => setNewAccount({ ...newAccount, pass: e.target.value })} className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" /></div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className="block text-xs font-medium text-gray-600">AWS Region</label><input type="text" value={newAccount.region} onChange={(e) => setNewAccount({ ...newAccount, region: e.target.value })} className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" /></div>
+                <div><label className="block text-xs font-medium text-gray-600">From Email</label><input type="email" value={newAccount.fromEmail} onChange={(e) => setNewAccount({ ...newAccount, fromEmail: e.target.value })} className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" /></div>
+                <div><label className="block text-xs font-medium text-gray-600">Access Key ID</label><input type="password" value={newAccount.accessKeyId} onChange={(e) => setNewAccount({ ...newAccount, accessKeyId: e.target.value })} className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" /></div>
+                <div><label className="block text-xs font-medium text-gray-600">Secret Access Key</label><input type="password" value={newAccount.secretAccessKey} onChange={(e) => setNewAccount({ ...newAccount, secretAccessKey: e.target.value })} className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" /></div>
+              </div>
+            )}
+            <div>
+              <label className="block text-xs font-medium text-gray-600">Daily Send Limit</label>
+              <input type="number" value={newAccount.dailyLimit} onChange={(e) => setNewAccount({ ...newAccount, dailyLimit: parseInt(e.target.value) || 500 })} className="mt-1 w-32 rounded-lg border px-3 py-2 text-sm" />
+            </div>
+            <button
+              onClick={() => {
+                const config = newAccount.providerType === 'gmail'
+                  ? { host: newAccount.host, port: newAccount.port, user: newAccount.user, pass: newAccount.pass }
+                  : { region: newAccount.region, accessKeyId: newAccount.accessKeyId, secretAccessKey: newAccount.secretAccessKey, fromEmail: newAccount.fromEmail, fromName: newAccount.fromName };
+                createAccountMutation.mutate({ label: newAccount.label, providerType: newAccount.providerType, config, dailyLimit: newAccount.dailyLimit }, {
+                  onSuccess: () => { setShowAddAccount(false); setNewAccount({ label: '', providerType: 'gmail', host: 'smtp.gmail.com', port: 587, user: '', pass: '', region: 'us-east-1', accessKeyId: '', secretAccessKey: '', fromEmail: '', fromName: '', dailyLimit: 500 }); },
+                });
+              }}
+              disabled={createAccountMutation.isPending || !newAccount.label.trim()}
+              className="rounded-lg bg-primary-600 px-4 py-2 text-sm text-white hover:bg-primary-700 disabled:opacity-50"
+            >
+              {createAccountMutation.isPending ? 'Creating...' : 'Create Account'}
+            </button>
+          </div>
+        )}
+
+        {/* Accounts List */}
+        {emailAccounts.length > 0 ? (
+          <div className="mt-4 space-y-3">
+            {emailAccounts.map((acct: EmailAccount) => (
+              <div key={acct.id} className="flex items-center justify-between rounded-lg border border-gray-200 p-4">
+                <div className="flex items-center gap-3">
+                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${acct.provider_type === 'gmail' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>
+                    {acct.provider_type.toUpperCase()}
+                  </span>
+                  <div>
+                    <div className="font-medium text-sm">{acct.label}</div>
+                    <div className="text-xs text-gray-500 font-mono">
+                      {acct.provider_type === 'gmail' ? (acct.config.user as string || 'Not configured') : (acct.config.fromEmail as string || 'Not configured')}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-400">{acct.daily_limit}/day</span>
+                  <button
+                    onClick={() => testAccountMutation.mutate({ id: acct.id })}
+                    disabled={testAccountMutation.isPending}
+                    className="rounded border border-gray-300 px-2 py-1 text-xs hover:bg-gray-50"
+                  >
+                    Test
+                  </button>
+                  <button
+                    onClick={() => { if (confirm(`Delete account "${acct.label}"?`)) deleteAccountMutation.mutate(acct.id); }}
+                    className="text-red-600 hover:text-red-800 text-xs"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : !showAddAccount ? (
+          <div className="mt-4 rounded-lg border-2 border-dashed border-gray-200 p-6 text-center">
+            <p className="text-sm text-gray-500">No email accounts yet. Add one to use per-campaign account selection.</p>
+          </div>
+        ) : null}
       </div>
 
       {/* Provider Toggle */}

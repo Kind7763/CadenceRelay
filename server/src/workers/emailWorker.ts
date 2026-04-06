@@ -39,6 +39,7 @@ interface SendJobData {
   trackingDomain: string;
   attachments?: AttachmentMeta[];
   replyTo?: string;
+  emailAccountId?: string;
 }
 
 // --- Shared helpers for dispatch & A/B winner ---
@@ -166,11 +167,25 @@ async function loadDispatchContext(campaignId: string) {
   if (tplResult.rows.length === 0) throw new Error('Template not found');
   const template = tplResult.rows[0];
 
-  // Load provider config
-  const providerResult = await pool.query("SELECT value FROM settings WHERE key = $1", [
-    campaign.provider === 'gmail' ? 'gmail_config' : 'ses_config'
-  ]);
-  const providerConfig = providerResult.rows[0]?.value || {};
+  // Load provider config — from email_accounts if campaign has one, else legacy settings
+  let providerConfig: Record<string, unknown> = {};
+  let emailAccountId: string | null = campaign.email_account_id || null;
+  if (emailAccountId) {
+    const acctResult = await pool.query('SELECT config, provider_type FROM email_accounts WHERE id = $1 AND is_active = true', [emailAccountId]);
+    if (acctResult.rows.length > 0) {
+      providerConfig = typeof acctResult.rows[0].config === 'string'
+        ? JSON.parse(acctResult.rows[0].config) : acctResult.rows[0].config;
+    } else {
+      logger.warn(`Campaign ${campaignId}: email_account ${emailAccountId} not found/inactive, falling back to legacy config`);
+      emailAccountId = null;
+    }
+  }
+  if (!emailAccountId) {
+    const providerResult = await pool.query("SELECT value FROM settings WHERE key = $1", [
+      campaign.provider === 'gmail' ? 'gmail_config' : 'ses_config'
+    ]);
+    providerConfig = providerResult.rows[0]?.value || {};
+  }
 
   // Load tracking domain
   const trackingResult = await pool.query("SELECT value FROM settings WHERE key = 'tracking_domain'");
@@ -201,7 +216,7 @@ async function loadDispatchContext(campaignId: string) {
 
   const campaignAttachments: AttachmentMeta[] = campaign.attachments || [];
 
-  return { campaign, template, providerConfig, trackingDomain, replyTo, campaignAttachments };
+  return { campaign, template, providerConfig, trackingDomain, replyTo, campaignAttachments, emailAccountId };
 }
 
 async function loadContacts(campaign: Record<string, unknown>, campaignId: string) {
@@ -325,7 +340,7 @@ async function handleDispatch(job: Job<DispatchJobData>) {
 
   try {
 
-  const { campaign, template, providerConfig, trackingDomain, replyTo, campaignAttachments } = await loadDispatchContext(campaignId);
+  const { campaign, template, providerConfig, trackingDomain, replyTo, campaignAttachments, emailAccountId } = await loadDispatchContext(campaignId);
 
   // Snapshot template content on first dispatch (won't overwrite on resume)
   await pool.query(
@@ -474,6 +489,7 @@ async function handleDispatch(job: Job<DispatchJobData>) {
         trackingDomain,
         attachments: campaignAttachments,
         replyTo,
+        emailAccountId: emailAccountId || undefined,
       } as SendJobData, { delay: 0 });
     }
 
@@ -513,6 +529,7 @@ async function handleDispatch(job: Job<DispatchJobData>) {
         trackingDomain,
         attachments: campaignAttachments,
         replyTo,
+        emailAccountId: emailAccountId || undefined,
       } as SendJobData, { delay: 0 });
     }
 
@@ -660,6 +677,7 @@ async function handleDispatch(job: Job<DispatchJobData>) {
             trackingDomain,
             attachments: campaignAttachments,
             replyTo,
+            emailAccountId: emailAccountId || undefined,
           } as SendJobData,
           opts: { jobId: `send-${recipientId}` },
         });
@@ -872,7 +890,7 @@ export function startEmailSendWorker(): Worker {
   const worker = new Worker<SendJobData>(
     'email-send',
     async (job: Job<SendJobData>) => {
-      const { campaignRecipientId, campaignId, email, subject, html, text, provider, providerConfig, trackingToken, trackingDomain, replyTo } = job.data;
+      const { campaignRecipientId, campaignId, email, subject, html, text, provider, providerConfig, trackingToken, trackingDomain, replyTo, emailAccountId: jobEmailAccountId } = job.data;
 
       // Check if campaign is paused + get throttle settings
       const campCheck = await pool.query('SELECT status, throttle_per_second, throttle_per_hour FROM campaigns WHERE id = $1', [campaignId]);
@@ -931,7 +949,7 @@ export function startEmailSendWorker(): Worker {
       }
 
       // --- Daily send limit check ---
-      const limitCheck = await checkDailyLimit(provider);
+      const limitCheck = await checkDailyLimit(provider, jobEmailAccountId);
       if (!limitCheck.allowed) {
         await pool.query(
           "UPDATE campaigns SET status = 'paused', pause_reason = 'Daily send limit reached', updated_at = NOW() WHERE id = $1 AND status = 'sending'",
@@ -1014,7 +1032,7 @@ export function startEmailSendWorker(): Worker {
       }
 
       // Increment daily send counter
-      await incrementDailySend(provider);
+      await incrementDailySend(provider, jobEmailAccountId);
 
       // Update campaign_recipient
       await pool.query(

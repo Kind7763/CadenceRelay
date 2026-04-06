@@ -232,6 +232,17 @@ export async function getDashboard(req: Request, res: Response, next: NextFuncti
       checkDailyLimit('ses'),
     ]);
 
+    // Per-account daily usage
+    const accountsResult = await pool.query(
+      'SELECT id, label, provider_type, daily_limit FROM email_accounts WHERE is_active = true ORDER BY created_at'
+    );
+    const accountUsage = await Promise.all(
+      accountsResult.rows.map(async (acct) => {
+        const usage = await checkDailyLimit(acct.provider_type, acct.id);
+        return { id: acct.id, label: acct.label, provider_type: acct.provider_type, current: usage.current, limit: usage.limit };
+      })
+    );
+
     res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.json({
       stats: {
@@ -255,6 +266,7 @@ export async function getDashboard(req: Request, res: Response, next: NextFuncti
       dailyUsage: {
         gmail: { current: gmailUsage.current, limit: gmailUsage.limit },
         ses: { current: sesUsage.current, limit: sesUsage.limit },
+        accounts: accountUsage,
       },
     });
   } catch (err) {

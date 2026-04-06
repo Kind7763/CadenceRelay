@@ -146,7 +146,7 @@ export async function getCampaign(req: Request, res: Response, next: NextFunctio
 
 export async function createCampaign(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { name, templateId, listId, provider, throttlePerSecond, throttlePerHour, projectId: rawProjectId, replyTo } = req.body;
+    const { name, templateId, listId, provider, throttlePerSecond, throttlePerHour, projectId: rawProjectId, replyTo, emailAccountId: rawEmailAccountId } = req.body;
 
     // Handle file attachments from multer
     const files = (req.files as Express.Multer.File[]) || [];
@@ -170,11 +170,21 @@ export async function createCampaign(req: Request, res: Response, next: NextFunc
     const finalListId = listId && UUID_RE.test(listId) ? listId : null;
     const finalProjectId = rawProjectId && UUID_RE.test(rawProjectId) ? rawProjectId : null;
     const finalReplyTo = replyTo && typeof replyTo === 'string' && replyTo.includes('@') ? replyTo.trim() : null;
+    const finalEmailAccountId = rawEmailAccountId && UUID_RE.test(rawEmailAccountId) ? rawEmailAccountId : null;
+
+    // Derive provider from email account if specified
+    let finalProvider = provider || 'ses';
+    if (finalEmailAccountId) {
+      const acctResult = await pool.query('SELECT provider_type FROM email_accounts WHERE id = $1', [finalEmailAccountId]);
+      if (acctResult.rows.length > 0) {
+        finalProvider = acctResult.rows[0].provider_type;
+      }
+    }
 
     const result = await pool.query(
-      `INSERT INTO campaigns (name, template_id, list_id, provider, throttle_per_second, throttle_per_hour, attachments, project_id, reply_to)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-      [name, finalTemplateId, finalListId, provider || 'ses', throttlePerSecond || 5, throttlePerHour || 5000, JSON.stringify(attachments), finalProjectId, finalReplyTo]
+      `INSERT INTO campaigns (name, template_id, list_id, provider, throttle_per_second, throttle_per_hour, attachments, project_id, reply_to, email_account_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+      [name, finalTemplateId, finalListId, finalProvider, throttlePerSecond || 5, throttlePerHour || 5000, JSON.stringify(attachments), finalProjectId, finalReplyTo, finalEmailAccountId]
     );
 
     res.status(201).json({ campaign: result.rows[0] });
@@ -187,7 +197,7 @@ export async function updateCampaign(req: Request, res: Response, next: NextFunc
   try {
     const { id } = req.params;
     validateUUID(id, 'campaign ID');
-    const { name, templateId, listId, provider, throttlePerSecond, throttlePerHour, description, abTest, subjectOverride, replyTo } = req.body;
+    const { name, templateId, listId, provider, throttlePerSecond, throttlePerHour, description, abTest, subjectOverride, replyTo, emailAccountId } = req.body;
 
     const existing = await pool.query('SELECT status FROM campaigns WHERE id = $1', [id]);
     if (existing.rows.length === 0) throw new AppError('Campaign not found', 404);
@@ -204,6 +214,22 @@ export async function updateCampaign(req: Request, res: Response, next: NextFunc
       throw new AppError('Can only configure A/B test on draft or scheduled campaigns', 400);
     }
 
+    // Derive provider from email account if specified
+    let derivedProvider = isDraftOrScheduled ? provider : null;
+    let finalEmailAccountId: string | null | undefined = undefined; // undefined = no change
+    if (emailAccountId !== undefined && isDraftOrScheduled) {
+      if (emailAccountId === null || emailAccountId === '') {
+        // Clearing account — fall back to legacy
+        finalEmailAccountId = null;
+      } else {
+        finalEmailAccountId = emailAccountId;
+        const acctResult = await pool.query('SELECT provider_type FROM email_accounts WHERE id = $1', [emailAccountId]);
+        if (acctResult.rows.length > 0) {
+          derivedProvider = acctResult.rows[0].provider_type;
+        }
+      }
+    }
+
     // Name and description can always be updated (for organization purposes)
     const result = await pool.query(
       `UPDATE campaigns SET
@@ -217,14 +243,16 @@ export async function updateCampaign(req: Request, res: Response, next: NextFunc
         ab_test = COALESCE($8, ab_test),
         subject_override = CASE WHEN $9::text = '__CLEAR__' THEN NULL WHEN $9 IS NOT NULL THEN $9 ELSE subject_override END,
         reply_to = CASE WHEN $10::text = '__CLEAR__' THEN NULL WHEN $10 IS NOT NULL THEN $10 ELSE reply_to END,
+        email_account_id = CASE WHEN $11::text = '__CLEAR__' THEN NULL WHEN $11 IS NOT NULL THEN $11::uuid ELSE email_account_id END,
         updated_at = NOW()
-       WHERE id = $11 RETURNING *`,
+       WHERE id = $12 RETURNING *`,
       [name, isDraftOrScheduled ? templateId : null, isDraftOrScheduled ? listId : null,
-       isDraftOrScheduled ? provider : null, isDraftOrScheduled ? throttlePerSecond : null,
+       derivedProvider, isDraftOrScheduled ? throttlePerSecond : null,
        isDraftOrScheduled ? throttlePerHour : null, description,
        abTest !== undefined ? JSON.stringify(abTest) : null,
        subjectOverride === null ? '__CLEAR__' : subjectOverride || null,
-       replyTo === null ? '__CLEAR__' : replyTo || null, id]
+       replyTo === null ? '__CLEAR__' : replyTo || null,
+       finalEmailAccountId === null ? '__CLEAR__' : finalEmailAccountId || null, id]
     );
 
     res.json({ campaign: result.rows[0] });
