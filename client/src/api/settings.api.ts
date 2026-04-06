@@ -41,7 +41,7 @@ export async function updateDailyLimits(config: { gmailDailyLimit: number; sesDa
   return res.data;
 }
 
-export async function sendTestEmail(to: string, options?: { subject?: string; html?: string; campaignId?: string }) {
+export async function sendTestEmail(to: string, options?: { subject?: string; html?: string; campaignId?: string; emailAccountId?: string }) {
   const res = await apiClient.post('/settings/test-email', { to, ...options });
   return res.data;
 }

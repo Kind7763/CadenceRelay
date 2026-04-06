@@ -245,42 +245,54 @@ export async function updateDailyLimits(req: Request, res: Response, next: NextF
 
 export async function testEmail(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { to, subject, html, campaignId } = req.body;
+    const { to, subject, html, campaignId, emailAccountId } = req.body;
     if (!to) {
       throw new AppError('Recipient email required', 400);
     }
 
-    // Get current provider
-    const providerResult = await pool.query("SELECT value FROM settings WHERE key = 'email_provider'");
-    const provider = providerResult.rows[0]?.value || 'ses';
-
-    // Get provider config
-    const configKey = provider === 'gmail' ? 'gmail_config' : 'ses_config';
-    const configResult = await pool.query('SELECT value FROM settings WHERE key = $1', [configKey]);
-    const providerConfig = configResult.rows[0]?.value;
-
-    // FIX: Better error messages when provider config is incomplete
-    if (!providerConfig) {
-      throw new AppError(`Email provider "${provider}" is not configured. Please update ${provider === 'gmail' ? 'Gmail' : 'SES'} settings first.`, 400);
-    }
-
+    let provider: string;
     let parsedConfig: Record<string, unknown>;
-    try {
-      parsedConfig = typeof providerConfig === 'string' ? JSON.parse(providerConfig) : providerConfig;
-    } catch {
-      throw new AppError(`Email provider "${provider}" configuration is invalid. Please reconfigure ${provider === 'gmail' ? 'Gmail' : 'SES'} settings.`, 400);
+
+    // If emailAccountId is provided, use that account's config (for campaign test emails)
+    if (emailAccountId) {
+      const acctResult = await pool.query('SELECT provider_type, config FROM email_accounts WHERE id = $1 AND is_active = true', [emailAccountId]);
+      if (acctResult.rows.length === 0) {
+        throw new AppError('Email account not found or inactive', 404);
+      }
+      provider = acctResult.rows[0].provider_type;
+      parsedConfig = typeof acctResult.rows[0].config === 'string'
+        ? JSON.parse(acctResult.rows[0].config) : acctResult.rows[0].config;
+    } else {
+      // Fall back to global provider setting
+      const providerResult = await pool.query("SELECT value FROM settings WHERE key = 'email_provider'");
+      const rawProvider = providerResult.rows[0]?.value || 'ses';
+      provider = typeof rawProvider === 'string' && rawProvider.startsWith('"') ? JSON.parse(rawProvider) : rawProvider;
+
+      const configKey = provider === 'gmail' ? 'gmail_config' : 'ses_config';
+      const configResult = await pool.query('SELECT value FROM settings WHERE key = $1', [configKey]);
+      const providerConfig = configResult.rows[0]?.value;
+
+      if (!providerConfig) {
+        throw new AppError(`Email provider "${provider}" is not configured. Please update ${provider === 'gmail' ? 'Gmail' : 'SES'} settings first.`, 400);
+      }
+
+      try {
+        parsedConfig = typeof providerConfig === 'string' ? JSON.parse(providerConfig) : providerConfig;
+      } catch {
+        throw new AppError(`Email provider "${provider}" configuration is invalid. Please reconfigure settings.`, 400);
+      }
     }
 
     if (provider === 'gmail') {
       if (!parsedConfig.user || !parsedConfig.pass) {
-        throw new AppError('Gmail configuration is incomplete: "user" and "pass" are required. Update Gmail settings first.', 400);
+        throw new AppError('Gmail configuration is incomplete: "user" and "pass" are required.', 400);
       }
     } else {
       if (!parsedConfig.region || !parsedConfig.accessKeyId || !parsedConfig.secretAccessKey) {
-        throw new AppError('SES configuration is incomplete: "region", "accessKeyId", and "secretAccessKey" are required. Update SES settings first.', 400);
+        throw new AppError('SES configuration is incomplete: "region", "accessKeyId", and "secretAccessKey" are required.', 400);
       }
       if (!parsedConfig.fromEmail) {
-        throw new AppError('SES configuration is incomplete: "fromEmail" is required. Update SES settings first.', 400);
+        throw new AppError('SES configuration is incomplete: "fromEmail" is required.', 400);
       }
     }
 

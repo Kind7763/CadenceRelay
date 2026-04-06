@@ -1633,7 +1633,7 @@ export default function CampaignCreate() {
                             const subj = subjectOverrideVal || selectedTemplate.subject;
                             const renderedSubject = replaceVariables(subj, sampleContact);
                             const renderedHtml = replaceVariables(selectedTemplate.html_body, sampleContact);
-                            await sendTestEmail(testEmailAddress, { subject: renderedSubject, html: renderedHtml, campaignId: draftId || undefined });
+                            await sendTestEmail(testEmailAddress, { subject: renderedSubject, html: renderedHtml, campaignId: draftId || undefined, emailAccountId: emailAccountId || undefined });
                             toast.success(`Test sent to ${testEmailAddress}`);
                           } catch {
                             toast.error('Failed to send test email');
@@ -1719,7 +1719,7 @@ export default function CampaignCreate() {
                             const subj = subjectOverrideVal || selectedTemplate.subject;
                             const renderedSubject = replaceVariables(subj, contact);
                             const renderedHtml = replaceVariables(selectedTemplate.html_body, contact);
-                            await sendTestEmail(contact.email, { subject: renderedSubject, html: renderedHtml, campaignId: draftId || undefined });
+                            await sendTestEmail(contact.email, { subject: renderedSubject, html: renderedHtml, campaignId: draftId || undefined, emailAccountId: emailAccountId || undefined });
                             sent++;
                             setTestProgress({ sent, total: selected.length });
                           }
@@ -1777,7 +1777,7 @@ export default function CampaignCreate() {
                                   const subj = subjectOverrideVal || selectedTemplate.subject;
                                   const renderedSubject = replaceVariables(subj, sampleContact);
                                   const renderedHtml = replaceVariables(selectedTemplate.html_body, sampleContact);
-                                  await sendTestEmail(email, { subject: renderedSubject, html: renderedHtml, campaignId: draftId || undefined });
+                                  await sendTestEmail(email, { subject: renderedSubject, html: renderedHtml, campaignId: draftId || undefined, emailAccountId: emailAccountId || undefined });
                                   sent++;
                                   setTestProgress({ sent, total: emails.length });
                                 }

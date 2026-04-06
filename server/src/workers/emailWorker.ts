@@ -768,7 +768,7 @@ async function handlePickABWinner(job: Job<DispatchJobData>) {
   );
 
   // Now send to holdout group using winner's template/subject
-  const { template, providerConfig, trackingDomain, replyTo, campaignAttachments } = await loadDispatchContext(campaignId);
+  const { template, providerConfig, trackingDomain, replyTo, campaignAttachments, emailAccountId } = await loadDispatchContext(campaignId);
 
   // Determine winner's template and subject
   let winnerTemplate = template;
@@ -829,6 +829,7 @@ async function handlePickABWinner(job: Job<DispatchJobData>) {
       trackingDomain,
       attachments: campaignAttachments,
       replyTo,
+      emailAccountId: emailAccountId || undefined,
     } as SendJobData, { delay: 0 });
 
     // Update variant to holdout_winner
@@ -875,7 +876,7 @@ async function checkCampaignCompletion(campaignId: string): Promise<void> {
         `UPDATE campaigns SET
           status = 'completed', completed_at = NOW(), updated_at = NOW(),
           total_recipients = (SELECT COUNT(*) FROM campaign_recipients WHERE campaign_id = $1),
-          sent_count = (SELECT COUNT(*) FROM campaign_recipients WHERE campaign_id = $1 AND status IN ('sent','delivered','opened','clicked')),
+          sent_count = (SELECT COUNT(*) FROM campaign_recipients WHERE campaign_id = $1 AND status IN ('sent','delivered','opened','clicked','unsubscribed','complained')),
           failed_count = (SELECT COUNT(*) FROM campaign_recipients WHERE campaign_id = $1 AND status = 'failed'),
           bounce_count = (SELECT COUNT(*) FROM campaign_recipients WHERE campaign_id = $1 AND status = 'bounced')
          WHERE id = $1 AND status = 'sending'`,
@@ -962,9 +963,11 @@ export function startEmailSendWorker(): Worker {
       // Inject tracking pixel
       const pixelUrl = `${trackingDomain}/api/v1/t/o/${trackingToken}`;
       const trackingPixel = `<img src="${pixelUrl}" width="1" height="1" style="display:block" alt="" />`;
-      let trackedHtml = html.replace('</body>', `${trackingPixel}</body>`);
-      if (!trackedHtml.includes(trackingPixel)) {
-        trackedHtml += trackingPixel;
+      let trackedHtml = html;
+      if (html.includes('</body>')) {
+        trackedHtml = html.replace('</body>', `${trackingPixel}</body>`);
+      } else {
+        trackedHtml = html + trackingPixel;
       }
 
       // Rewrite links for click tracking
