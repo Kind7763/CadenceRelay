@@ -38,6 +38,7 @@ const updateSchema = z.object({
   description: z.string().optional(),
   abTest: z.any().optional(),
   subjectOverride: z.string().max(998).nullable().optional(),
+  replyTo: z.union([z.string().email(), z.literal(''), z.null()]).optional(),
 });
 
 const scheduleSchema = z.object({

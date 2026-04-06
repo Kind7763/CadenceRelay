@@ -163,6 +163,7 @@ export default function CampaignCreate() {
   const [templateId, setTemplateId] = useState('');
   const [listId, setListId] = useState('');
   const [provider, setProvider] = useState<'gmail' | 'ses'>('ses');
+  const [replyTo, setReplyTo] = useState('');
   const [throttlePerSecond, setThrottlePerSecond] = useState(5);
   const [throttlePerHour, setThrottlePerHour] = useState(5000);
   const [scheduleType, setScheduleType] = useState<'now' | 'later'>('now');
@@ -271,6 +272,7 @@ export default function CampaignCreate() {
         setTemplateId(c.template_id || '');
         setListId(c.list_id || '');
         setProvider((c.provider as 'gmail' | 'ses') || 'ses');
+        setReplyTo(c.reply_to || '');
         setThrottlePerSecond(c.throttle_per_second || 5);
         setThrottlePerHour(c.throttle_per_hour || 5000);
         if ((c as Campaign & { project_id?: string }).project_id) {
@@ -515,6 +517,7 @@ export default function CampaignCreate() {
         // Editing existing draft -- update fields
         await updateCampaign(draftId, {
           name, templateId, listId, provider, throttlePerSecond, throttlePerHour,
+          replyTo: replyTo || null,
         });
         campaignId = draftId;
 
@@ -536,6 +539,7 @@ export default function CampaignCreate() {
         const campaign = await createCampaign({
           name, templateId, listId, provider, throttlePerSecond, throttlePerHour,
           projectId: projectId || undefined,
+          replyTo: replyTo || undefined,
           attachments: hasNewAttachments ? attachments : undefined,
           onProgress: hasNewAttachments ? (state) => setCampaignUploadState(state) : undefined,
           signal: controller.signal,
@@ -634,6 +638,7 @@ export default function CampaignCreate() {
           provider,
           throttlePerSecond,
           throttlePerHour,
+          replyTo: replyTo || null,
         });
 
         // Upload any new file attachments to the existing draft
@@ -659,6 +664,7 @@ export default function CampaignCreate() {
           throttlePerSecond,
           throttlePerHour,
           projectId: projectId || undefined,
+          replyTo: replyTo || undefined,
           attachments: attachments.length > 0 ? attachments : undefined,
         });
         setDraftId(campaign.id);
@@ -870,6 +876,19 @@ export default function CampaignCreate() {
               <button onClick={() => setProvider('ses')} className={`rounded-lg px-4 py-2 text-sm ${provider === 'ses' ? 'bg-primary-600 text-white' : 'bg-gray-100'}`}>AWS SES</button>
               <button onClick={() => setProvider('gmail')} className={`rounded-lg px-4 py-2 text-sm ${provider === 'gmail' ? 'bg-primary-600 text-white' : 'bg-gray-100'}`}>Gmail</button>
             </div>
+          </div>
+          {/* Reply-To Override */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Reply-To Email (optional)</label>
+            <p className="mt-0.5 text-xs text-gray-500">Override the global reply-to for this campaign. Leave blank to use the global setting.</p>
+            <input
+              type="email"
+              value={replyTo}
+              onChange={(e) => setReplyTo(e.target.value)}
+              placeholder="replies@example.com"
+              className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+              autoComplete="off"
+            />
           </div>
           {/* Attachments */}
           <div>
@@ -1263,6 +1282,9 @@ export default function CampaignCreate() {
             <div><span className="text-gray-500">List:</span> <span className="font-medium">{selectedList?.name} ({selectedList?.contact_count} contacts)</span></div>
             <div><span className="text-gray-500">Schedule:</span> <span className="font-medium">{scheduleType === 'now' ? 'Send immediately' : new Date(scheduledAt).toLocaleString()}</span></div>
             <div><span className="text-gray-500">Throttle:</span> <span className="font-medium">{throttlePerSecond}/sec, {throttlePerHour}/hr</span></div>
+            {replyTo && (
+              <div className="col-span-2"><span className="text-gray-500">Reply-To:</span> <span className="font-medium text-primary-700">{replyTo}</span> <span className="text-xs text-gray-400">(campaign override)</span></div>
+            )}
             {subjectOverrideVal && (
               <div className="col-span-2"><span className="text-gray-500">Subject Line:</span> <span className="font-medium text-primary-700">{subjectOverrideVal}</span> <span className="text-xs text-gray-400">(overrides template)</span></div>
             )}

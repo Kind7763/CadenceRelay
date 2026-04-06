@@ -176,21 +176,25 @@ async function loadDispatchContext(campaignId: string) {
   const trackingResult = await pool.query("SELECT value FROM settings WHERE key = 'tracking_domain'");
   const trackingDomain = trackingResult.rows[0]?.value || 'http://localhost:3001';
 
-  // Load reply-to setting
-  const replyToResult = await pool.query("SELECT value FROM settings WHERE key = 'reply_to'");
+  // Load reply-to: campaign-level overrides global setting
   let replyTo: string | undefined;
-  if (replyToResult.rows[0]?.value) {
-    const raw = replyToResult.rows[0].value;
-    if (typeof raw === 'string' && raw.length > 0 && raw.includes('@')) {
-      replyTo = raw;
-    } else if (typeof raw === 'string') {
-      try {
-        const parsed = JSON.parse(raw);
-        if (typeof parsed === 'string' && parsed.length > 0) {
-          replyTo = parsed;
+  if (campaign.reply_to && typeof campaign.reply_to === 'string' && campaign.reply_to.includes('@')) {
+    replyTo = campaign.reply_to;
+  } else {
+    const replyToResult = await pool.query("SELECT value FROM settings WHERE key = 'reply_to'");
+    if (replyToResult.rows[0]?.value) {
+      const raw = replyToResult.rows[0].value;
+      if (typeof raw === 'string' && raw.length > 0 && raw.includes('@')) {
+        replyTo = raw;
+      } else if (typeof raw === 'string') {
+        try {
+          const parsed = JSON.parse(raw);
+          if (typeof parsed === 'string' && parsed.length > 0) {
+            replyTo = parsed;
+          }
+        } catch {
+          // not JSON, skip
         }
-      } catch {
-        // not JSON, skip
       }
     }
   }

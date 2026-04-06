@@ -353,6 +353,9 @@ ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS template_snapshot_html text;
 -- Unique constraint on campaign_recipients to prevent duplicate sends
 CREATE UNIQUE INDEX IF NOT EXISTS cr_campaign_contact_unique ON campaign_recipients(campaign_id, contact_id) WHERE contact_id IS NOT NULL;
 
+-- Per-campaign reply-to override
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS reply_to varchar(320);
+
 -- Domain-level suppression
 CREATE TABLE IF NOT EXISTS suppressed_domains (
     id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
