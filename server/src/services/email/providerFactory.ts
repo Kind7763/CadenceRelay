@@ -23,7 +23,7 @@ function maybeDecrypt(value: string): string {
 export function createProvider(provider: string, config: Record<string, unknown>): EmailProvider {
   switch (provider) {
     case 'gmail': {
-      const gmailConfig = config as { host: string; port: number; user: string; pass: string };
+      const gmailConfig = config as { host: string; port: number; user: string; pass: string; fromName?: string };
       return new GmailProvider({
         ...gmailConfig,
         pass: maybeDecrypt(gmailConfig.pass),

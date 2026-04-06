@@ -614,10 +614,11 @@ function SettingsContent() {
             </div>
             {newAccount.providerType === 'gmail' ? (
               <div className="grid grid-cols-2 gap-3">
-                <div><label className="block text-xs font-medium text-gray-600">SMTP Host</label><input type="text" value={newAccount.host} onChange={(e) => setNewAccount({ ...newAccount, host: e.target.value })} className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" /></div>
-                <div><label className="block text-xs font-medium text-gray-600">Port</label><input type="number" value={newAccount.port} onChange={(e) => setNewAccount({ ...newAccount, port: parseInt(e.target.value) || 587 })} className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" /></div>
+                <div><label className="block text-xs font-medium text-gray-600">From Name</label><input type="text" value={newAccount.fromName} onChange={(e) => setNewAccount({ ...newAccount, fromName: e.target.value })} placeholder="e.g., BITS PILANI - YEB" className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" /></div>
                 <div><label className="block text-xs font-medium text-gray-600">Email</label><input type="email" value={newAccount.user} onChange={(e) => setNewAccount({ ...newAccount, user: e.target.value })} placeholder="you@gmail.com" className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" /></div>
                 <div><label className="block text-xs font-medium text-gray-600">App Password</label><input type="password" value={newAccount.pass} onChange={(e) => setNewAccount({ ...newAccount, pass: e.target.value })} className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" /></div>
+                <div><label className="block text-xs font-medium text-gray-600">SMTP Host</label><input type="text" value={newAccount.host} onChange={(e) => setNewAccount({ ...newAccount, host: e.target.value })} className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" /></div>
+                <div><label className="block text-xs font-medium text-gray-600">Port</label><input type="number" value={newAccount.port} onChange={(e) => setNewAccount({ ...newAccount, port: parseInt(e.target.value) || 587 })} className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" /></div>
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-3">
@@ -634,7 +635,7 @@ function SettingsContent() {
             <button
               onClick={() => {
                 const config = newAccount.providerType === 'gmail'
-                  ? { host: newAccount.host, port: newAccount.port, user: newAccount.user, pass: newAccount.pass }
+                  ? { host: newAccount.host, port: newAccount.port, user: newAccount.user, pass: newAccount.pass, fromName: newAccount.fromName || undefined }
                   : { region: newAccount.region, accessKeyId: newAccount.accessKeyId, secretAccessKey: newAccount.secretAccessKey, fromEmail: newAccount.fromEmail, fromName: newAccount.fromName };
                 createAccountMutation.mutate({ label: newAccount.label, providerType: newAccount.providerType, config, dailyLimit: newAccount.dailyLimit }, {
                   onSuccess: () => { setShowAddAccount(false); setNewAccount({ label: '', providerType: 'gmail', host: 'smtp.gmail.com', port: 587, user: '', pass: '', region: 'us-east-1', accessKeyId: '', secretAccessKey: '', fromEmail: '', fromName: '', dailyLimit: 500 }); },
@@ -660,7 +661,7 @@ function SettingsContent() {
                   <div>
                     <div className="font-medium text-sm">{acct.label}</div>
                     <div className="text-xs text-gray-500 font-mono">
-                      {acct.provider_type === 'gmail' ? (acct.config.user as string || 'Not configured') : (acct.config.fromEmail as string || 'Not configured')}
+                      {acct.config.fromName ? `${acct.config.fromName} — ` : ''}{acct.provider_type === 'gmail' ? (acct.config.user as string || 'Not configured') : (acct.config.fromEmail as string || 'Not configured')}
                     </div>
                   </div>
                 </div>

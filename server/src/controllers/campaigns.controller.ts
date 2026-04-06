@@ -898,18 +898,17 @@ export async function estimateSendCount(req: Request, res: Response, next: NextF
 
     if (list.type === 'smart') {
       // For smart lists, build filter query to count contacts
-      // Get total from the smart list filter
       contactQuery = `
         SELECT c.email FROM contacts c
         WHERE c.status = 'active' AND c.id IN (
-          SELECT clc.contact_id FROM contact_list_contacts clc WHERE clc.list_id = $1
+          SELECT clm.contact_id FROM contact_list_members clm WHERE clm.list_id = $1
         )`;
       contactParams.push(listId);
     } else {
       contactQuery = `
         SELECT c.email FROM contacts c
-        JOIN contact_list_contacts clc ON clc.contact_id = c.id
-        WHERE clc.list_id = $1 AND c.status = 'active'`;
+        JOIN contact_list_members clm ON clm.contact_id = c.id
+        WHERE clm.list_id = $1 AND c.status = 'active'`;
       contactParams.push(listId);
     }
 

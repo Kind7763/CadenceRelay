@@ -11,14 +11,17 @@ interface GmailConfig {
   port: number;
   user: string;
   pass: string;
+  fromName?: string;
 }
 
 export class GmailProvider implements EmailProvider {
   private transporter: nodemailer.Transporter;
-  private fromEmail: string;
+  private fromAddress: string;
 
   constructor(config: GmailConfig) {
-    this.fromEmail = config.user;
+    this.fromAddress = config.fromName
+      ? `"${config.fromName}" <${config.user}>`
+      : config.user;
     this.transporter = nodemailer.createTransport({
       host: config.host,
       port: config.port,
@@ -37,12 +40,12 @@ export class GmailProvider implements EmailProvider {
 
   async send(options: EmailOptions): Promise<SendResult> {
     const mailOptions: nodemailer.SendMailOptions = {
-      from: options.from || this.fromEmail,
+      from: options.from || this.fromAddress,
       to: options.to,
       subject: options.subject,
       html: options.html,
       text: options.text,
-      replyTo: options.replyTo || this.fromEmail,
+      replyTo: options.replyTo || this.fromAddress,
       headers: options.headers || {},
       attachments: options.attachments?.map((a) => ({
         filename: a.filename,
