@@ -6,7 +6,14 @@ import {
   bulkAddToSuppression,
   removeFromSuppression,
   getSuppressionCount,
+  listSuppressedDomains,
+  addSuppressedDomain,
+  bulkAddSuppressedDomains,
+  removeSuppressedDomain,
+  getSuppressedDomainCount,
 } from '../api/suppression.api';
+
+// ─── Email suppression hooks ────────────────────────────────────────
 
 export function useSuppressionList(params: Record<string, string> = {}) {
   return useQuery({
@@ -65,6 +72,69 @@ export function useRemoveFromSuppression() {
     },
     onError: () => {
       toast.error('Failed to remove email from suppression list');
+    },
+  });
+}
+
+// ─── Domain suppression hooks ───────────────────────────────────────
+
+export function useSuppressedDomainList(params: Record<string, string> = {}) {
+  return useQuery({
+    queryKey: ['suppressed-domains', params],
+    queryFn: () => listSuppressedDomains(params),
+  });
+}
+
+export function useSuppressedDomainCount() {
+  return useQuery({
+    queryKey: ['suppressed-domains-count'],
+    queryFn: getSuppressedDomainCount,
+  });
+}
+
+export function useAddSuppressedDomain() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ domain, reason }: { domain: string; reason?: string }) =>
+      addSuppressedDomain(domain, reason),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['suppressed-domains'] });
+      queryClient.invalidateQueries({ queryKey: ['suppressed-domains-count'] });
+      toast.success('Domain added to suppression list');
+    },
+    onError: () => {
+      toast.error('Failed to add domain');
+    },
+  });
+}
+
+export function useBulkAddSuppressedDomains() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ domains, reason }: { domains: string[]; reason?: string }) =>
+      bulkAddSuppressedDomains(domains, reason),
+    onSuccess: (_data) => {
+      queryClient.invalidateQueries({ queryKey: ['suppressed-domains'] });
+      queryClient.invalidateQueries({ queryKey: ['suppressed-domains-count'] });
+      toast.success(`${_data.added} domains added to suppression list`);
+    },
+    onError: () => {
+      toast.error('Failed to add domains');
+    },
+  });
+}
+
+export function useRemoveSuppressedDomain() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => removeSuppressedDomain(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['suppressed-domains'] });
+      queryClient.invalidateQueries({ queryKey: ['suppressed-domains-count'] });
+      toast.success('Domain removed from suppression list');
+    },
+    onError: () => {
+      toast.error('Failed to remove domain');
     },
   });
 }

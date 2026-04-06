@@ -28,6 +28,11 @@ import {
   useAddToSuppression,
   useBulkAddToSuppression,
   useRemoveFromSuppression,
+  useSuppressedDomainList,
+  useSuppressedDomainCount,
+  useAddSuppressedDomain,
+  useBulkAddSuppressedDomains,
+  useRemoveSuppressedDomain,
 } from '../hooks/useSuppression';
 import {
   useCustomVariables,
@@ -186,6 +191,22 @@ function SettingsContent() {
   const addSuppressionMutation = useAddToSuppression();
   const bulkAddSuppressionMutation = useBulkAddToSuppression();
   const removeSuppressionMutation = useRemoveFromSuppression();
+
+  // Domain suppression state
+  const [domainSuppPage, setDomainSuppPage] = useState(1);
+  const [domainSuppSearch, setDomainSuppSearch] = useState('');
+  const [domainSuppAddDomain, setDomainSuppAddDomain] = useState('');
+  const [domainSuppAddReason, setDomainSuppAddReason] = useState('');
+  const [domainSuppBulkText, setDomainSuppBulkText] = useState('');
+  const { data: domainSuppData } = useSuppressedDomainList({
+    page: String(domainSuppPage),
+    limit: '10',
+    ...(domainSuppSearch ? { search: domainSuppSearch } : {}),
+  });
+  const { data: domainSuppCountData } = useSuppressedDomainCount();
+  const addDomainSuppMutation = useAddSuppressedDomain();
+  const bulkAddDomainSuppMutation = useBulkAddSuppressedDomains();
+  const removeDomainSuppMutation = useRemoveSuppressedDomain();
 
   // Custom Variables state
   const { data: customVariables = [], isLoading: cvLoading } = useCustomVariables();
@@ -1112,6 +1133,157 @@ function SettingsContent() {
         ) : (
           <div className="mt-4 rounded-lg border-2 border-dashed border-gray-200 p-6 text-center">
             <p className="text-sm text-gray-500">{suppressionSearch ? 'No matching emails found' : 'No suppressed emails yet'}</p>
+          </div>
+        )}
+      </div>
+
+      {/* Suppressed Domains */}
+      <div className="mt-6 rounded-xl bg-white p-6 shadow-sm">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">
+              Suppressed Domains
+              {domainSuppCountData?.count != null && domainSuppCountData.count > 0 && (
+                <span className="ml-2 inline-flex items-center rounded-full bg-orange-100 px-2.5 py-0.5 text-xs font-medium text-orange-700">
+                  {domainSuppCountData.count}
+                </span>
+              )}
+            </h2>
+            <p className="mt-1 text-sm text-gray-500">
+              All emails to these domains will be blocked. Use for typo domains like gamil.com, rediffmail.com, etc.
+            </p>
+          </div>
+        </div>
+
+        {/* Add single domain */}
+        <div className="mt-4 flex gap-2">
+          <input
+            type="text"
+            value={domainSuppAddDomain}
+            onChange={(e) => setDomainSuppAddDomain(e.target.value)}
+            placeholder="gamil.com"
+            className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+          />
+          <input
+            type="text"
+            value={domainSuppAddReason}
+            onChange={(e) => setDomainSuppAddReason(e.target.value)}
+            placeholder="Reason (optional)"
+            className="w-40 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+          />
+          <button
+            onClick={() => {
+              if (!domainSuppAddDomain.trim()) return;
+              addDomainSuppMutation.mutate({ domain: domainSuppAddDomain.trim(), reason: domainSuppAddReason || undefined });
+              setDomainSuppAddDomain('');
+              setDomainSuppAddReason('');
+            }}
+            disabled={addDomainSuppMutation.isPending || !domainSuppAddDomain.trim()}
+            className="rounded-lg bg-primary-600 px-4 py-2 text-sm text-white hover:bg-primary-700 disabled:opacity-50"
+          >
+            Add
+          </button>
+        </div>
+
+        {/* Bulk add domains */}
+        <div className="mt-3">
+          <label className="block text-sm font-medium text-gray-700">Bulk Add (one domain per line)</label>
+          <textarea
+            value={domainSuppBulkText}
+            onChange={(e) => setDomainSuppBulkText(e.target.value)}
+            placeholder={"gamil.com\nrediffmail.com\nyahoo.co"}
+            rows={3}
+            className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+          />
+          <button
+            onClick={() => {
+              const domains = domainSuppBulkText.split('\n').map(d => d.trim().replace(/^@/, '')).filter(d => d.includes('.'));
+              if (domains.length === 0) { toast.error('No valid domains found'); return; }
+              bulkAddDomainSuppMutation.mutate({ domains });
+              setDomainSuppBulkText('');
+            }}
+            disabled={bulkAddDomainSuppMutation.isPending || !domainSuppBulkText.trim()}
+            className="mt-2 rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            {bulkAddDomainSuppMutation.isPending ? 'Adding...' : 'Bulk Add'}
+          </button>
+        </div>
+
+        {/* Search */}
+        <div className="mt-4">
+          <input
+            type="text"
+            value={domainSuppSearch}
+            onChange={(e) => { setDomainSuppSearch(e.target.value); setDomainSuppPage(1); }}
+            placeholder="Search suppressed domains..."
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+          />
+        </div>
+
+        {/* Table */}
+        {domainSuppData?.data && domainSuppData.data.length > 0 ? (
+          <>
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium text-gray-600">Domain</th>
+                    <th className="px-3 py-2 text-left font-medium text-gray-600">Reason</th>
+                    <th className="px-3 py-2 text-left font-medium text-gray-600">Added By</th>
+                    <th className="px-3 py-2 text-left font-medium text-gray-600">Date</th>
+                    <th className="px-3 py-2 text-right font-medium text-gray-600">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {domainSuppData.data.map((entry: { id: string; domain: string; reason: string; added_by: string; created_at: string }) => (
+                    <tr key={entry.id} className="hover:bg-gray-50">
+                      <td className="px-3 py-2 font-mono text-xs">{entry.domain}</td>
+                      <td className="px-3 py-2 text-gray-600">{entry.reason}</td>
+                      <td className="px-3 py-2 text-gray-500">{entry.added_by}</td>
+                      <td className="px-3 py-2 text-gray-400 text-xs">{new Date(entry.created_at).toLocaleDateString()}</td>
+                      <td className="px-3 py-2 text-right">
+                        <button
+                          onClick={() => {
+                            if (confirm(`Remove ${entry.domain} from suppressed domains?`)) {
+                              removeDomainSuppMutation.mutate(entry.id);
+                            }
+                          }}
+                          className="text-red-600 hover:text-red-800 text-xs"
+                        >
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {/* Pagination */}
+            {domainSuppData.pagination && domainSuppData.pagination.totalPages > 1 && (
+              <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
+                <span>Page {domainSuppData.pagination.page} of {domainSuppData.pagination.totalPages} ({domainSuppData.pagination.total} total)</span>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setDomainSuppPage(Math.max(1, domainSuppPage - 1))}
+                    disabled={domainSuppPage <= 1}
+                    className="rounded border border-gray-300 px-2 py-1 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Previous
+                  </button>
+                  <button
+                    onClick={() => setDomainSuppPage(domainSuppPage + 1)}
+                    disabled={domainSuppPage >= domainSuppData.pagination.totalPages}
+                    className="rounded border border-gray-300 px-2 py-1 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="mt-4 rounded-lg border-2 border-dashed border-gray-200 p-6 text-center">
+            <p className="text-sm text-gray-500">{domainSuppSearch ? 'No matching domains found' : 'No suppressed domains yet'}</p>
           </div>
         )}
       </div>
