@@ -108,7 +108,9 @@ export async function updateEmailAccount(req: Request, res: Response, next: Next
     const existingConfig = typeof existing.rows[0].config === 'string'
       ? JSON.parse(existing.rows[0].config) : existing.rows[0].config;
 
-    const finalConfig = config ? encryptConfig(config, existingConfig) : existingConfig;
+    // Merge new config fields into existing config (partial update support)
+    const mergedConfig = config ? { ...existingConfig, ...config } : existingConfig;
+    const finalConfig = config ? encryptConfig(mergedConfig, existingConfig) : existingConfig;
 
     const result = await pool.query(
       `UPDATE email_accounts SET

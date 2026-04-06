@@ -42,7 +42,7 @@ import {
   useReorderCustomVariables,
 } from '../hooks/useCustomVariables';
 import { CustomVariable } from '../api/customVariables.api';
-import { useEmailAccounts, useCreateEmailAccount, useDeleteEmailAccount, useTestEmailAccount } from '../hooks/useEmailAccounts';
+import { useEmailAccounts, useCreateEmailAccount, useUpdateEmailAccount, useDeleteEmailAccount, useTestEmailAccount } from '../hooks/useEmailAccounts';
 import type { EmailAccount } from '../api/emailAccounts.api';
 import { FormSkeleton } from '../components/ui/Skeleton';
 import ErrorBoundary from '../components/ErrorBoundary';
@@ -197,9 +197,12 @@ function SettingsContent() {
   // Email Accounts state
   const { data: emailAccounts = [] } = useEmailAccounts();
   const createAccountMutation = useCreateEmailAccount();
+  const updateAccountMutation = useUpdateEmailAccount();
   const deleteAccountMutation = useDeleteEmailAccount();
   const testAccountMutation = useTestEmailAccount();
   const [showAddAccount, setShowAddAccount] = useState(false);
+  const [editingAccountId, setEditingAccountId] = useState<string | null>(null);
+  const [editAccount, setEditAccount] = useState<{ label: string; fromName: string; dailyLimit: number; pass: string; accessKeyId: string; secretAccessKey: string }>({ label: '', fromName: '', dailyLimit: 500, pass: '', accessKeyId: '', secretAccessKey: '' });
   const [newAccount, setNewAccount] = useState({ label: '', providerType: 'gmail' as 'gmail' | 'ses', host: 'smtp.gmail.com', port: 587, user: '', pass: '', region: 'us-east-1', accessKeyId: '', secretAccessKey: '', fromEmail: '', fromName: '', dailyLimit: 500 });
 
   // Domain suppression state
@@ -653,34 +656,105 @@ function SettingsContent() {
         {emailAccounts.length > 0 ? (
           <div className="mt-4 space-y-3">
             {emailAccounts.map((acct: EmailAccount) => (
-              <div key={acct.id} className="flex items-center justify-between rounded-lg border border-gray-200 p-4">
-                <div className="flex items-center gap-3">
-                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${acct.provider_type === 'gmail' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>
-                    {acct.provider_type.toUpperCase()}
-                  </span>
-                  <div>
-                    <div className="font-medium text-sm">{acct.label}</div>
-                    <div className="text-xs text-gray-500 font-mono">
-                      {acct.config.fromName ? `${acct.config.fromName} — ` : ''}{acct.provider_type === 'gmail' ? (acct.config.user as string || 'Not configured') : (acct.config.fromEmail as string || 'Not configured')}
+              <div key={acct.id} className="rounded-lg border border-gray-200 p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${acct.provider_type === 'gmail' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>
+                      {acct.provider_type.toUpperCase()}
+                    </span>
+                    <div>
+                      <div className="font-medium text-sm">{acct.label}</div>
+                      <div className="text-xs text-gray-500 font-mono">
+                        {acct.config.fromName ? `${acct.config.fromName} — ` : ''}{acct.provider_type === 'gmail' ? (acct.config.user as string || 'Not configured') : (acct.config.fromEmail as string || 'Not configured')}
+                      </div>
                     </div>
                   </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-400">{acct.daily_limit}/day</span>
+                    <button
+                      onClick={() => {
+                        if (editingAccountId === acct.id) { setEditingAccountId(null); return; }
+                        setEditingAccountId(acct.id);
+                        setEditAccount({
+                          label: acct.label,
+                          fromName: (acct.config.fromName as string) || '',
+                          dailyLimit: acct.daily_limit,
+                          pass: '',
+                          accessKeyId: '',
+                          secretAccessKey: '',
+                        });
+                      }}
+                      className="rounded border border-gray-300 px-2 py-1 text-xs hover:bg-gray-50"
+                    >
+                      {editingAccountId === acct.id ? 'Cancel' : 'Edit'}
+                    </button>
+                    <button
+                      onClick={() => testAccountMutation.mutate({ id: acct.id })}
+                      disabled={testAccountMutation.isPending}
+                      className="rounded border border-gray-300 px-2 py-1 text-xs hover:bg-gray-50"
+                    >
+                      Test
+                    </button>
+                    <button
+                      onClick={() => { if (confirm(`Delete account "${acct.label}"?`)) deleteAccountMutation.mutate(acct.id); }}
+                      className="text-red-600 hover:text-red-800 text-xs"
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-gray-400">{acct.daily_limit}/day</span>
-                  <button
-                    onClick={() => testAccountMutation.mutate({ id: acct.id })}
-                    disabled={testAccountMutation.isPending}
-                    className="rounded border border-gray-300 px-2 py-1 text-xs hover:bg-gray-50"
-                  >
-                    Test
-                  </button>
-                  <button
-                    onClick={() => { if (confirm(`Delete account "${acct.label}"?`)) deleteAccountMutation.mutate(acct.id); }}
-                    className="text-red-600 hover:text-red-800 text-xs"
-                  >
-                    Delete
-                  </button>
-                </div>
+                {/* Inline Edit Form */}
+                {editingAccountId === acct.id && (
+                  <div className="mt-3 border-t border-gray-100 pt-3 space-y-2">
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600">Label</label>
+                        <input type="text" value={editAccount.label} onChange={(e) => setEditAccount({ ...editAccount, label: e.target.value })} className="mt-1 w-full rounded border px-2 py-1.5 text-sm" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600">From Name</label>
+                        <input type="text" value={editAccount.fromName} onChange={(e) => setEditAccount({ ...editAccount, fromName: e.target.value })} placeholder="e.g., BITS PILANI - YEB" className="mt-1 w-full rounded border px-2 py-1.5 text-sm" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600">Daily Limit</label>
+                        <input type="number" value={editAccount.dailyLimit} onChange={(e) => setEditAccount({ ...editAccount, dailyLimit: parseInt(e.target.value) || 500 })} className="mt-1 w-full rounded border px-2 py-1.5 text-sm" />
+                      </div>
+                    </div>
+                    {acct.provider_type === 'gmail' && (
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600">New App Password (leave blank to keep current)</label>
+                        <input type="password" value={editAccount.pass} onChange={(e) => setEditAccount({ ...editAccount, pass: e.target.value })} placeholder="Leave blank to keep existing" className="mt-1 w-full rounded border px-2 py-1.5 text-sm" />
+                      </div>
+                    )}
+                    {acct.provider_type === 'ses' && (
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600">Access Key ID (leave blank to keep)</label>
+                          <input type="password" value={editAccount.accessKeyId} onChange={(e) => setEditAccount({ ...editAccount, accessKeyId: e.target.value })} placeholder="Leave blank to keep" className="mt-1 w-full rounded border px-2 py-1.5 text-sm" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600">Secret Key (leave blank to keep)</label>
+                          <input type="password" value={editAccount.secretAccessKey} onChange={(e) => setEditAccount({ ...editAccount, secretAccessKey: e.target.value })} placeholder="Leave blank to keep" className="mt-1 w-full rounded border px-2 py-1.5 text-sm" />
+                        </div>
+                      </div>
+                    )}
+                    <button
+                      onClick={() => {
+                        const config: Record<string, unknown> = { fromName: editAccount.fromName || undefined };
+                        if (acct.provider_type === 'gmail' && editAccount.pass) config.pass = editAccount.pass;
+                        if (acct.provider_type === 'ses' && editAccount.accessKeyId) config.accessKeyId = editAccount.accessKeyId;
+                        if (acct.provider_type === 'ses' && editAccount.secretAccessKey) config.secretAccessKey = editAccount.secretAccessKey;
+                        updateAccountMutation.mutate({ id: acct.id, data: { label: editAccount.label, config, dailyLimit: editAccount.dailyLimit } }, {
+                          onSuccess: () => setEditingAccountId(null),
+                        });
+                      }}
+                      disabled={updateAccountMutation.isPending}
+                      className="rounded-lg bg-primary-600 px-3 py-1.5 text-xs text-white hover:bg-primary-700 disabled:opacity-50"
+                    >
+                      {updateAccountMutation.isPending ? 'Saving...' : 'Save Changes'}
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
           </div>
