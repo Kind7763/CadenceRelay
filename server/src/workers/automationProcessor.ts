@@ -1,6 +1,6 @@
 import { pool } from '../config/database';
 import { logger } from '../utils/logger';
-import { renderTemplate } from '../utils/templateRenderer';
+import { renderTemplate, htmlToPlainText } from '../utils/templateRenderer';
 import { createProvider } from '../services/email/providerFactory';
 import { checkDailyLimit, incrementDailySend } from '../utils/dailyLimits';
 import { isEmailSuppressed } from '../controllers/suppression.controller';
@@ -199,7 +199,7 @@ async function processEnrollment(
       to: contact.email,
       subject: renderedSubject,
       html: renderedHtml,
-      text: renderedText,
+      text: renderedText || htmlToPlainText(renderedHtml),
       replyTo,
     });
 

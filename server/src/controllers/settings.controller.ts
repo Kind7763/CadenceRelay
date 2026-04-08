@@ -320,9 +320,10 @@ export async function testEmail(req: Request, res: Response, next: NextFunction)
     const { createProvider } = await import('../services/email/providerFactory');
     const emailProvider = createProvider(provider, parsedConfig);
 
+    const { htmlToPlainText } = await import('../utils/templateRenderer');
     const emailSubject = subject || 'Test Email from CadenceRelay';
     const emailHtml = html || '<h1>Test Email</h1><p>If you received this, your email provider is configured correctly.</p>';
-    const emailText = html ? undefined : 'Test Email - If you received this, your email provider is configured correctly.';
+    const emailText = htmlToPlainText(emailHtml);
 
     // Load attachments from campaign if campaignId is provided
     let attachments: Array<{ filename: string; content: Buffer; contentType: string }> | undefined;

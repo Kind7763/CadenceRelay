@@ -5,7 +5,7 @@ import { pool } from '../config/database';
 import { redis } from '../config/redis';
 import { logger } from '../utils/logger';
 import { generateTrackingToken } from '../utils/crypto';
-import { renderTemplate } from '../utils/templateRenderer';
+import { renderTemplate, htmlToPlainText } from '../utils/templateRenderer';
 import { createProvider } from '../services/email/providerFactory';
 import { emailSendQueue, campaignDispatchQueue } from '../queues/emailQueue';
 import {
@@ -1016,7 +1016,7 @@ export function startEmailSendWorker(): Worker {
           to: email,
           subject,
           html: trackedHtml,
-          text: text || undefined,
+          text: text || htmlToPlainText(trackedHtml),
           replyTo,
           headers,
           attachments: emailAttachments.length > 0 ? emailAttachments : undefined,

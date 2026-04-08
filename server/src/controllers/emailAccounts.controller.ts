@@ -175,10 +175,12 @@ export async function testEmailAccount(req: Request, res: Response, next: NextFu
     }
 
     if (to) {
+      const testHtml = `<p>This is a test email from your CadenceRelay email account <strong>"${account.label}"</strong>.</p><p>If you received this, the account is configured correctly.</p>`;
       await provider.send({
         to,
         subject: `Test from CadenceRelay — ${account.label}`,
-        html: `<p>This is a test email from your CadenceRelay email account <strong>"${account.label}"</strong>.</p><p>If you received this, the account is configured correctly.</p>`,
+        html: testHtml,
+        text: `This is a test email from your CadenceRelay email account "${account.label}". If you received this, the account is configured correctly.`,
       });
     }
 
