@@ -873,10 +873,17 @@ export async function importContactsCSV(req: Request, res: Response, next: NextF
       if (!headers) {
         // First non-empty line = header row
         headers = parseCSVLine(trimmed).map((h) => h.toLowerCase().trim());
+        // Normalize columnMapping keys to lowercase for case-insensitive matching
+        const normalizedMapping: Record<string, string> = {};
+        if (columnMapping) {
+          for (const [key, val] of Object.entries(columnMapping)) {
+            normalizedMapping[key.toLowerCase().trim()] = val;
+          }
+        }
         for (let i = 0; i < headers.length; i++) {
           const header = headers[i];
-          if (columnMapping && columnMapping[header]) {
-            const target = columnMapping[header];
+          if (normalizedMapping[header]) {
+            const target = normalizedMapping[header];
             // Check if mapped target is a custom variable key
             if (customVariableKeys.has(target)) {
               metadataMapping[target] = i;
