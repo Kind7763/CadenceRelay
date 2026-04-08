@@ -753,27 +753,43 @@ export async function setupSns(_req: Request, res: Response, next: NextFunction)
     }
 
     // 3. Configure SES to send bounces and complaints to the SNS topic
-    // Use the domain from the fromEmail as the identity
-    const identity = fromEmail.includes('@') ? fromEmail.split('@')[1] : fromEmail;
-    try {
+    // Try domain first, then fall back to full email address as the SES identity
+    const domain = fromEmail.includes('@') ? fromEmail.split('@')[1] : fromEmail;
+    let identity = domain;
+
+    const setNotifications = async (id: string) => {
       await Promise.all([
         client.send(new SetIdentityNotificationTopicCommand({
-          Identity: identity,
+          Identity: id,
           NotificationType: 'Bounce',
           SnsTopic: topicArn,
         })),
         client.send(new SetIdentityNotificationTopicCommand({
-          Identity: identity,
+          Identity: id,
           NotificationType: 'Complaint',
           SnsTopic: topicArn,
         })),
       ]);
-    } catch (err) {
-      const error = err as { name?: string; message?: string };
-      if (error.name === 'AccessDeniedException' || error.name === 'AccessDenied') {
-        throw new AppError('Missing IAM permission: ses:SetIdentityNotificationTopic. Please add this permission to your IAM user.', 403);
+    };
+
+    try {
+      await setNotifications(domain);
+      identity = domain;
+    } catch (domainErr) {
+      // Domain not verified — try the full email address as identity
+      try {
+        await setNotifications(fromEmail);
+        identity = fromEmail;
+      } catch (emailErr) {
+        const error = emailErr as { name?: string; message?: string };
+        if (error.name === 'AccessDeniedException' || error.name === 'AccessDenied') {
+          throw new AppError('Missing IAM permission: ses:SetIdentityNotificationTopic. Please add this permission to your IAM user.', 403);
+        }
+        throw new AppError(
+          `Neither domain "${domain}" nor email "${fromEmail}" is a verified SES identity. Please verify your sending domain or email in the AWS SES console.`,
+          400
+        );
       }
-      throw err;
     }
 
     logger.info('SNS bounce/complaint setup completed', { topicArn, identity, webhookUrl });
