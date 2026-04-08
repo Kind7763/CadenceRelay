@@ -351,12 +351,24 @@ export async function testEmail(req: Request, res: Response, next: NextFunction)
       }
     }
 
+    // Add List-Unsubscribe headers for deliverability (even on test emails)
+    const trackingResult2 = await pool.query("SELECT value FROM settings WHERE key = 'tracking_domain'");
+    let trackingDomainVal = trackingResult2.rows[0]?.value || '';
+    if (typeof trackingDomainVal === 'string') trackingDomainVal = trackingDomainVal.replace(/^"|"$/g, '');
+    const unsubHeaders: Record<string, string> = {};
+    if (trackingDomainVal && trackingDomainVal !== 'http://localhost:3001') {
+      const testUnsubUrl = `${trackingDomainVal}/api/v1/t/u/test-${Date.now()}`;
+      unsubHeaders['List-Unsubscribe'] = `<${testUnsubUrl}>`;
+      unsubHeaders['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click';
+    }
+
     await emailProvider.send({
       to,
       subject: emailSubject,
       html: emailHtml,
       text: emailText,
       replyTo,
+      headers: unsubHeaders,
       attachments,
     });
 

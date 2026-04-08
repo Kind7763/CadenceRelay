@@ -984,10 +984,10 @@ export function startEmailSendWorker(): Worker {
       // Store link URLs
       await pool.query('UPDATE campaign_recipients SET link_urls = $1 WHERE id = $2', [JSON.stringify(linkUrls), campaignRecipientId]);
 
-      // Build headers
+      // Build headers (RFC 8058 one-click unsubscribe)
       const unsubUrl = `${trackingDomain}/api/v1/t/u/${trackingToken}`;
       const headers: Record<string, string> = {
-        'List-Unsubscribe': `<${unsubUrl}>, <mailto:unsubscribe@yourdomain.com?subject=unsubscribe>`,
+        'List-Unsubscribe': `<${unsubUrl}>`,
         'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
         'Feedback-ID': `${campaignId}:cadencerelay`,
       };
