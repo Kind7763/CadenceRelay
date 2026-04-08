@@ -168,10 +168,20 @@ export async function testEmailAccount(req: Request, res: Response, next: NextFu
     const account = result.rows[0];
     const config = typeof account.config === 'string' ? JSON.parse(account.config) : account.config;
 
-    const provider = createProvider(account.provider_type, config);
-    const connected = await provider.verifyConnection();
+    let provider;
+    try {
+      provider = createProvider(account.provider_type, config);
+    } catch (createErr) {
+      throw new AppError(`Failed to create provider: ${(createErr as Error).message}`, 400);
+    }
+    let connected = false;
+    try {
+      connected = await provider.verifyConnection();
+    } catch (verifyErr) {
+      throw new AppError(`Connection failed: ${(verifyErr as Error).message}`, 400);
+    }
     if (!connected) {
-      throw new AppError('Connection failed — check credentials', 400);
+      throw new AppError('Connection failed — SMTP server rejected the connection. Check host, port, email, and password.', 400);
     }
 
     if (to) {

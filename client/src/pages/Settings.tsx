@@ -202,7 +202,7 @@ function SettingsContent() {
   const testAccountMutation = useTestEmailAccount();
   const [showAddAccount, setShowAddAccount] = useState(false);
   const [editingAccountId, setEditingAccountId] = useState<string | null>(null);
-  const [editAccount, setEditAccount] = useState<{ label: string; fromName: string; dailyLimit: number; pass: string; accessKeyId: string; secretAccessKey: string }>({ label: '', fromName: '', dailyLimit: 500, pass: '', accessKeyId: '', secretAccessKey: '' });
+  const [editAccount, setEditAccount] = useState<{ label: string; fromName: string; host: string; port: number; dailyLimit: number; pass: string; accessKeyId: string; secretAccessKey: string }>({ label: '', fromName: '', host: 'smtp.gmail.com', port: 587, dailyLimit: 500, pass: '', accessKeyId: '', secretAccessKey: '' });
   const [newAccount, setNewAccount] = useState({ label: '', providerType: 'gmail' as 'gmail' | 'ses', host: 'smtp.gmail.com', port: 587, user: '', pass: '', region: 'us-east-1', accessKeyId: '', secretAccessKey: '', fromEmail: '', fromName: '', dailyLimit: 500 });
 
   // Domain suppression state
@@ -678,6 +678,8 @@ function SettingsContent() {
                         setEditAccount({
                           label: acct.label,
                           fromName: (acct.config.fromName as string) || '',
+                          host: (acct.config.host as string) || 'smtp.gmail.com',
+                          port: (acct.config.port as number) || 587,
                           dailyLimit: acct.daily_limit,
                           pass: '',
                           accessKeyId: '',
@@ -721,10 +723,22 @@ function SettingsContent() {
                       </div>
                     </div>
                     {acct.provider_type === 'gmail' && (
-                      <div>
-                        <label className="block text-xs font-medium text-gray-600">New App Password (leave blank to keep current)</label>
-                        <input type="password" value={editAccount.pass} onChange={(e) => setEditAccount({ ...editAccount, pass: e.target.value })} placeholder="Leave blank to keep existing" className="mt-1 w-full rounded border px-2 py-1.5 text-sm" />
-                      </div>
+                      <>
+                        <div className="grid grid-cols-3 gap-2">
+                          <div>
+                            <label className="block text-xs font-medium text-gray-600">SMTP Host</label>
+                            <input type="text" value={editAccount.host} onChange={(e) => setEditAccount({ ...editAccount, host: e.target.value })} className="mt-1 w-full rounded border px-2 py-1.5 text-sm" />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-gray-600">Port</label>
+                            <input type="number" value={editAccount.port} onChange={(e) => setEditAccount({ ...editAccount, port: parseInt(e.target.value) || 587 })} className="mt-1 w-full rounded border px-2 py-1.5 text-sm" />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-gray-600">New App Password (blank = keep)</label>
+                            <input type="password" value={editAccount.pass} onChange={(e) => setEditAccount({ ...editAccount, pass: e.target.value })} placeholder="Leave blank to keep" className="mt-1 w-full rounded border px-2 py-1.5 text-sm" />
+                          </div>
+                        </div>
+                      </>
                     )}
                     {acct.provider_type === 'ses' && (
                       <div className="grid grid-cols-2 gap-2">
@@ -741,7 +755,11 @@ function SettingsContent() {
                     <button
                       onClick={() => {
                         const config: Record<string, unknown> = { fromName: editAccount.fromName || undefined };
-                        if (acct.provider_type === 'gmail' && editAccount.pass) config.pass = editAccount.pass;
+                        if (acct.provider_type === 'gmail') {
+                          config.host = editAccount.host;
+                          config.port = editAccount.port;
+                          if (editAccount.pass) config.pass = editAccount.pass;
+                        }
                         if (acct.provider_type === 'ses' && editAccount.accessKeyId) config.accessKeyId = editAccount.accessKeyId;
                         if (acct.provider_type === 'ses' && editAccount.secretAccessKey) config.secretAccessKey = editAccount.secretAccessKey;
                         updateAccountMutation.mutate({ id: acct.id, data: { label: editAccount.label, config, dailyLimit: editAccount.dailyLimit } }, {
