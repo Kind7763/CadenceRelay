@@ -925,7 +925,7 @@ export async function estimateSendCount(req: Request, res: Response, next: NextF
 
     // Check if it's a smart list or regular list
     const listResult = await pool.query(
-      'SELECT id, type, filters FROM contact_lists WHERE id = $1',
+      'SELECT id, is_smart, filter_criteria FROM contact_lists WHERE id = $1',
       [listId]
     );
     if (listResult.rows.length === 0) throw new AppError('List not found', 404);
@@ -934,7 +934,7 @@ export async function estimateSendCount(req: Request, res: Response, next: NextF
     let contactQuery: string;
     const contactParams: unknown[] = [];
 
-    if (list.type === 'smart') {
+    if (list.is_smart) {
       // For smart lists, build filter query to count contacts
       contactQuery = `
         SELECT c.email FROM contacts c
