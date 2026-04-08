@@ -353,6 +353,14 @@ ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS template_snapshot_html text;
 -- Unique constraint on campaign_recipients to prevent duplicate sends
 CREATE UNIQUE INDEX IF NOT EXISTS cr_campaign_contact_unique ON campaign_recipients(campaign_id, contact_id) WHERE contact_id IS NOT NULL;
 
+-- Add 'cancelled' to campaign status CHECK constraint
+DO $$ BEGIN
+  ALTER TABLE campaigns DROP CONSTRAINT IF EXISTS campaigns_status_check;
+  ALTER TABLE campaigns ADD CONSTRAINT campaigns_status_check
+    CHECK (status IN ('draft','scheduled','sending','paused','completed','failed','cancelled'));
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
 -- Email accounts (multi-Gmail / multi-SES support)
 CREATE TABLE IF NOT EXISTS email_accounts (
     id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),

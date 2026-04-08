@@ -5,6 +5,7 @@ import {
   getCampaign,
   pauseCampaign,
   resumeCampaign,
+  cancelCampaign,
   getCampaignRecipients,
   scheduleCampaign,
   updateCampaign,
@@ -31,6 +32,7 @@ const statusColors: Record<string, string> = {
   paused: 'bg-orange-100 text-orange-700',
   completed: 'bg-green-100 text-green-700',
   failed: 'bg-red-100 text-red-700',
+  cancelled: 'bg-gray-200 text-gray-600',
 };
 
 interface Recipient {
@@ -409,6 +411,10 @@ export default function CampaignDetail() {
   async function handleResume() {
     try { await resumeCampaign(id!); toast.success('Resumed'); fetchCampaign(); } catch { toast.error('Failed'); }
   }
+  async function handleCancel() {
+    if (!confirm('Cancel this campaign? All unsent emails will be dropped and this cannot be undone.')) return;
+    try { await cancelCampaign(id!); toast.success('Campaign cancelled'); fetchCampaign(); } catch { toast.error('Failed to cancel'); }
+  }
 
   return (
     <div className="p-6">
@@ -536,7 +542,10 @@ export default function CampaignDetail() {
             {campaign.is_archived ? 'Unarchive' : 'Archive'}
           </button>
           {campaign.status === 'sending' && <button onClick={handlePause} className="rounded-lg border border-orange-300 px-4 py-2 text-sm text-orange-600">Pause</button>}
-          {campaign.status === 'paused' && <button onClick={handleResume} className="rounded-lg bg-primary-600 px-4 py-2 text-sm text-white">Resume</button>}
+          {campaign.status === 'paused' && <>
+            <button onClick={handleResume} className="rounded-lg bg-primary-600 px-4 py-2 text-sm text-white">Resume</button>
+            <button onClick={handleCancel} className="rounded-lg border border-red-300 px-4 py-2 text-sm text-red-600 hover:bg-red-50">Cancel</button>
+          </>}
           {campaign.status === 'completed' && (
             <div className="relative" ref={moreActionsRef}>
               <button

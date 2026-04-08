@@ -162,6 +162,11 @@ export async function resumeCampaign(id: string) {
   return res.data;
 }
 
+export async function cancelCampaign(id: string) {
+  const res = await apiClient.post(`/campaigns/${id}/cancel`);
+  return res.data;
+}
+
 export async function getCampaignRecipients(id: string, params: Record<string, string> = {}) {
   const res = await apiClient.get(`/campaigns/${id}/recipients`, { params });
   return res.data;

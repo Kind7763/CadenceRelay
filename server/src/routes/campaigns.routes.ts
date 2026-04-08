@@ -2,7 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import {
   listCampaigns, getCampaign, createCampaign, updateCampaign, deleteCampaign,
-  bulkDeleteCampaigns, scheduleCampaign, sendCampaign, pauseCampaign, resumeCampaign,
+  bulkDeleteCampaigns, scheduleCampaign, sendCampaign, pauseCampaign, resumeCampaign, cancelCampaign,
   getCampaignRecipients, exportCampaignRecipients, estimateSendCount,
   addAttachments, removeAttachment, downloadAttachment,
   duplicateCampaign, toggleStar, toggleArchive, updateLabel,
@@ -64,6 +64,7 @@ router.post('/:id/schedule', validateBody(scheduleSchema), scheduleCampaign);
 router.post('/:id/send', sendCampaign);
 router.post('/:id/pause', pauseCampaign);
 router.post('/:id/resume', resumeCampaign);
+router.post('/:id/cancel', cancelCampaign);
 router.get('/:id/recipients', getCampaignRecipients);
 router.get('/:id/recipients/export', exportCampaignRecipients);
 // Campaign management actions

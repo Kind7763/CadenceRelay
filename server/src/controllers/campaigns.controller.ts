@@ -6,6 +6,7 @@ import { AppError } from '../middleware/errorHandler';
 import { parsePagination, buildPaginatedResult } from '../utils/pagination';
 import { campaignDispatchQueue } from '../queues/emailQueue';
 import { verifyAdminPassword } from '../utils/adminAuth';
+import { logger } from '../utils/logger';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function validateUUID(id: string, label = 'ID'): void {
@@ -452,6 +453,43 @@ export async function pauseCampaign(req: Request, res: Response, next: NextFunct
     );
     if (result.rows.length === 0) throw new AppError('Campaign not found or not currently sending', 400);
     res.json({ message: 'Campaign paused' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function cancelCampaign(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { id } = req.params;
+    validateUUID(id, 'campaign ID');
+
+    const result = await pool.query(
+      "UPDATE campaigns SET status = 'cancelled', completed_at = NOW(), pause_reason = NULL, updated_at = NOW() WHERE id = $1 AND status IN ('sending', 'paused') RETURNING id",
+      [id]
+    );
+    if (result.rows.length === 0) throw new AppError('Campaign not found or not in a cancellable state', 400);
+
+    // Mark all pending/queued recipients as failed so they don't get picked up on any stale dispatch
+    await pool.query(
+      "UPDATE campaign_recipients SET status = 'failed', error_message = 'Campaign cancelled' WHERE campaign_id = $1 AND status IN ('pending', 'queued')",
+      [id]
+    );
+
+    // Clean up any BullMQ jobs for this campaign
+    try {
+      const { emailSendQueue } = await import('../queues/emailQueue');
+      const failedJobs = await emailSendQueue.getFailed(0, 20000);
+      let cleaned = 0;
+      for (const job of failedJobs) {
+        if (job.data?.campaignId === id) { await job.remove(); cleaned++; }
+      }
+      if (cleaned > 0) logger.info(`Campaign ${id}: cleaned ${cleaned} BullMQ jobs on cancel`);
+    } catch {
+      // Non-critical — jobs will expire naturally
+    }
+
+    logger.info(`Campaign ${id} cancelled`);
+    res.json({ message: 'Campaign cancelled' });
   } catch (err) {
     next(err);
   }

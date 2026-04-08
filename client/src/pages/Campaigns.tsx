@@ -27,6 +27,7 @@ const statusColors: Record<string, string> = {
   paused: 'bg-orange-100 text-orange-700',
   completed: 'bg-green-100 text-green-700',
   failed: 'bg-red-100 text-red-700',
+  cancelled: 'bg-gray-200 text-gray-600',
 };
 
 type ViewTab = 'active' | 'archived' | 'starred';
