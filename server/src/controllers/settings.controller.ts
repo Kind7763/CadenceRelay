@@ -816,15 +816,28 @@ export async function getSnsStatus(_req: Request, res: Response, next: NextFunct
       return;
     }
 
-    const identity = fromEmail.includes('@') ? fromEmail.split('@')[1] : fromEmail;
+    // Check both domain and full email — SNS could be configured on either
+    const domain = fromEmail.includes('@') ? fromEmail.split('@')[1] : fromEmail;
+    const identitiesToCheck = domain !== fromEmail ? [domain, fromEmail] : [fromEmail];
 
     try {
       const resp = await client.send(new GetIdentityNotificationAttributesCommand({
-        Identities: [identity],
+        Identities: identitiesToCheck,
       }));
 
-      const attrs = resp.NotificationAttributes?.[identity];
-      if (!attrs) {
+      // Find the first identity that has notification attributes configured
+      let identity = identitiesToCheck[0];
+      let attrs = resp.NotificationAttributes?.[identitiesToCheck[0]];
+      for (const id of identitiesToCheck) {
+        const a = resp.NotificationAttributes?.[id];
+        if (a && (a.BounceTopic || a.ComplaintTopic)) {
+          attrs = a;
+          identity = id;
+          break;
+        }
+      }
+
+      if (!attrs || (!attrs.BounceTopic && !attrs.ComplaintTopic)) {
         res.json({ configured: false, identity, message: 'No notification attributes found for identity' });
         return;
       }
